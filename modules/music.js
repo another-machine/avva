@@ -137,4 +137,69 @@ export class Key {
     const t = pos - Math.floor(pos); // 0–1 within slice
     return { ...this.degrees[i], t };
   }
+
+  /**
+   * Inverse of hueToNote: map a scale degree (0–6) to a hue angle.
+   * Degrees land at the center of their hue slice by default (t=0.5),
+   * matching what hueToNote returns when given that hue back.
+   *
+   * @param   {number} degree   0–6 (wraps)
+   * @param   {number} [t=0.5]  0=slice start, 1=next slice start
+   * @returns {number}          hue in [0, 360)
+   */
+  degreeToHue(degree, t = 0.5) {
+    const i = ((degree % 7) + 7) % 7;
+    return ((i + t) * 360) / 7;
+  }
+
+  /**
+   * Hue for each absolute chromatic note class (0=C..11=B), under this key.
+   *
+   * In-scale notes land at the center of their degree's hue slice.
+   * Out-of-scale chromatic notes are linearly interpolated between the
+   * two adjacent in-scale degree centers — so a chromatic sweep produces
+   * a smooth hue sweep, but in-scale notes always hit their canonical hue.
+   *
+   * @returns {Float32Array} length-12 array indexed by chromatic class 0..11
+   */
+  get chromaticHues() {
+    if (!this._chromaticHues) this._chromaticHues = this._buildChromaticHues();
+    return this._chromaticHues;
+  }
+
+  /**
+   * Map a single chromatic note class (0=C..11=B) to its hue under this key.
+   * Convenience accessor over chromaticHues[].
+   */
+  chromaticToHue(chromaticIndex) {
+    const c = ((chromaticIndex % 12) + 12) % 12;
+    return this.chromaticHues[c];
+  }
+
+  _buildChromaticHues() {
+    const steps = SCALE_STEPS[this.mode] ?? SCALE_STEPS.major;
+    // Center of each degree's hue slice
+    const stepHues = steps.map((_, i) => ((i + 0.5) * 360) / 7);
+    // Append wrap-around tonic so interpolation handles chromatic notes
+    // above the last in-scale step (e.g. B♭ in C minor between deg 6 and tonic).
+    const stepsExt = [...steps, steps[0] + 12];
+    const huesExt = [...stepHues, stepHues[0] + 360];
+
+    const out = new Float32Array(12);
+    for (let cIdx = 0; cIdx < 12; cIdx++) {
+      const rel = (cIdx - this._rootIdx + 12) % 12; // semitones above root
+      let i = 0;
+      while (i + 1 < stepsExt.length && stepsExt[i + 1] <= rel) i++;
+      if (stepsExt[i] === rel) {
+        out[cIdx] = stepHues[i];
+      } else {
+        const t = (rel - stepsExt[i]) / (stepsExt[i + 1] - stepsExt[i]);
+        out[cIdx] = (huesExt[i] + t * (huesExt[i + 1] - huesExt[i])) % 360;
+      }
+    }
+    return out;
+  }
 }
+
+/** Exposed for tests / other modules that want chromatic name lookups. */
+export const CHROMATIC_NAMES = NOTE_NAMES;

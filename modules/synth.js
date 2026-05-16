@@ -67,6 +67,17 @@ export class Synth {
     this._master.connect(comp);
     comp.connect(this._actx.destination);
 
+    // Pluck voice — percussive melodic events triggered by motion
+    const plkOsc = this._actx.createOscillator();
+    const plkGain = this._actx.createGain();
+    plkOsc.type = "sine"; // contrast with the triangle pads
+    plkOsc.frequency.value = 440;
+    plkGain.gain.value = 0;
+    plkOsc.connect(plkGain);
+    plkGain.connect(this._master);
+    plkOsc.start();
+    this._pluck = { osc: plkOsc, gain: plkGain, nextAllowed: 0 };
+
     // 3 tiers (bass, mid, treble) × 3 voices each (root, third, fifth)
     for (const octaveShift of [-1, 0, 1]) {
       const voices = [];
@@ -105,7 +116,7 @@ export class Synth {
    * @param {{ hue:number, bri:number, sat:number, act:number,
    *           hi:number, lo:number, vy:number, contrast:number }} out
    */
-  update({ hue, bri, act, actBg = 0, vy = 0.5 }) {
+  update({ hue, bri, act, actBg = 0, vy = 0.5, spread = 0 }) {
     if (!this.running || !this.key) return;
 
     // Clamp all inputs — NaN/Infinity from any signal will crash setTargetAtTime.
@@ -118,6 +129,9 @@ export class Synth {
       Number.isFinite(actBg) ? Math.max(0, Math.min(1, actBg)) : 0,
     );
     const safeVy = Number.isFinite(vy) ? Math.max(0, Math.min(1, vy)) : 0.5;
+    const safeSpread = Number.isFinite(spread)
+      ? Math.max(0, Math.min(1, spread))
+      : 0;
 
     const note = this.key.hueToNote(safeHue);
     const now = this._actx.currentTime;
@@ -144,6 +158,64 @@ export class Synth {
         gain.gain.setTargetAtTime(targetGain, now, tau);
       });
     });
+
+    this._maybePluck(note, safeAct, safeSpread, now);
+  }
+
+  /**
+   * Probabilistic melodic pluck triggered by motion.
+   *
+   * Note selection is weighted by spread:
+   *   spread ≈ 0  →  only chord tones (root, 3rd, 5th) are picked
+   *   spread ≈ 1  →  all 7 diatonic degrees roughly equally likely
+   *
+   * The pluck plays one octave above the base register so it sits
+   * clearly above the sustained pad tones.
+   */
+  _maybePluck(note, act, spread, now) {
+    if (!this._pluck || now < this._pluck.nextAllowed) return;
+
+    // Per-frame trigger probability — scales with activity
+    if (Math.random() > act * 0.35) return;
+
+    // Chord tones: root, diatonic 3rd, diatonic 5th (mod 7)
+    const d = note.degree;
+    const chordSet = new Set([d, (d + 2) % 7, (d + 4) % 7]);
+
+    // Non-chord-tone weight rises with spread (0 = stay on chord, 1 = roam freely)
+    const weights = this.key.degrees.map((_, i) =>
+      chordSet.has(i) ? 1.0 : spread * 0.8,
+    );
+    const total = weights.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
+    let chosen = 0;
+    for (let i = 0; i < 7; i++) {
+      r -= weights[i];
+      if (r <= 0) {
+        chosen = i;
+        break;
+      }
+    }
+
+    // One octave above base — sits above the mid-register pads
+    const freq = this.key.degrees[chosen].freq * 2;
+    if (!Number.isFinite(freq) || freq <= 0) return;
+
+    // Randomised decay for organic variation (70 – 200 ms τ)
+    const decayTau = 0.07 + Math.random() * 0.13;
+    const peak = 0.12;
+
+    const pg = this._pluck.gain.gain;
+    pg.cancelScheduledValues(now);
+    pg.setValueAtTime(0, now); // clean start
+    pg.setTargetAtTime(peak, now, 0.003); // fast attack  ~9 ms
+    pg.setTargetAtTime(0, now + 0.015, decayTau); // exponential decay
+
+    this._pluck.osc.frequency.cancelScheduledValues(now);
+    this._pluck.osc.frequency.setValueAtTime(freq, now);
+
+    // Cooldown: shorter when activity is high (more dense = faster rhythm)
+    this._pluck.nextAllowed = now + 0.08 + (1 - act) * 0.18;
   }
 
   // ── Helpers ─────────────────────────────────────────────────

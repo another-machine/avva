@@ -17,7 +17,7 @@ A human stepping in front of the camera breaks the loop and injects new signal.
 
 ---
 
-## Current state (v0.3)
+## Current state (v0.4)
 
 **Program 1: CAM→AUDIO** — `va.html` (analysis + synth)
 
@@ -64,7 +64,35 @@ HUD: hue histogram, sparklines for bri/act, motion heat-map, video calibration p
 - `#heat` — 96×72 sample-resolution motion heatmap, CSS-scaled fullscreen, `image-rendering: pixelated`, `mix-blend-mode: screen`. Opacity driven by `--heat-opacity` typed property. Toggled with M key.
 - `#hud` — full display-resolution (innerWidth × dpr), reserved for future audio HUD drawings. Currently wired but unused.
 
-**Program 2: AUDIO→VIS** — not started.
+**Program 2: AUDIO→VIS** — in progress (`av.html` + `loop.html` harness).
+
+Polyphonic, no monophonic pitch detection. Derived from old `DetectTone`:
+
+- `AnalyserNode`, fftSize 32768, smoothingTimeConstant 0.95
+  → ~0.67 Hz bin resolution at 44.1k. Enough to separate adjacent semitones from C2 up.
+- 60 chromatic notes scanned (octaves 2–6). Per note: take the bin amplitude, but only if it dominates its harmonic neighbors (octave ±1, ±2 bins) — kills octave bleed.
+- Asymmetric EMA per note (fast attack, slow release) on `pow(v/128, 50)` — sharp gating that keeps short staccato hits visible while sustaining chord sweeps.
+- Aggregate by chromatic class → 12-element pitch class profile (`chroma[12]`).
+- Sum across octaves into 3 EQ bands → `{lo, mid, hi}`.
+- Top-N chromatic prominences + chord-template lookup (maj/min/dim/aug/7ths) gives a chord guess; sticky on previous chord for stability.
+
+**Audio frame contract** (mirrors Program 1's `frame.out` so renderers are interchangeable):
+
+| Signal     | Derivation                                          | Symmetric to video |
+|------------|-----------------------------------------------------|--------------------|
+| `chroma`   | Float32Array(12) — normalized per-class prominence  | (new — polyphonic) |
+| `bands`    | `{lo, mid, hi}` — band-summed FFT energy            | hi / lo / bri      |
+| `hue`      | circular mean of `chroma` mapped via `Key.degreeToHue` (in-scale) and chromatic position (out-of-scale) | hue |
+| `spread`   | 1 − resultant length of circular mean              | spread             |
+| `bri`      | total spectral RMS                                  | bri                |
+| `act`      | frame-to-frame delta of chroma vector (L1 norm)     | act                |
+| `sat`      | chord-template confidence (clean triad → 1, noise → 0) | sat             |
+| `chord`    | best-match chord label + `{change: bool}`           | (new)              |
+
+**Audio routing (closed-loop test) — Option 1 chosen:** single page harness `loop.html`.
+Shared `AudioContext`. Program 1's `synth._master` gain is connected to both `destination` AND to `AudioAnalyzer.analyser` directly. No mic, no speakers, no OS routing, no feedback risk. Both programs render side-by-side for eyeballing. Other options (BlackHole virtual device, tab capture, real acoustic loop) noted but deferred.
+
+Visuals: each of 12 chromatic classes gets a hue position (via `Key.degreeToHue` when in scale, chromatic-circle fallback when out). Per-class prominence drives intensity of that hue's band. `bands.lo/hi` drive bottom/top vertical brightness. `act` drives motion. Same `--accent-l/c/h` oklch plumbing as `va.css` so feedback stays in the palette.
 
 ---
 
@@ -72,19 +100,24 @@ HUD: hue histogram, sparklines for bri/act, motion heat-map, video calibration p
 
 ```
 avva/
-  va.html             shell only — no inline styles/scripts
-  va.css              all CSS; @property typed custom properties
-  main.js             RAF loop, begin(), wires all modules
+  va.html             Program 1 shell — no inline styles/scripts
+  av.html             Program 2 shell — audio in, visuals out
+  loop.html           dev harness — both programs in one page, audio bus wired direct
+  va.css              shared CSS; @property typed custom properties
+  main.js             Program 1 RAF loop, begin(), wires all modules
+  main-av.js          Program 2 RAF loop
   MEMORY.md
   modules/
     config.js         CONFIG defaults + URL param parser
     color.js          rgbToHsv, luma, hueName — pure functions, no DOM
     video-source.js   VideoSource: camera vs looping file, same <video> element
-    analyzer.js       Analyzer: frame analysis, EMA, heatmap — source-agnostic
-    renderer.js       Renderer: all DOM mutations, CSS var updates, canvas draws
+    analyzer.js       Analyzer: video frame analysis, EMA, heatmap — source-agnostic
+    audio-analyzer.js AudioAnalyzer: FFT → 12-class chroma + bands + chord — source-agnostic
+    renderer.js       Renderer: all DOM mutations for Program 1
+    audio-renderer.js AudioRenderer: visuals from audio frame, palette-matched
     controls.js       Controls: keyboard bindings, fires callbacks only
     calibration.js    Calibration (data + filterString) + CalibrationPanel (HUD)
-    music.js          Key: hue→scale degree mapping, circular loop, triad data
+    music.js          Key: hue↔scale degree mapping (both directions), triad data
     synth.js          Synth: 3 triangle oscillators, glide, activity→portamento speed
 ```
 
@@ -162,14 +195,20 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 
 1. ✅ CAM→AUDIO analysis layer
 2. ✅ Synthesizer — triad oscillators, glide, hue→pitch, activity→portamento speed
-3. Wire analysis → synth refinement (hue histogram peaks for polyphony, timbre from saturation)
-4. AUDIO→VIS — mic input, FFT, generative visuals designed to feed back
-5. Loop test — point at each other, tune feedback behavior
+3. AUDIO→VIS:
+   a. ✅ Decision: polyphonic chromatic detection (12-class chroma + bands), not monophonic pitch
+   b. ✅ Decision: in-page audio bus harness (Option 1) for closed-loop dev
+   c. `Key.degreeToHue()` + chromatic-fallback hue mapping
+   d. `AudioAnalyzer` — port DetectTone, emit frame.out-shaped struct
+   e. `AudioRenderer` — render chroma + bands as palette-matched visuals
+   f. `loop.html` — wire synth master → AudioAnalyzer; both renderers side-by-side
+4. Loop refinement — once stable, swap shared-AudioContext for BlackHole/tab-capture
+5. Real acoustic loop (camera ↔ speakers ↔ mic)
 
 ---
 
 ## Open decisions
 
-- Polyphony from hue histogram peaks vs single dominant hue (monophonic first?)
-- Share old chord-detection JS when synth step begins
-- URL param convention: `?root=G&scale=dorian&tempo=72`
+- Out-of-scale chromatic notes: render with chromatic-circle hue (12 evenly-spaced hues) OR desaturated grey? Currently planning chromatic-circle so the visual stays vivid even when audio strays out of key.
+- Whether `loop.html` should also wire Program 2's canvas → Program 1's `<video>` via `canvas.captureStream()` for full closed loop. Not blocking initial build.
+- URL param convention: `?root=G&scale=dorian&tempo=72` (still TBD; Program 2 should accept same `root`/`mode`/`octave` as Program 1 for inverse mapping to work).

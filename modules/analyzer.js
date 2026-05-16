@@ -224,11 +224,21 @@ export class Analyzer {
         accBg += dBg;
 
         if (heatData) {
-          const t = Math.min(1, d * this._cfg.activityGain);
-          heatData[i] = 255 * t;
-          heatData[i + 1] = 200 * t * (0.4 + 0.6 * (1 - hue / 360));
-          heatData[i + 2] = 255 * t * (hue / 360);
-          heatData[i + 3] = t * 255 > 14 ? 255 : 0;
+          // Frame-diff (tFd): warm channel — fast edges and sudden changes.
+          // BG-diff   (tBg): cool blue channel — blob silhouettes vs background.
+          // Overlap → purple/magenta: slow mover with active edge simultaneously.
+          const gain = this._cfg.activityGain;
+          const tFd = Math.min(1, d * gain);
+          const tBg = Math.min(1, dBg * gain * 0.7);
+          heatData[i] = Math.min(255, 255 * tFd + 80 * tBg) | 0;
+          heatData[i + 1] =
+            Math.min(
+              255,
+              200 * tFd * (0.4 + 0.6 * (1 - hue / 360)) + 40 * tBg,
+            ) | 0;
+          heatData[i + 2] =
+            Math.min(255, 255 * tFd * (hue / 360) + 210 * tBg) | 0;
+          heatData[i + 3] = Math.max(tFd, tBg * 0.7) * 255 > 14 ? 255 : 0;
         }
       }
 

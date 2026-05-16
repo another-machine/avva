@@ -79,22 +79,105 @@
         <div class="huehist" id="huehist" aria-hidden="true"></div>
       </div>
 
-      <!-- Brightness panel -->
-      <div id="p-bri" class="panel" aria-label="Brightness readout">
-        <div class="panel__label">Brightness</div>
-        <div class="panel__value">
-          <span id="bri-v">—</span><span class="panel__unit">%</span>
-        </div>
-        <canvas class="spark" id="bri-spark"></canvas>
-      </div>
+      <!-- Brightness and Activity panels removed — now in signal monitor -->
 
-      <!-- Activity panel -->
-      <div id="p-act" class="panel" aria-label="Activity readout">
-        <div class="panel__label">Activity</div>
-        <div class="panel__value">
-          <span id="act-v">—</span><span class="panel__unit">%</span>
+      <!-- Signal monitor (right side) — readout for unmapped analysis signals + synth state -->
+      <div id="p-signals" class="panel sig" aria-label="Signal monitor">
+        <div class="sig__section">
+          <div class="sig__section-lbl">SYNTH</div>
+          <div class="sig__key-row">
+            <span class="sig__dot" id="sig-dot"></span>
+            <span id="sig-key-lbl">—</span>
+          </div>
+          <div class="sig__note-row">
+            <span class="sig__numeral" id="sig-numeral">—</span>
+            <span class="sig__sep">·</span>
+            <span class="sig__notename" id="sig-notename">—</span>
+          </div>
+          <div class="sig__quality" id="sig-quality"></div>
         </div>
-        <canvas class="spark" id="act-spark"></canvas>
+
+        <div class="sig__section">
+          <div class="sig__section-lbl">MOTION</div>
+          <div class="sig__row">
+            <span class="sig__lbl">ACT</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-act"></span
+            ></span>
+            <span class="sig__val" id="sv-act">—</span>
+          </div>
+          <canvas class="sig__spark" id="ss-act"></canvas>
+          <div class="sig__row">
+            <span class="sig__lbl">SLOW</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-actbg"></span
+            ></span>
+            <span class="sig__val" id="sv-actbg">—</span>
+          </div>
+          <canvas class="sig__spark" id="ss-actbg"></canvas>
+          <div class="sig__row">
+            <span class="sig__lbl">EDGE</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-actedge"></span
+            ></span>
+          </div>
+          <div class="sig__row">
+            <span class="sig__lbl">V·POS</span>
+            <span class="sig__track sig__track--pos"
+              ><span class="sig__pip" id="sb-vy"></span
+            ></span>
+            <span class="sig__val" id="sv-vy">—</span>
+          </div>
+          <canvas class="sig__spark" id="ss-vy"></canvas>
+        </div>
+
+        <div class="sig__section">
+          <div class="sig__section-lbl">TEXTURE</div>
+          <div class="sig__row">
+            <span class="sig__lbl">BRI</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-bri"></span
+            ></span>
+            <span class="sig__val" id="sv-bri">—</span>
+          </div>
+          <canvas class="sig__spark" id="ss-bri"></canvas>
+          <div class="sig__row">
+            <span class="sig__lbl">CTST</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-contrast"></span
+            ></span>
+            <span class="sig__val" id="sv-contrast">—</span>
+          </div>
+          <canvas class="sig__spark" id="ss-contrast"></canvas>
+          <div class="sig__row">
+            <span class="sig__lbl">SPRD</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-spread"></span
+            ></span>
+          </div>
+          <div class="sig__row">
+            <span class="sig__lbl">SAT</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-sat"></span
+            ></span>
+          </div>
+        </div>
+
+        <div class="sig__section">
+          <div class="sig__section-lbl">REGISTER</div>
+          <div class="sig__row">
+            <span class="sig__lbl">TOP</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-hi"></span
+            ></span>
+          </div>
+          <div class="sig__row">
+            <span class="sig__lbl">BTM</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-lo"></span
+            ></span>
+          </div>
+        </div>
       </div>
 
       <!-- Meta bar (bottom-left) -->

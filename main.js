@@ -161,7 +161,12 @@ function loop(t) {
   const videoEl = document.getElementById("vid");
   if (videoEl.readyState >= 2) {
     const frame = analyzer.analyze(videoEl);
-    renderer.paint(frame, state.fps);
+    const synthSnap = {
+      running: synth.running,
+      keyLabel: synth.key ? synth.key.label.toUpperCase() : "—",
+      note: synth.key ? synth.key.hueToNote(frame.out.hue) : null,
+    };
+    renderer.paint(frame, state.fps, synthSnap);
     synth.update(frame.out);
   }
 
