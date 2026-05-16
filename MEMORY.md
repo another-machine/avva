@@ -95,16 +95,16 @@ Polyphonic, no monophonic pitch detection:
 
 **Audio frame contract:**
 
-| Signal     | Derivation                                          |
-|------------|-----------------------------------------------------|
-| `chroma`   | Float32Array(12) — normalized per-class prominence  |
-| `bands`    | `{lo, mid, hi}` — band-summed FFT energy            |
-| `hue`      | circular mean of chroma mapped via `Key.degreeToHue` |
-| `spread`   | 1 − resultant length of circular mean               |
-| `bri`      | total spectral RMS                                  |
-| `act`      | frame-to-frame delta of chroma vector (L1 norm)     |
-| `sat`      | chord-template confidence                           |
-| `chord`    | best-match chord label + `{change: bool}`           |
+| Signal   | Derivation                                           |
+| -------- | ---------------------------------------------------- |
+| `chroma` | Float32Array(12) — normalized per-class prominence   |
+| `bands`  | `{lo, mid, hi}` — band-summed FFT energy             |
+| `hue`    | circular mean of chroma mapped via `Key.degreeToHue` |
+| `spread` | 1 − resultant length of circular mean                |
+| `bri`    | total spectral RMS                                   |
+| `act`    | frame-to-frame delta of chroma vector (L1 norm)      |
+| `sat`    | chord-template confidence                            |
+| `chord`  | best-match chord label + `{change: bool}`            |
 
 **Audio routing:** `loop.html` single-page harness. `synth._master` connects to both `destination` and `AudioAnalyzer.analyser`. No mic/OS routing/feedback risk.
 
@@ -213,7 +213,7 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 2. ✅ Synthesizer — pads (spread-gated triad), pluck (histogram-driven note selection), glide, slowness/quickness differentiation
 3. ✅ AUDIO→VIS:
    a. ✅ Polyphonic chromatic detection (12-class chroma + bands + chord)
-   b. ✅ In-page audio bus harness `loop.html` — synth._master → AudioAnalyzer tap
+   b. ✅ In-page audio bus harness `loop.html` — synth.\_master → AudioAnalyzer tap
    c. ✅ AudioRenderer — chroma + bands palette-matched visuals
    d. ✅ loop.html chord strip — live note pills for visual comparison
 4. Loop refinement — once stable, swap shared-AudioContext for BlackHole/tab-capture
