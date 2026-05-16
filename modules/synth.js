@@ -351,19 +351,6 @@ export class Synth {
       });
     });
 
-    // Pluck — histogram-driven note selection (unchanged below)
-    let degreeWeights = null;
-    if (histBins && histBins.length > 0) {
-      const nBins = histBins.length;
-      const raw = new Float64Array(7);
-      for (let b = 0; b < nBins; b++) {
-        const di = Math.floor(((b + 0.5) / nBins) * 7) % 7;
-        raw[di] += histBins[b];
-      }
-      const maxW = Math.max(...raw, 1e-6);
-      degreeWeights = Array.from(raw, (w) => Math.max(0.04, w / maxW));
-    }
-
     this._maybePluck(
       note,
       rawAct,
@@ -372,7 +359,6 @@ export class Synth {
       safeSpread,
       widthScale,
       now,
-      degreeWeights,
     );
 
     // === Delay: actBg → reverb depth (slow motion = echoey) ===
@@ -407,16 +393,7 @@ export class Synth {
    * Index peak: scaled by actEdge — sharp moving edges → sharper ping.
    * Pan: scaled by chosen scale-degree position × current stereo width.
    */
-  _maybePluck(
-    note,
-    quickness,
-    slowness,
-    edge,
-    spread,
-    widthScale,
-    now,
-    degreeWeights = null,
-  ) {
+  _maybePluck(note, quickness, slowness, edge, spread, widthScale, now) {
     // Pick the most-idle pluck voice (smallest nextAllowed = least recently used).
     if (!this._plucks.length) return;
     const pluck = this._plucks.reduce((best, v) =>
@@ -427,30 +404,19 @@ export class Synth {
     const trigProb = Math.max(quickness * 0.4, slowness * 0.2);
     if (Math.random() > trigProb) return;
 
-    // Note pick
-    let weights;
-    if (degreeWeights) {
-      weights = degreeWeights;
-    } else {
-      const d = note.degree;
-      const chordSet = new Set([d, (d + 2) % 7, (d + 4) % 7]);
-      weights = this.key.degrees.map((_, i) =>
-        chordSet.has(i) ? 1.0 : spread * 0.8,
-      );
-    }
-    const total = weights.reduce((a, b) => a + b, 0);
-    let r = Math.random() * total;
-    let chosen = 0;
-    for (let i = 0; i < 7; i++) {
-      r -= weights[i];
-      if (r <= 0) {
-        chosen = i;
-        break;
-      }
-    }
+    // Note pick: degrees ordered by consonance from root (root→5th→3rd→7th→6th→4th→2nd).
+    // Triad tones first, then extensions, then suspensions, then the dissonant 2nd last.
+    // spread gates how many are reachable: monochromatic → root only; full spectrum → all 7.
+    const d = note.degree;
+    const CONSONANCE_STEPS = [0, 4, 2, 6, 5, 3, 1];
+    const orderedDegrees = CONSONANCE_STEPS.map((s) => (d + s) % 7);
+    const nUnlocked = Math.round(1 + spread * 6); // 1 at spread=0, 7 at spread=1
+    const chosen = orderedDegrees[Math.floor(Math.random() * nUnlocked)];
 
-    const octMult = Math.pow(2, 1 - slowness * 2);
-    const fc = this.key.degrees[chosen].freq * octMult;
+    // Snap to nearest integer octave so the pluck is always in tune.
+    // slowness 0–0.25 → +1 oct, 0.25–0.75 → same oct, 0.75–1 → −1 oct.
+    const octShift = Math.round(1 - slowness * 2);
+    const fc = this.key.degrees[chosen].freq * Math.pow(2, octShift);
     if (!Number.isFinite(fc) || fc <= 0) return;
 
     // Envelope shaping (same character knobs as v0.5 pluck)

@@ -61,6 +61,13 @@ const NOTE_NAMES = [
 ];
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII"];
 
+// Diatonic circle-of-fifths order: each step is +4 scale degrees mod 7.
+// Arrangement on hue wheel: I→V→II→VI→III→VII→IV→(wrap to I)
+// Adjacent hues are a diatonic fifth apart, not a scale step apart.
+const DIATONIC_FIFTHS     = [0, 4, 1, 5, 2, 6, 3]; // sector→degree
+const DIATONIC_FIFTHS_INV = [0, 2, 4, 6, 1, 3, 5]; // degree→sector
+const SECTOR_DEG = 360 / 7; // ≈ 51.43° per degree
+
 /** Equal-temperament frequency relative to A4 = 440 Hz. */
 function noteFreq(chromaticIndex, octave) {
   return 440 * Math.pow(2, (chromaticIndex - 9 + (octave - 4) * 12) / 12);
@@ -122,26 +129,31 @@ export class Key {
   /**
    * Map a hue angle (0–360°) to a scale degree.
    *
-   * The 7 degrees are spaced evenly across the circle. hue 0 and hue 360
-   * both land on degree 0 (tonic), so the wrap at the spectrum boundary
-   * IS the leading-tone-to-tonic cadence (VII→I).
+   * The hue circle is treated as a chromatic octave (30° per semitone).
+   * Each diatonic degree owns the hue range from its own semitone offset to
+   * the next degree's offset, so half-step intervals get a narrow 30° slice
+   * and whole-step intervals get a 60° slice.  This keeps the hue distance
+   * between two notes proportional to their musical interval.
+   *
+   * hue 0° = root, hue 360° wraps back to root (VII→I cadence preserved).
    *
    * @param   {number} hue  0–360 (wraps safely outside this range)
    * @returns {{ degree, name, octave, freq, quality, numeral, triad, t }}
    *          t: 0–1 interpolation position within this degree's hue slice
    */
   hueToNote(hue) {
-    const h = ((hue % 360) + 360) % 360; // normalise to [0, 360)
-    const pos = (h / 360) * 7; // 0 to <7
-    const i = Math.floor(pos) % 7;
-    const t = pos - Math.floor(pos); // 0–1 within slice
-    return { ...this.degrees[i], t };
+    const h = ((hue % 360) + 360) % 360;
+    // Divide the hue wheel into 7 equal sectors in circle-of-fifths order.
+    // Adjacent sectors are a diatonic fifth apart, not a scale step.
+    const si = Math.min(6, Math.floor(h / SECTOR_DEG));
+    const chosen = DIATONIC_FIFTHS[si];
+    const t = (h - si * SECTOR_DEG) / SECTOR_DEG;
+    return { ...this.degrees[chosen], t };
   }
 
   /**
    * Inverse of hueToNote: map a scale degree (0–6) to a hue angle.
-   * Degrees land at the center of their hue slice by default (t=0.5),
-   * matching what hueToNote returns when given that hue back.
+   * t=0 → start of the degree's chromatic slice, t=0.5 → center, t=1 → end.
    *
    * @param   {number} degree   0–6 (wraps)
    * @param   {number} [t=0.5]  0=slice start, 1=next slice start
@@ -149,7 +161,7 @@ export class Key {
    */
   degreeToHue(degree, t = 0.5) {
     const i = ((degree % 7) + 7) % 7;
-    return ((i + t) * 360) / 7;
+    return (DIATONIC_FIFTHS_INV[i] + t) * SECTOR_DEG;
   }
 
   /**
@@ -178,23 +190,32 @@ export class Key {
 
   _buildChromaticHues() {
     const steps = SCALE_STEPS[this.mode] ?? SCALE_STEPS.major;
-    // Center of each degree's hue slice
-    const stepHues = steps.map((_, i) => ((i + 0.5) * 360) / 7);
-    // Append wrap-around tonic so interpolation handles chromatic notes
-    // above the last in-scale step (e.g. B♭ in C minor between deg 6 and tonic).
-    const stepsExt = [...steps, steps[0] + 12];
-    const huesExt = [...stepHues, stepHues[0] + 360];
+    // In-scale notes land at the center of their hue sector.
+    const semiToHue = new Map();
+    for (let d = 0; d < 7; d++) semiToHue.set(steps[d], this.degreeToHue(d));
 
     const out = new Float32Array(12);
     for (let cIdx = 0; cIdx < 12; cIdx++) {
-      const rel = (cIdx - this._rootIdx + 12) % 12; // semitones above root
-      let i = 0;
-      while (i + 1 < stepsExt.length && stepsExt[i + 1] <= rel) i++;
-      if (stepsExt[i] === rel) {
-        out[cIdx] = stepHues[i];
+      const rel = (cIdx - this._rootIdx + 12) % 12;
+      if (semiToHue.has(rel)) {
+        out[cIdx] = semiToHue.get(rel);
       } else {
-        const t = (rel - stepsExt[i]) / (stepsExt[i + 1] - stepsExt[i]);
-        out[cIdx] = (huesExt[i] + t * (huesExt[i + 1] - huesExt[i])) % 360;
+        // Interpolate between chromatic neighbours that are in-scale.
+        let loRel = rel, hiRel = rel;
+        for (let s = 1; s <= 12; s++) {
+          if (semiToHue.has((rel - s + 12) % 12)) { loRel = (rel - s + 12) % 12; break; }
+        }
+        for (let s = 1; s <= 12; s++) {
+          if (semiToHue.has((rel + s) % 12)) { hiRel = (rel + s) % 12; break; }
+        }
+        const loHue = semiToHue.get(loRel);
+        const hiHue = semiToHue.get(hiRel);
+        const span = (hiRel - loRel + 12) % 12 || 12;
+        const pos  = (rel   - loRel + 12) % 12;
+        let dh = hiHue - loHue;
+        if (dh >  180) dh -= 360; // shortest arc
+        if (dh < -180) dh += 360;
+        out[cIdx] = ((loHue + (pos / span) * dh) % 360 + 360) % 360;
       }
     }
     return out;

@@ -14,8 +14,8 @@
 const DEFAULTS = {
   // --- video source ---
   // "camera" → getUserMedia; any other string → treated as a video file path
-  source: "camera",
-  // source: ["assets/lavalamp.mp4", "assets/mario.mp4", "assets/tmnt.mp4"],
+  // source: "camera",
+  source: ["assets/lavalamp.mp4", "assets/mario.mp4", "assets/tmnt.mp4"],
 
   // --- analysis resolution ---
   // Low values = faster, more stable; high values = more spatial detail
