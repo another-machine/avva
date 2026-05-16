@@ -14,8 +14,8 @@
 const DEFAULTS = {
   // --- video source ---
   // "camera" → getUserMedia; any other string → treated as a video file path
-  // source: "camera",
-  source: ["assets/lavalamp.mp4", "assets/mario.mp4", "assets/tmnt.mp4"],
+  source: "camera",
+  // source: ["assets/lavalamp.mp4", "assets/mario.mp4", "assets/tmnt.mp4"],
 
   // --- analysis resolution ---
   // Low values = faster, more stable; high values = more spatial detail
@@ -59,8 +59,8 @@ const DEFAULTS = {
   fmRatioDrift: 0.04, // max ±drift off integer ratio at spread=1
   // spread → stereo width
   fmStereoWidth: 0.75, // max width multiplier at spread=1 (0.25 minimum)
-  // pluck FM ratio (DX-style metallic ping at 7; clarinet-ish at 3)
-  fmPluckRatio: 7,
+  // pluck FM ratio (DX-style metallic ping at 7; clarinet-ish at 3; mallet/pluck at 2)
+  fmPluckRatio: 2,
 };
 
 /** Parse URL search params and return overrides matching known keys. */

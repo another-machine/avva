@@ -460,12 +460,12 @@ export class Synth {
     const peak = 0.1 + slowness * 0.08;
 
     // FM specifics
-    // Index peak rises with edge — crisp moving edges → sharper ping.
-    // Slow strikes use a milder ping to read as mallet rather than zap.
-    const indexPeak = (1.5 + edge * 3.5) * (1 - slowness * 0.5);
-    // Modulation decay relative to amplitude — slower strikes hold more
-    // timbral motion (longer "metallic" tail), faster strikes snap to sine.
-    const modDecayTau = ampDecayTau * (0.25 + slowness * 0.35);
+    // Index peak kept low so the attack has body without harsh metallic clang.
+    // Edge adds a little brightness but stays muted.
+    const indexPeak = (0.6 + edge * 1.0) * (1 - slowness * 0.4);
+    // Mod envelope decays very quickly — the harmonic colour snaps to a
+    // near-pure tone almost immediately, giving a warm pluck/mallet character.
+    const modDecayTau = ampDecayTau * (0.06 + slowness * 0.14);
 
     pluck.fm.pluck(fc, {
       peak,
