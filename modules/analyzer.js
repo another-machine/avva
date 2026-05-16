@@ -15,7 +15,19 @@
  *   3. Activity   — mean absolute luma delta vs previous frame
  *
  * @typedef {Object} AnalysisFrame
- * @property {{ hue: number, sat: number, bri: number, act: number }} out
+ * @property {{ hue: number, sat: number, bri: number, act: number,
+ *              hi: number, lo: number,
+ *              vy: number, contrast: number,
+ *              actEdge: number, spread: number, dContrast: number,
+ *              actBg: number }} out
+ *   out.hi        — mean brightness, top ⅓ of frame
+ *   out.lo        — mean brightness, bottom ⅓ of frame
+ *   out.vy        — vertical brightness centroid (0 = top, 1 = bottom)
+ *   out.contrast  — brightness std-dev within frame (0 = flat, ~0.5 = max)
+ *   out.actEdge   — activity weighted by local spatial gradient (motion at edges)
+ *   out.spread    — hue spread: 0 = monochromatic, 1 = full rainbow
+ *   out.dContrast — rate of contrast change (+= structure forming, -= dissolving)
+ *   out.actBg     — background-subtraction activity: catches slow movers frame-diff misses
  * @property {Float32Array}   histBins      — raw hue histogram weights
  * @property {number[]}       briHist       — recent brightness history (0–1)
  * @property {number[]}       actHist       — recent activity history (0–1)
@@ -30,21 +42,35 @@ export class Analyzer {
    * @param {import('./calibration.js').Calibration|null} calibration
    */
   constructor(config, calibration = null) {
-    this._cfg         = config;
+    this._cfg = config;
     this._calibration = calibration;
 
     // Off-screen sample canvas — never displayed
     this._canvas = document.createElement("canvas");
-    this._canvas.width  = config.sampleW;
+    this._canvas.width = config.sampleW;
     this._canvas.height = config.sampleH;
     this._ctx = this._canvas.getContext("2d", { willReadFrequently: true });
 
     // State
-    this._prev     = null;
-    this._out      = { hue: 0, sat: 0, bri: 0, act: 0 };
+    this._prev = null;
+    this._out = {
+      hue: 0,
+      sat: 0,
+      bri: 0,
+      act: 0,
+      hi: 0,
+      lo: 0,
+      vy: 0.5,
+      contrast: 0,
+      actEdge: 0,
+      spread: 0,
+      dContrast: 0,
+      actBg: 0,
+    };
+    this._prevContrast = 0; // for dContrast derivative
     this._histBins = new Float32Array(config.hueBins);
-    this._briHist  = [];
-    this._actHist  = [];
+    this._briHist = [];
+    this._actHist = [];
 
     this.heatOn = false;
   }
@@ -72,21 +98,44 @@ export class Analyzer {
       return this._currentFrame(null); // tainted canvas (CORS)
     }
 
-    const px  = frame.data;
+    const px = frame.data;
     const nPx = px.length / 4;
 
+    // Lazily initialize the background model for slow-mover detection.
+    if (!this._bg) this._bg = new Float32Array(px);
+
     // ── Pass 1: hue + brightness + histogram ──────────────────
-    let sumX = 0, sumY = 0, sumW = 0;
-    let briSum = 0, satSum = 0, satN = 0;
+    let sumX = 0,
+      sumY = 0,
+      sumW = 0;
+    let briSum = 0,
+      satSum = 0,
+      satN = 0;
+    let briSumSq = 0; // for contrast (brightness std-dev)
+    let yWeightSum = 0; // for vy (vertical brightness centroid)
+    const rowStride = W * 4; // bytes per row
+
+    // Vertical register split: top/bottom thirds drive hi/lo synth tiers.
+    // Thresholds are byte offsets into the ImageData flat array.
+    const topThresh = W * 4 * Math.floor(H / 3);
+    const botThresh = W * 4 * Math.ceil((H * 2) / 3);
+    const nTop = Math.floor(H / 3) * W;
+    const nBot = (H - Math.ceil((H * 2) / 3)) * W;
+    let briTopSum = 0,
+      briBotSum = 0;
 
     this._histBins.fill(0);
 
     for (let i = 0; i < px.length; i += 4) {
       const [h, s, v] = rgbToHsv(px[i], px[i + 1], px[i + 2]);
       briSum += v;
+      briSumSq += v * v;
+      yWeightSum += ((i / rowStride) | 0) * v; // row index × brightness
+      if (i < topThresh) briTopSum += v;
+      else if (i >= botThresh) briBotSum += v;
 
       if (s > this._cfg.satFloor && v > this._cfg.valFloor) {
-        const w   = s * v; // vivid, lit pixels vote loudest
+        const w = s * v; // vivid, lit pixels vote loudest
         const rad = (h * Math.PI) / 180;
         sumX += Math.cos(rad) * w;
         sumY += Math.sin(rad) * w;
@@ -96,7 +145,7 @@ export class Analyzer {
 
         const bin = Math.min(
           this._cfg.hueBins - 1,
-          ((h / 360) * this._cfg.hueBins) | 0
+          ((h / 360) * this._cfg.hueBins) | 0,
         );
         this._histBins[bin] += w;
       }
@@ -109,6 +158,12 @@ export class Analyzer {
       if (a < 0) a += 360;
       hue = a;
     }
+
+    // Hue spread: how concentrated is the hue distribution?
+    // 0 = all one hue (monochromatic), 1 = uniform rainbow.
+    // Free: reuses the circular-mean resultant length already computed above.
+    const spread =
+      sumW > 0.0001 ? 1 - Math.sqrt(sumX * sumX + sumY * sumY) / sumW : 0;
 
     const bri = briSum / nPx;
     const sat = satN > 0 ? satSum / satN : 0;
@@ -123,10 +178,14 @@ export class Analyzer {
     // d = sqrt(0.299·ΔR² + 0.587·ΔG² + 0.114·ΔB²) / 255
     // Range 0–1; max = 1.0 (white↔black). Same scale as old luma approach.
     let act = 0;
+    let actEdge = 0;
+    let actBg = 0;
     let heatImageData = null;
 
     if (this._prev) {
       let acc = 0;
+      let accEdge = 0;
+      let accBg = 0;
       let heatData;
 
       if (this.heatOn) {
@@ -135,16 +194,38 @@ export class Analyzer {
       }
 
       for (let i = 0; i < px.length; i += 4) {
-        const dr = (px[i]   - this._prev[i])   / 255;
-        const dg = (px[i+1] - this._prev[i+1]) / 255;
-        const db = (px[i+2] - this._prev[i+2]) / 255;
+        const dr = (px[i] - this._prev[i]) / 255;
+        const dg = (px[i + 1] - this._prev[i + 1]) / 255;
+        const db = (px[i + 2] - this._prev[i + 2]) / 255;
         let d = Math.sqrt(0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db);
         if (d < this._cfg.activityNoise) d = 0;
         acc += d;
 
+        // Edge-weighted activity: motion × local horizontal gradient.
+        // Uses left-neighbor luma diff; stays in same row except at row start
+        // (where li === i, gradient = 0 — a safe no-op for one pixel per row).
+        if (d > 0) {
+          const li = i >= 4 ? i - 4 : i;
+          const luma =
+            (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) / 255;
+          const lumaL =
+            (px[li] * 0.299 + px[li + 1] * 0.587 + px[li + 2] * 0.114) / 255;
+          accEdge += d * Math.abs(luma - lumaL);
+        }
+
+        // Background-subtraction activity: current pixel vs slowly-drifting model.
+        const drBg = (px[i] - this._bg[i]) / 255;
+        const dgBg = (px[i + 1] - this._bg[i + 1]) / 255;
+        const dbBg = (px[i + 2] - this._bg[i + 2]) / 255;
+        let dBg = Math.sqrt(
+          0.299 * drBg * drBg + 0.587 * dgBg * dgBg + 0.114 * dbBg * dbBg,
+        );
+        if (dBg < this._cfg.activityNoise) dBg = 0;
+        accBg += dBg;
+
         if (heatData) {
           const t = Math.min(1, d * this._cfg.activityGain);
-          heatData[i]     = 255 * t;
+          heatData[i] = 255 * t;
           heatData[i + 1] = 200 * t * (0.4 + 0.6 * (1 - hue / 360));
           heatData[i + 2] = 255 * t * (hue / 360);
           heatData[i + 3] = t * 255 > 14 ? 255 : 0;
@@ -152,20 +233,49 @@ export class Analyzer {
       }
 
       act = Math.min(1, (acc / nPx) * this._cfg.activityGain);
+      actEdge = Math.min(1, (accEdge / nPx) * this._cfg.activityGain * 6);
+      actBg = Math.min(1, (accBg / nPx) * this._cfg.activityGain);
     } else {
       this._prev = new Uint8ClampedArray(px.length);
     }
 
     this._prev.set(px);
 
+    // Update background model — slow EMA (~33-frame time constant at 30 fps ≈ 1 s).
+    // Anything moving faster than the background drifts will remain visible.
+    const bgK = 0.03;
+    for (let i = 0; i < this._bg.length; i++) {
+      this._bg[i] += (px[i] - this._bg[i]) * bgK;
+    }
+
     // ── EMA smoothing (shortest-arc for hue) ─────────────────
-    const k  = this._cfg.smoothing;
+    const briTop = nTop > 0 ? briTopSum / nTop : 0;
+    const briBot = nBot > 0 ? briBotSum / nBot : 0;
+    // Vertical brightness centroid: 0 = all mass at top, 1 = all mass at bottom
+    const vy = briSum > 0.0001 ? yWeightSum / (briSum * (H - 1)) : 0.5;
+
+    // Brightness standard deviation — how much structural contrast is in the frame
+    const briMean = briSum / nPx;
+    const contrast = Math.sqrt(Math.max(0, briSumSq / nPx - briMean * briMean));
+    const k = this._cfg.smoothing;
     const kh = this._cfg.hueSmoothing;
     const dh = ((hue - this._out.hue + 540) % 360) - 180;
     this._out.hue = (this._out.hue + dh * kh + 360) % 360;
     this._out.bri += (bri - this._out.bri) * k;
     this._out.sat += (sat - this._out.sat) * k;
     this._out.act += (act - this._out.act) * k;
+    this._out.hi += (briTop - this._out.hi) * k;
+    this._out.lo += (briBot - this._out.lo) * k;
+    this._out.vy += (vy - this._out.vy) * k;
+    this._out.contrast += (contrast - this._out.contrast) * k;
+    this._out.actEdge += (actEdge - this._out.actEdge) * k;
+    this._out.spread += (spread - this._out.spread) * k;
+    this._out.actBg += (actBg - this._out.actBg) * k;
+
+    // dContrast: signed rate-of-change of smoothed contrast.
+    // Positive = structure forming (blobs emerging), negative = dissolving.
+    this._out.dContrast = this._out.contrast - this._prevContrast;
+    this._prevContrast = this._out.contrast;
 
     // ── History ───────────────────────────────────────────────
     this._briHist.push(this._out.bri);
@@ -180,10 +290,10 @@ export class Analyzer {
 
   _currentFrame(heatImageData) {
     return {
-      out:          { ...this._out },
-      histBins:     this._histBins,
-      briHist:      this._briHist,
-      actHist:      this._actHist,
+      out: { ...this._out },
+      histBins: this._histBins,
+      briHist: this._briHist,
+      actHist: this._actHist,
       heatImageData,
     };
   }

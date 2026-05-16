@@ -42,6 +42,14 @@ const DEFAULTS = {
   // --- camera ---
   mirror: false,
   preferCamera: "environment", // "environment" | "user"
+
+  // --- synth ---
+  root: "A",
+  mode: "locrian",
+  octave: 4,
+  glideMin: 0.01, // seconds at act=1 (staccato)
+  glideMax: 2.0, // seconds at act=0 (legato)
+  masterGain: 0.35,
 };
 
 /** Parse URL search params and return overrides matching known keys. */
@@ -50,7 +58,7 @@ function parseUrlParams() {
   const out = {};
 
   // String params
-  for (const k of ["source", "preferCamera"]) {
+  for (const k of ["source", "preferCamera", "root", "mode"]) {
     if (p.has(k)) out[k] = p.get(k);
   }
 
@@ -66,6 +74,10 @@ function parseUrlParams() {
     "activityNoise",
     "hueBins",
     "sparkLen",
+    "octave",
+    "glideMin",
+    "glideMax",
+    "masterGain",
   ]) {
     if (p.has(k)) {
       const v = Number(p.get(k));

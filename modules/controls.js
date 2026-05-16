@@ -12,6 +12,7 @@
  *   R — toggle mirror
  *   F — toggle fullscreen
  *   C — cycle source (cameras if camera mode; files if source is an array)
+ *   S — toggle synth audio on/off
  *
  * While calibration panel is visible:
  *   ↑ / ↓   — adjust selected parameter
@@ -26,10 +27,11 @@ export class Controls {
    * @param {() => void}           callbacks.onHeatToggle
    * @param {() => void}           callbacks.onMirrorToggle
    * @param {() => Promise<void>}  callbacks.onCycleSource
+   * @param {() => void}           [callbacks.onSynthToggle]
    * @param {import('./calibration.js').CalibrationPanel} [callbacks.calibrationPanel]
    */
   constructor(callbacks) {
-    this._cb  = callbacks;
+    this._cb = callbacks;
     this._cal = callbacks.calibrationPanel ?? null;
     this._bound = this._onKey.bind(this);
   }
@@ -45,7 +47,11 @@ export class Controls {
   // ── Private ──────────────────────────────────────────────────
 
   _onKey(e) {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement
+    )
+      return;
 
     // Calibration panel gets first crack at key events when visible.
     // Arrow keys and Tab are consumed there; V/Esc fall through.
@@ -72,6 +78,9 @@ export class Controls {
         break;
       case "c":
         this._cb.onCycleSource?.();
+        break;
+      case "s":
+        this._cb.onSynthToggle?.();
         break;
     }
   }

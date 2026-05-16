@@ -12,32 +12,34 @@
  *   ?smoothing=0.25             analysis tuning overrides
  */
 
-import { CONFIG }                         from "./modules/config.js";
-import { VideoSource }                    from "./modules/video-source.js";
-import { Analyzer }                       from "./modules/analyzer.js";
-import { Renderer }                       from "./modules/renderer.js";
-import { Controls }                       from "./modules/controls.js";
-import { Calibration, CalibrationPanel }  from "./modules/calibration.js";
+import { CONFIG } from "./modules/config.js";
+import { VideoSource } from "./modules/video-source.js";
+import { Analyzer } from "./modules/analyzer.js";
+import { Renderer } from "./modules/renderer.js";
+import { Controls } from "./modules/controls.js";
+import { Calibration, CalibrationPanel } from "./modules/calibration.js";
+import { Key } from "./modules/music.js";
+import { Synth } from "./modules/synth.js";
 
 // ── Application state ─────────────────────────────────────────
 
 const state = {
   heatOn: false,
-  hudOn:  true,
+  hudOn: true,
   mirror: CONFIG.mirror,
-  fps:    0,
+  fps: 0,
   frames: 0,
-  fpsT:   0,
-  lastT:  0,
+  fpsT: 0,
+  lastT: 0,
 };
 
-let videoSource, analyzer, renderer, controls, calibration, calPanel;
+let videoSource, analyzer, renderer, controls, calibration, calPanel, synth;
 
 // ── Entry ─────────────────────────────────────────────────────
 
 async function begin() {
   const videoEl = document.getElementById("vid");
-  const errEl   = document.getElementById("err");
+  const errEl = document.getElementById("err");
 
   // Apply initial mirror state to both video and heat canvas
   videoEl.classList.toggle("mirror", state.mirror);
@@ -51,8 +53,16 @@ async function begin() {
 
   // Instantiate core modules
   videoSource = new VideoSource(videoEl, CONFIG);
-  analyzer    = new Analyzer(CONFIG, calibration);
-  renderer    = new Renderer(CONFIG);
+  analyzer = new Analyzer(CONFIG, calibration);
+  renderer = new Renderer(CONFIG);
+
+  // Synth — started on S key (requires user gesture for AudioContext)
+  synth = new Synth(CONFIG);
+  synth.key = new Key({
+    root: CONFIG.root,
+    mode: CONFIG.mode,
+    octave: CONFIG.octave,
+  });
 
   // Calibration panel — onChange keeps video display in sync with analysis
   calPanel = new CalibrationPanel(calibration, {
@@ -66,7 +76,9 @@ async function begin() {
     await videoSource.start();
   } catch (e) {
     errEl.textContent =
-      (CONFIG.source === "camera" ? "Camera unavailable: " : "Video file error: ") +
+      (CONFIG.source === "camera"
+        ? "Camera unavailable: "
+        : "Video file error: ") +
       (e.message || e.name) +
       (CONFIG.source === "camera"
         ? " — check browser permissions, or serve over https/localhost."
@@ -96,7 +108,7 @@ async function begin() {
     },
 
     onHeatToggle() {
-      state.heatOn    = !state.heatOn;
+      state.heatOn = !state.heatOn;
       analyzer.heatOn = state.heatOn;
       renderer.setHeatVisible(state.heatOn);
     },
@@ -116,6 +128,10 @@ async function begin() {
         // Silently ignore source switch failures
       }
     },
+
+    onSynthToggle() {
+      synth.toggle();
+    },
   });
   controls.bind();
 
@@ -130,22 +146,23 @@ async function begin() {
 // ── RAF loop ──────────────────────────────────────────────────
 
 function loop(t) {
-  const dt  = t - state.lastT;
+  const dt = t - state.lastT;
   state.lastT = t;
 
   // Rolling FPS counter (500ms window)
   state.frames++;
   state.fpsT += dt;
   if (state.fpsT >= 500) {
-    state.fps    = state.frames / (state.fpsT / 1000);
+    state.fps = state.frames / (state.fpsT / 1000);
     state.frames = 0;
-    state.fpsT   = 0;
+    state.fpsT = 0;
   }
 
   const videoEl = document.getElementById("vid");
   if (videoEl.readyState >= 2) {
     const frame = analyzer.analyze(videoEl);
     renderer.paint(frame, state.fps);
+    synth.update(frame.out);
   }
 
   requestAnimationFrame(loop);
@@ -156,14 +173,17 @@ function loop(t) {
 function initGate() {
   if (CONFIG.source !== "camera") {
     // File / file-array mode — no camera permission needed, auto-start
-    const sources  = Array.isArray(CONFIG.source) ? CONFIG.source : [CONFIG.source];
-    const subLabel = sources.length > 1
-      ? `${sources.length} sources · C to cycle`
-      : sources[0].split("/").pop();
+    const sources = Array.isArray(CONFIG.source)
+      ? CONFIG.source
+      : [CONFIG.source];
+    const subLabel =
+      sources.length > 1
+        ? `${sources.length} sources · C to cycle`
+        : sources[0].split("/").pop();
 
     document.querySelector(".gate__title").textContent = "VA · FILE MODE";
-    document.querySelector(".gate__sub").textContent   = subLabel;
-    document.querySelector(".gate__btn").textContent   = "Begin";
+    document.querySelector(".gate__sub").textContent = subLabel;
+    document.querySelector(".gate__btn").textContent = "Begin";
     begin();
   } else {
     document.getElementById("go").addEventListener("click", begin);
