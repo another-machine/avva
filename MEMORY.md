@@ -17,7 +17,7 @@ A human stepping in front of the camera breaks the loop and injects new signal.
 
 ---
 
-## Current state (v0.6)
+## Current state (v0.7)
 
 **Program 1: CAM→AUDIO** — `va.html` (analysis + synth)
 
@@ -36,56 +36,67 @@ Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTIO
 
 **Synth:** `modules/synth.js` + `modules/music.js` + `modules/fm-voice.js`
 
-- **`Key`** class maps hue (0–360°) → diatonic scale degree (I–VII) in a circular path
-  - Degrees spaced evenly across the spectrum; 0° and 360° both resolve to the tonic
-  - The VII (leading tone) at ~310–360° naturally cadences back to I — the wrap IS the resolution
+- **`Key`** class maps hue (0–360°) → diatonic scale degree (I–VII)
+  - **Circle-of-fifths hue ordering**: hue wheel divided into 7 equal sectors (≈51.4° each) in the order I→V→II→VI→III→VII→IV. Adjacent hues are a diatonic fifth apart, not a scale step — harmonically organic traversal as hue shifts.
+  - For A locrian: 0°–51° = A (I), 51°–103° = Eb (V), 103°–154° = Bb (II), 154°–206° = F (VI), 206°–257° = C (III), 257°–309° = G (VII), 309°–360° = D (IV)
+  - `hueToNote(hue)` → `{ degree, name, freq, triad, t }` using `DIATONIC_FIFTHS = [0,4,1,5,2,6,3]` sector table
+  - `degreeToHue(degree, t=0.5)` → hue at center of that degree's sector (inverse)
+  - `_buildChromaticHues()` → out-of-scale chromatic notes interpolated between nearest in-scale neighbors on the fifths-ordered wheel
   - Modes: major, minor, dorian, phrygian, lydian, mixolydian, locrian
   - URL params: `?root=A&mode=locrian&octave=4` (current default: A locrian)
+
 - **`FMVoice`** — 2-operator FM primitive
   - `modulator (sine) → modGain → carrier.frequency`, `carrier (sine) → outGain → dest`
   - `modGain.gain = index × current modulator freq` — keeps timbre stable across pitch
   - Methods: `glideTo(fc, tau)` · `setIndex(i, tau)` · `setRatio(r, tau)` · `setGain(g, tau)` · `pluck(fc, opts)`
-  - Pluck schedules mod-depth and amp-gain envelopes independently — mod decays faster than amp → classic DX "metallic ping → pure tone" arc
-- **`Synth`** — 9 FM pads + 1 FM pluck (replaced triangle/sine v0.5 build)
-  - 3 tiers × 3 chord-tone voices (root/3rd/5th); per-tier base FM ratio:
-    - Bass (oct −1) ratio 2 — even harmonics only → fat, woody
-    - Mid (oct 0) ratio 1 — full harmonic
-    - Treble (oct +1) ratio 1 — full harmonic, slightly brighter index range
+  - Pluck schedules mod-depth and amp-gain envelopes independently — mod decays faster than amp → warm mallet/pluck arc
+
+- **`Synth`** — 15 FM pads + 3 FM plucks + 1 sub-bass oscillator
+  - Signal graph: `15 FM pads → per-voice panners → master gain → delay send (→ LPF → feedback → comp) → comp → destination`; `3 plucks → panners → master`; `sub-bass → master`; `tremolo LFO → master.gain`
+  - **3 tiers × 5 voices** (root, 3rd, 5th, 7th*, 9th*); per-tier base FM ratio:
+    - Bass (oct −1) ratio 2 — even harmonics only → fat, woody; index ← contrast
+    - Mid (oct 0) ratio 1 — full harmonic; index ← sat
+    - Treble (oct +1) ratio 1 — full harmonic, brighter index range; index ← sat
+    - \*7th extension fades in at sat > 0.35 (seventhW); 9th at sat > 0.65 (ninthW). Frequencies pushed above the 5th by octave-doubling; capped at 6 kHz / 8 kHz.
+  - **Voice-led drop-5th**: mid-tier voice 2 (5th) compares its close-position frequency and a dropped-octave version against `_prevRootFreq`. Picks whichever is logarithmically closer to the previous root — smooths chord changes, produces natural open voicing.
   - **Tier crossfade by `vy`** (vertical brightness centroid) — unchanged from v0.5
-  - **Triad voice gating by `spread`** — unchanged from v0.5 (root → 3rd → 5th fade-in)
-  - **`sat` → pad modulation index** — vivid color = bright timbre (idxBase + sat × idxScale)
-  - **`contrast` → bass modulation index** — structured frames grow growl in the low end
-  - **`spread` → ratio drift** — voices 0/1/2 drift +0/+δ/−δ off integer ratio (δ = spread × fmRatioDrift). Monochromatic frames stay perfectly harmonic; rainbow frames produce chorusy beating sidebands.
-  - **Stereo width — per-voice StereoPannerNode** chained after each FMVoice.outGain
-    - Base pan positions widen from bass (±0.18) → mid (±0.42) → treble (±0.7); voice 1 (3rd) sits center
-    - Whole field scaled by `0.25 + spread × fmStereoWidth` (default 0.75 max width). Monochromatic = near-center, rainbow = open field.
-    - Pan glides at slowTau (~4× freq tau) to avoid frame-rate twitching
-  - **Glide via `setTargetAtTime`**: activity drives glide speed (act≈0 → glideMax/3, act≈1 → glideMin/3). Index and ratio glides use slowTau to feel like timbre evolution rather than per-frame jitter.
-  - **Pluck voice** — FMVoice with ratio 7 (DX-style):
-    - `trigProb = max(quickness×0.4, slowness×0.2)`, histogram-driven note pick (or chord-tones × spread fallback)
-    - Octave by slowness: `Math.pow(2, 1 − slowness×2)`
-    - Index peak boosted by `actEdge` (sharp edges → sharper ping); mod-decay shorter than amp-decay
-    - Pan from chosen scale degree: tonic = leftmost, leading tone = rightmost, scaled by current width × 0.75
+  - **Triad voice gating by `spread`** — root always on; 3rd fades in at spread > 0.15; 5th at spread > 0.4
+  - **`sat` → pad modulation index** — vivid color = bright timbre
+  - **`contrast` → bass modulation index** — structured frames add growl in the low end
+  - **`spread` → ratio drift** — voices 0/1/2 drift +0/+δ/−δ (δ = spread × fmRatioDrift). Monochromatic = harmonic; rainbow = chorusy beating.
+  - **Stereo width** — `widthScale = 0.25 + spread × fmStereoWidth`. Bass ±0.18, mid ±0.42, treble ±0.70. Extensions at ±0.12/0.32/0.55.
+  - **Delay chain** — tap off master → 320 ms delay → LPF (3800 Hz) → feedback loop → wet mix. `actBg` drives feedback (0.05→0.60) and wet (0→0.35). Slow/ambient scenes = reverberant; fast motion = dry.
+  - **Tremolo LFO** — sine oscillator → master.gain. `|dContrast| × 0.12` drives depth; `act` drives rate (5–9 Hz). Structure forming/dissolving = flutter.
+  - **Sub-bass** — sine oscillator 2 octaves below root; `lo × 0.25` drives amplitude (bottom-screen brightness = sub weight).
+  - **Glide** — `setTargetAtTime`; activity drives speed (act≈0 → glideMax/3, act≈1 → glideMin/3). Index and ratio use slowTau (4× freq tau) to feel like timbre evolution.
+  - **3 polyphonic pluck voices** (round-robin by idle time):
+    - Ratio 2 (octave harmonic, warm mallet character); `fmPluckRatio` URL-overridable
+    - Note selection: degrees ordered by consonance [root→5th→3rd→7th→6th→4th→2nd]; `spread` gates how many are reachable (spread=0 → root only, spread=1 → all 7)
+    - Octave snapped to nearest integer: slowness 0–0.25 → +1 oct, 0.25–0.75 → same, 0.75–1 → −1 oct
+    - **Activity-driven spatial character**: `spacious = 1 − quickness`
+      - Still scene: peak ~0.04, attack 14 ms (breath), long decay (×2.8), wide pan (×1.45 width), cooldown up to 560 ms
+      - Active scene: peak ~0.17, attack 3 ms (snap), tight decay, centred pan (×0.35), cooldown 60 ms
+    - `indexPeak = (0.3 + quickness×0.7 + edge×0.6) × (1 − slowness×0.3)`; mod collapses to sine very quickly
   - Light dynamics compressor on master bus
-  - **S key** toggles audio on/off (AudioContext requires user gesture)
-  - Each pad voice carries v0.5-compat aliases `voice.gain = fm.outGain` and `voice.osc = fm.carrier` so `window._avva.gains` debug tap still works
+  - **S key** toggles audio on/off
   - `window._avva = { synth, analyzer, renderer, videoSource, testTone(), gains, signals }` debug global
 
 **Analysis signals** (`frame.out`):
 | Signal | Source | Synth role |
 |--------|--------|------------|
-| `hue` | saturation-weighted circular mean | chord target (scale degree) |
+| `hue` | saturation-weighted circular mean | chord target (scale degree via circle-of-fifths mapping) |
 | `bri` | mean HSV value | pad tier gains (via vy crossfade) |
-| `hi` / `lo` | top/bottom ⅓ brightness | available; tier crossfade uses vy |
+| `hi` / `lo` | top/bottom ⅓ brightness | `lo` → sub-bass amplitude |
 | `vy` | vertical brightness centroid (0=top, 1=bottom) | tier bass↔treble crossfade |
-| `act` | weighted RGB Euclidean delta | glide speed + pluck trigger (quickness) |
-| `actBg` | background-subtraction delta | pluck trigger (slowness) |
-| `spread` | 1 − hue circular-mean resultant | triad voice gating + FM ratio drift + stereo width |
-| `sat` | mean saturation of vivid pixels | pad/treble FM modulation index (timbre brightness) |
-| `contrast` | brightness std-dev within frame | bass FM modulation index (low-end growl) |
-| `actEdge` | activity at spatial edges | pluck FM index peak (ping sharpness) |
+| `act` | weighted RGB Euclidean delta | glide speed + pluck trigger (quickness) + pluck spatial character |
+| `actBg` | background-subtraction delta | delay feedback + wet (slowness) |
+| `spread` | 1 − hue circular-mean resultant | triad voice gating + FM ratio drift + stereo width + pluck note range |
+| `sat` | mean saturation of vivid pixels | pad/treble FM index; extension voice gating (7th/9th) |
+| `contrast` | brightness std-dev within frame | bass FM index |
+| `actEdge` | activity at spatial edges | pluck FM index peak |
+| `dContrast` | frame-to-frame contrast delta | tremolo LFO depth |
 
-`frame.histBins` — Float32Array(30) passed separately into `synth.update({ ...frame.out, histBins: frame.histBins })`.
+`frame.histBins` — Float32Array(30) passed into `synth.update()` but not used for note selection (pluck note selection uses consonance order + spread gate instead).
 
 **Canvas layers:**
 
@@ -238,5 +249,6 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 - Out-of-scale chromatic notes in AudioRenderer: chromatic-circle hue vs desaturated grey. Currently planning chromatic-circle so visual stays vivid even when audio strays out of key.
 - Whether `loop.html` should wire Program 2's canvas → Program 1's `<video>` via `canvas.captureStream()` for full closed loop.
 - URL param convention: `?root=G&mode=dorian` (synth accepts `root`/`mode`/`octave`; Program 2 should share same key params for inverse mapping).
-- FM tuning knobs all URL-overridable: `?fmIndexBase=0.15&fmIndexScale=2.4&fmRatioDrift=0.04&fmStereoWidth=0.75&fmPluckRatio=7`. The pluckRatio is the most expressive single knob — 3 = clarinet, 5 = wooden, 7 = DX bell, 11+ = pure metallic.
+- FM tuning knobs all URL-overridable: `?fmIndexBase=0.15&fmIndexScale=2.4&fmRatioDrift=0.04&fmStereoWidth=0.75&fmPluckRatio=2`. The pluckRatio is the most expressive single knob — 2 = warm mallet/pluck, 3 = clarinet, 5 = wooden, 7 = DX bell, 11+ = pure metallic.
 - AudioRenderer in `loop.html` will need updating to react to FM-driven timbre changes (currently only reacts to chroma/bands, doesn't know about the synth's brightness/width). Not urgent — Program 2 reads the actual audio, so timbre changes already flow through chroma analysis.
+- `loop.html` chord strip may need updating to reflect the circle-of-fifths hue ordering for accurate color-to-note visualization (currently unknown if it was updated).
