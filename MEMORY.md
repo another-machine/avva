@@ -17,7 +17,7 @@ A human stepping in front of the camera breaks the loop and injects new signal.
 
 ---
 
-## Current state (v0.7)
+## Current state (v0.8)
 
 **Program 1: CAM→AUDIO** — `va.html` (analysis + synth)
 
@@ -28,11 +28,16 @@ Three analysis passes per frame:
 - **Activity** — weighted RGB Euclidean distance vs previous frame: `√(0.299·ΔR² + 0.587·ΔG² + 0.114·ΔB²)`. Captures chromatic motion (e.g. lava lamp blobs of similar brightness but different hue) that luma-only diffing misses.
 - **actBg** — background-subtraction activity (bgK=0.03 EMA model). Catches slow movers that frame-diff misses.
 - **spread** — 1 − resultant length of circular hue mean. 0 = monochromatic, 1 = full rainbow.
+- **Spatial moments** — computed inside pass 2, weighted by `dBg × max(sat, 0.1)` (moving, coloured mass):
+  - `mx`, `my` — normalised [0,1] centroid of weighted motion (0 = left/top, 1 = right/bottom), EMA-smoothed
+  - `sx`, `sy` — std-dev of normalised coords; tight blob ≈ 0.10, diffuse wash ≈ 0.35+
+  - `vmx`, `vmy` — EMA of frame-delta of the smoothed centroid (directed velocity)
+  - `mass` — total weighted activity (sum of `dBg × sat` over all pixels, normalised)
 - **histBins** — Float32Array(30), each bin weighted by `sat × value`. Vivid bright pixels vote louder.
 
 HUD: hue histogram, sparklines (ACT/SLOW/BRI/CTST/VPOS), motion heat-map, signal monitor panel (right), video calibration panel.
 
-Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTION (act, actBg/SLOW, actEdge, vy) · TEXTURE (bri, contrast, spread, sat) · REGISTER (hi, lo).
+Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTION (act, actBg/SLOW, actEdge, vy, H·POS/mx, mass, velocity/vmag) · TEXTURE (bri, contrast, spread, sat) · REGISTER (hi, lo).
 
 **Synth:** `modules/synth.js` + `modules/music.js` + `modules/fm-voice.js`
 
@@ -52,7 +57,8 @@ Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTIO
   - Pluck schedules mod-depth and amp-gain envelopes independently — mod decays faster than amp → warm mallet/pluck arc
 
 - **`Synth`** — 15 FM pads + 3 FM plucks + 1 sub-bass oscillator
-  - Signal graph: `15 FM pads → per-voice panners → master gain → delay send (→ LPF → feedback → comp) → comp → destination`; `3 plucks → panners → master`; `sub-bass → master`; `tremolo LFO → master.gain`
+  - Signal graph: `15 FM pads → per-voice panners → master gain → delay send (→ LPF → feedback → comp) → comp → masterPanner → destination`; `3 plucks → panners → master`; `sub-bass → master`; `tremolo LFO → master.gain`
+  - **Master panner** — `StereoPannerNode` between comp and destination. Driven by `mx` centroid: `pan = (mx − 0.5) × 1.4` (±0.7). The entire mix shifts left/right as the moving object crosses the frame.
   - **3 tiers × 5 voices** (root, 3rd, 5th, 7th*, 9th*); per-tier base FM ratio:
     - Bass (oct −1) ratio 2 — even harmonics only → fat, woody; index ← contrast
     - Mid (oct 0) ratio 1 — full harmonic; index ← sat
@@ -76,7 +82,9 @@ Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTIO
     - **Activity-driven spatial character**: `spacious = 1 − quickness`
       - Still scene: peak ~0.04, attack 14 ms (breath), long decay (×2.8), wide pan (×1.45 width), cooldown up to 560 ms
       - Active scene: peak ~0.17, attack 3 ms (snap), tight decay, centred pan (×0.35), cooldown 60 ms
-    - `indexPeak = (0.3 + quickness×0.7 + edge×0.6) × (1 − slowness×0.3)`; mod collapses to sine very quickly
+    - `indexPeak = (0.3 + quickness×0.7 + edge×0.6) × (1 − slowness×0.3) × (0.5 + compactness×0.5)` — tight blob = bright ping, diffuse = soft wash
+    - `trigProb = max(quickness×0.4, slowness×0.2, vMag×0.5)` — directed sweep fires plucks even in otherwise still scene
+    - Pan: `degPan × widthScale × panMult + (mx−0.5)×0.8` — note degree sets base position, mx centroid biases toward where the motion actually is
   - Light dynamics compressor on master bus
   - **S key** toggles audio on/off
   - `window._avva = { synth, analyzer, renderer, videoSource, testTone(), gains, signals }` debug global
@@ -95,6 +103,11 @@ Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTIO
 | `contrast` | brightness std-dev within frame | bass FM index |
 | `actEdge` | activity at spatial edges | pluck FM index peak |
 | `dContrast` | frame-to-frame contrast delta | tremolo LFO depth |
+| `mx` | horizontal centroid of `dBg×sat`-weighted motion (0=left, 1=right) | master stereo pan ±0.7; pluck pan bias ±0.4 |
+| `my` | vertical centroid of weighted motion | available; not yet mapped |
+| `sx` / `sy` | std-dev of centroid (compactness) | pluck `indexPeak` × (0.5 + compactness×0.5) |
+| `vmx` / `vmy` | centroid velocity (frame-delta, EMA-smoothed) | pluck `trigProb` boost (vMag = √(vmx²+vmy²)×20) |
+| `mass` | total `dBg×sat` weight in frame | available; signal monitor only |
 
 `frame.histBins` — Float32Array(30) passed into `synth.update()` but not used for note selection (pluck note selection uses consonance order + spread gate instead).
 
@@ -230,7 +243,7 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 
 ## Build order (remaining)
 
-1. ✅ CAM→AUDIO analysis layer (all signals: hue, bri, act, actBg, spread, vy, contrast, hi, lo, actEdge, histBins)
+1. ✅ CAM→AUDIO analysis layer (all signals: hue, bri, act, actBg, spread, vy, contrast, hi, lo, actEdge, histBins, mx/my/sx/sy/vmx/vmy/mass)
 2. ✅ Synthesizer:
    a. ✅ Triangle pads + sine pluck (v0.5)
    b. ✅ 2-op FM pads + FM pluck (v0.6) — sat→index timbre, spread→ratio drift + stereo width, per-voice panning
@@ -251,4 +264,31 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 - URL param convention: `?root=G&mode=dorian` (synth accepts `root`/`mode`/`octave`; Program 2 should share same key params for inverse mapping).
 - FM tuning knobs all URL-overridable: `?fmIndexBase=0.15&fmIndexScale=2.4&fmRatioDrift=0.04&fmStereoWidth=0.75&fmPluckRatio=2`. The pluckRatio is the most expressive single knob — 2 = warm mallet/pluck, 3 = clarinet, 5 = wooden, 7 = DX bell, 11+ = pure metallic.
 - AudioRenderer in `loop.html` will need updating to react to FM-driven timbre changes (currently only reacts to chroma/bands, doesn't know about the synth's brightness/width). Not urgent — Program 2 reads the actual audio, so timbre changes already flow through chroma analysis.
+- `my` is computed but not yet mapped to audio. Candidates: reverb/delay wet (distance from vertical center = wetness), tier crossfade supplement, or sub-bass amplitude (replaces or blends with `lo`).
+- `mass` is computed and shown in signal monitor; not yet mapped. Candidate: duck the ambient pad bed when mass is low (nothing in frame), swell when something enters.
+- Histogram-peak voicing (v0.8 bracket): split mid-tier voices between two dominant hue targets when histBins has two clear modes (two-color scene plays a real interval instead of averaging to mud).
 - `loop.html` chord strip may need updating to reflect the circle-of-fifths hue ordering for accurate color-to-note visualization (currently unknown if it was updated).
+
+---
+
+## Physical performance guide
+
+How to influence the sound by manipulating the camera feed. Update this as new signals are wired.
+
+| Goal                                 | Gesture / prop                                                                                                                | Signal driven           |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Change chord                         | Move a strongly coloured object — hue determines scale degree via circle-of-fifths ordering (red≈I, blue≈V/II, green≈III/VII) | `hue`                   |
+| Brighter timbre / add 7th–9th voices | Use vivid saturated colours (coloured gels, painted surfaces, bright clothing)                                                | `sat`                   |
+| Wider stereo / chorus detuning       | Multiple colours in frame simultaneously (patterned fabric, colourful scene)                                                  | `spread`                |
+| Shift register bass↔treble           | Move brightness up or down the frame (torch at head vs floor level)                                                           | `vy`                    |
+| Sub-bass swell                       | Put something bright on the floor / tilt camera down toward a lit surface                                                     | `lo`                    |
+| Reverb / echo depth                  | Slow creeping motion against a stable background (hand drifting across a wall)                                                | `actBg`                 |
+| Fast glide + tight plucks            | Quick, broad motion — waving, shaking fabric                                                                                  | `act`                   |
+| Stereo image follows you             | Walk or gesture across the frame left-to-right; entire mix pans ±0.7 with horizontal centroid                                 | `mx`                    |
+| Fire a pluck from stillness          | Deliberate directional sweep (hand across frame, fast arc) — velocity spike overrides quiet scene                             | `vmx/vmy` → `vMag`      |
+| Bright metallic pluck                | Isolated object against plain background → high compactness                                                                   | `sx/sy` → `compactness` |
+| Soft muted pluck                     | Scattered/diffuse motion (foliage, crowd, many small things)                                                                  | `sx/sy` → `compactness` |
+| Tremolo flutter                      | High-contrast edge appearing/disappearing — hand entering/exiting frame, strobe on lamp                                       | `dContrast`             |
+| Bass FM growl                        | High internal brightness contrast (black/white graphic, strong shadow — even static)                                          | `contrast`              |
+| Expand pluck note range              | More colour variety in frame (full spread → all 7 scale degrees available for plucks)                                         | `spread`                |
+| Collapse to root drone               | Monochromatic frame — single solid colour filling the view                                                                    | `spread` → 0            |

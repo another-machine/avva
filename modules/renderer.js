@@ -82,6 +82,11 @@ export class Renderer {
     this._sbSat = document.getElementById("sb-sat");
     this._sbHi = document.getElementById("sb-hi");
     this._sbLo = document.getElementById("sb-lo");
+    // Moment / object-tracking signals
+    this._sbMx = document.getElementById("sb-mx");
+    this._svMx = document.getElementById("sv-mx");
+    this._sbMass = document.getElementById("sb-mass");
+    this._sbVmag = document.getElementById("sb-vmag");
   }
 
   // ── Public API ──────────────────────────────────────────────
@@ -224,6 +229,18 @@ export class Renderer {
     this._sbSat.style.width = pct(out.sat);
     this._sbHi.style.width = pct(out.hi);
     this._sbLo.style.width = pct(out.lo);
+
+    // Moment signals
+    if (this._sbMx) {
+      this._sbMx.style.left = `${(out.mx * 100).toFixed(1)}%`;
+      this._svMx.textContent = ((out.mx * 2 - 1) * 100).toFixed(0); // −100…+100
+      this._sbMass.style.width = pct(out.mass);
+      const vMag = Math.min(
+        1,
+        Math.sqrt(out.vmx * out.vmx + out.vmy * out.vmy) * 20,
+      );
+      this._sbVmag.style.width = pct(vMag);
+    }
 
     // vy pip: left% = 0 (top of frame) → 100% (bottom of frame)
     this._sbVy.style.left = `${(out.vy * 100).toFixed(1)}%`;

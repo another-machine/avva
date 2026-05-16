@@ -19,7 +19,9 @@
  *              hi: number, lo: number,
  *              vy: number, contrast: number,
  *              actEdge: number, spread: number, dContrast: number,
- *              actBg: number }} out
+ *              actBg: number,
+ *              mx: number, my: number, sx: number, sy: number,
+ *              vmx: number, vmy: number, mass: number }} out
  *   out.hi        — mean brightness, top ⅓ of frame
  *   out.lo        — mean brightness, bottom ⅓ of frame
  *   out.vy        — vertical brightness centroid (0 = top, 1 = bottom)
@@ -66,6 +68,13 @@ export class Analyzer {
       spread: 0,
       dContrast: 0,
       actBg: 0,
+      mx: 0.5,
+      my: 0.5,
+      sx: 0.5,
+      sy: 0.5,
+      vmx: 0,
+      vmy: 0,
+      mass: 0,
     };
     this._prevContrast = 0; // for dContrast derivative
     this._histBins = new Float32Array(config.hueBins);
@@ -181,11 +190,21 @@ export class Analyzer {
     let actEdge = 0;
     let actBg = 0;
     let heatImageData = null;
+    let rawMx = 0.5,
+      rawMy = 0.5,
+      rawSx = 0.5,
+      rawSy = 0.5,
+      rawMass = 0;
 
     if (this._prev) {
       let acc = 0;
       let accEdge = 0;
       let accBg = 0;
+      let mxAcc = 0,
+        myAcc = 0,
+        mx2Acc = 0,
+        my2Acc = 0,
+        massAcc = 0;
       let heatData;
 
       if (this.heatOn) {
@@ -223,6 +242,22 @@ export class Analyzer {
         if (dBg < this._cfg.activityNoise) dBg = 0;
         accBg += dBg;
 
+        // Spatial moments: weighted by background-diff × saturation.
+        // This concentrates mass on moving, coloured things rather than
+        // grey shadows or steady backgrounds.
+        if (dBg > 0) {
+          const pi = i >> 2;
+          const xi = ((pi % W) + 0.5) / W;
+          const yi = (((pi / W) | 0) + 0.5) / H;
+          const [, s] = rgbToHsv(px[i], px[i + 1], px[i + 2]);
+          const wm = dBg * Math.max(s, 0.1); // small floor so grey objects still count
+          mxAcc += xi * wm;
+          myAcc += yi * wm;
+          mx2Acc += xi * xi * wm;
+          my2Acc += yi * yi * wm;
+          massAcc += wm;
+        }
+
         if (heatData) {
           // Frame-diff (tFd): warm channel — fast edges and sudden changes.
           // BG-diff   (tBg): cool blue channel — blob silhouettes vs background.
@@ -245,6 +280,15 @@ export class Analyzer {
       act = Math.min(1, (acc / nPx) * this._cfg.activityGain);
       actEdge = Math.min(1, (accEdge / nPx) * this._cfg.activityGain * 6);
       actBg = Math.min(1, (accBg / nPx) * this._cfg.activityGain);
+
+      // Finalise spatial moments.
+      if (massAcc > 0.0001) {
+        rawMx = mxAcc / massAcc;
+        rawMy = myAcc / massAcc;
+        rawSx = Math.sqrt(Math.max(0, mx2Acc / massAcc - rawMx * rawMx));
+        rawSy = Math.sqrt(Math.max(0, my2Acc / massAcc - rawMy * rawMy));
+      }
+      rawMass = Math.min(1, massAcc * this._cfg.activityGain);
     } else {
       this._prev = new Uint8ClampedArray(px.length);
     }
@@ -281,6 +325,19 @@ export class Analyzer {
     this._out.actEdge += (actEdge - this._out.actEdge) * k;
     this._out.spread += (spread - this._out.spread) * k;
     this._out.actBg += (actBg - this._out.actBg) * k;
+
+    // Spatial moments: EMA-smooth then derive vmx/vmy from centroid delta.
+    const prevMx = this._out.mx;
+    const prevMy = this._out.my;
+    this._out.mx += (rawMx - this._out.mx) * k;
+    this._out.my += (rawMy - this._out.my) * k;
+    this._out.sx += (rawSx - this._out.sx) * k;
+    this._out.sy += (rawSy - this._out.sy) * k;
+    this._out.mass += (rawMass - this._out.mass) * k;
+    const dMx = this._out.mx - prevMx;
+    const dMy = this._out.my - prevMy;
+    this._out.vmx += (dMx - this._out.vmx) * k;
+    this._out.vmy += (dMy - this._out.vmy) * k;
 
     // dContrast: signed rate-of-change of smoothed contrast.
     // Positive = structure forming (blobs emerging), negative = dissolving.

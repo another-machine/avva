@@ -72,6 +72,7 @@ export class Synth {
     this._sub = null; // { osc, gain } — sub-bass sine oscillator
     this._delay = null; // { input, node, feedback, wet }
     this._tremolo = null; // { lfo, depth }
+    this._masterPanner = null; // final StereoPannerNode — driven by mx centroid
     this.key = null;
     this.running = false;
     this._prevRootFreq = 0; // mid-tier root freq, used for voice-leading the 5th
@@ -102,7 +103,14 @@ export class Synth {
     this._master = this._actx.createGain();
     this._master.gain.value = this._cfg.masterGain ?? 0.35;
     this._master.connect(comp);
-    comp.connect(this._actx.destination);
+
+    // Master panner: sits after the compressor so all voices track together.
+    // Driven by mx (horizontal motion centroid) to create the tracking illusion.
+    const masterPanner = this._actx.createStereoPanner();
+    masterPanner.pan.value = 0;
+    comp.connect(masterPanner);
+    masterPanner.connect(this._actx.destination);
+    this._masterPanner = masterPanner;
 
     // Sub-bass: pure sine 2 octaves below root, driven by lo (bottom brightness).
     const subOsc = this._actx.createOscillator();
@@ -242,6 +250,13 @@ export class Synth {
     dContrast = 0,
     lo = 0,
     histBins = null,
+    mx = 0.5,
+    my = 0.5,
+    vmx = 0,
+    vmy = 0,
+    sx = 0.5,
+    sy = 0.5,
+    mass = 0,
   }) {
     if (!this.running || !this.key) return;
 
@@ -259,12 +274,26 @@ export class Synth {
     const safeDContrast = clamp01(Math.abs(dContrast) * 10); // amplify small derivative
     const safeLo = clamp01(lo);
 
+    // Moment-derived signals.
+    // vMag: speed of the weighted motion centroid, scaled to 0–1.
+    // vmx/vmy are frame-delta of normalised coordinates (≈ 0.002 per pixel/frame)
+    // so ×20 maps a fast hand-sweep (~0.05 units/frame) to ~1.
+    const safeMx = Number.isFinite(mx) ? clamp01(mx) : 0.5;
+    const vMag = clamp01(Math.sqrt(vmx * vmx + vmy * vmy) * 20);
+    // compactness: 0 = diffuse wash, 1 = tight concentrated blob.
+    // sx/sy are std-devs of normalised coords; typical tight blob ≈ 0.10, diffuse ≈ 0.35.
+    const compactness = clamp01(1 - (sx + sy) * 3);
+
     const note = this.key.hueToNote(safeHue);
     const now = this._actx.currentTime;
     const tau = Math.max(0.001, this._glideTime(safeAct) / 3);
     // Pan / index / ratio glide more slowly than freq/gain — keeps the
     // spatial + timbral motion from twitching at frame rate.
     const slowTau = Math.max(0.05, tau * 4);
+
+    // mx → master stereo pan. Object left of frame → image shifts left.
+    // Range: mx=0 (hard left) → pan −0.7; mx=1 (hard right) → pan +0.7.
+    this._panTo(this._masterPanner.pan, (safeMx - 0.5) * 1.4, slowTau, now);
 
     // Vertical brightness centroid → tier crossfade (unchanged from v0.5)
     const vt = safeVy * 2;
@@ -377,6 +406,9 @@ export class Synth {
       safeSpread,
       widthScale,
       now,
+      safeMx,
+      vMag,
+      compactness,
     );
 
     // === Delay: actBg → reverb depth (slow motion = echoey) ===
@@ -411,7 +443,18 @@ export class Synth {
    * Index peak: scaled by actEdge — sharp moving edges → sharper ping.
    * Pan: scaled by chosen scale-degree position × current stereo width.
    */
-  _maybePluck(note, quickness, slowness, edge, spread, widthScale, now) {
+  _maybePluck(
+    note,
+    quickness,
+    slowness,
+    edge,
+    spread,
+    widthScale,
+    now,
+    mx = 0.5,
+    vMag = 0,
+    compactness = 0.5,
+  ) {
     // Pick the most-idle pluck voice (smallest nextAllowed = least recently used).
     if (!this._plucks.length) return;
     const pluck = this._plucks.reduce((best, v) =>
@@ -419,7 +462,9 @@ export class Synth {
     );
     if (now < pluck.nextAllowed) return; // all voices still cooling down
 
-    const trigProb = Math.max(quickness * 0.4, slowness * 0.2);
+    // Directed motion (vmx/vmy magnitude) supplements the activity gate so a
+    // deliberate hand-sweep fires even in an otherwise still scene.
+    const trigProb = Math.max(quickness * 0.4, slowness * 0.2, vMag * 0.5);
     if (Math.random() > trigProb) return;
 
     // Note pick: degrees ordered by consonance from root (root→5th→3rd→7th→6th→4th→2nd).
@@ -455,8 +500,11 @@ export class Synth {
       Math.random() * (0.05 + slowness * 0.12);
 
     // FM: more harmonic colour on the attack when active.
+    // Tight blob (high compactness) → full brightness; diffuse wash → softer ping.
     const indexPeak =
-      (0.3 + quickness * 0.7 + edge * 0.6) * (1 - slowness * 0.3);
+      (0.3 + quickness * 0.7 + edge * 0.6) *
+      (1 - slowness * 0.3) *
+      (0.5 + compactness * 0.5);
     const modDecayTau = ampDecayTau * (0.04 + slowness * 0.14);
 
     pluck.fm.pluck(fc, {
@@ -468,9 +516,11 @@ export class Synth {
     });
 
     // Pan: wide and spatial when quiet; centred and present when active.
-    const degPan = (chosen / 6 - 0.5) * 2; // -1 .. +1
+    // mx centroid pulls the pluck toward the horizontal position of the moving thing.
+    const degPan = (chosen / 6 - 0.5) * 2; // −1..+1 from scale degree position
+    const mxBias = (mx - 0.5) * 0.8; // ±0.4 pull toward weighted centroid
     const panMult = 0.35 + spacious * 1.1; // 0.35 (tight) → 1.45 (wide)
-    const pluckPan = degPan * widthScale * panMult;
+    const pluckPan = degPan * widthScale * panMult + mxBias;
     this._panTo(pluck.panner.pan, pluckPan, 0.04, now);
 
     // Cooldown: rare, widely-spaced plucks when still; busier when active.
