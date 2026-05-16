@@ -39,11 +39,21 @@
         <div class="loop__pane-label">CAM → AUDIO</div>
         <video id="vid" class="loop__video" playsinline muted></video>
         <div class="loop__readout">
-          <div class="rd__row"><span>HUE</span><b id="v-hue">—</b><span>°</span></div>
+          <div class="rd__row">
+            <span>HUE</span><b id="v-hue">—</b><span>°</span>
+          </div>
           <div class="rd__row"><span>BRI</span><b id="v-bri">—</b></div>
           <div class="rd__row"><span>ACT</span><b id="v-act">—</b></div>
           <div class="rd__row"><span>HI</span><b id="v-hi">—</b></div>
           <div class="rd__row"><span>LO</span><b id="v-lo">—</b></div>
+          <div class="rd__row"><span>SPRD</span><b id="v-sprd">—</b></div>
+          <div class="rd__sep"></div>
+          <div class="rd__chord-hdr"><b id="v-numeral">—</b></div>
+          <div class="rd__chord">
+            <span class="rd__note" id="v-note-0">—</span>
+            <span class="rd__note" id="v-note-1">—</span>
+            <span class="rd__note" id="v-note-2">—</span>
+          </div>
         </div>
       </section>
 
@@ -52,7 +62,9 @@
         <div class="loop__pane-label">AUDIO → VIS</div>
         <canvas id="av-canvas" class="loop__canvas"></canvas>
         <div class="loop__readout">
-          <div class="rd__row"><span>HUE</span><b id="a-hue">—</b><span>°</span></div>
+          <div class="rd__row">
+            <span>HUE</span><b id="a-hue">—</b><span>°</span>
+          </div>
           <div class="rd__row"><span>BRI</span><b id="a-bri">—</b></div>
           <div class="rd__row"><span>ACT</span><b id="a-act">—</b></div>
           <div class="rd__row"><span>HI</span><b id="a-hi">—</b></div>

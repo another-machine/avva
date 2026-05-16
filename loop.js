@@ -104,7 +104,7 @@ function loop(t) {
 
   if (videoEl.readyState >= 2) {
     const v = vidAnalyzer.analyze(videoEl);
-    synth.update(v.out);
+    synth.update({ ...v.out, histBins: v.histBins });
     paintVideoReadout(v);
 
     maybeTapSynth();
@@ -127,11 +127,24 @@ function paintVideoReadout(frame) {
   document.getElementById("v-act").textContent = o.act.toFixed(2);
   document.getElementById("v-hi").textContent = o.hi.toFixed(2);
   document.getElementById("v-lo").textContent = o.lo.toFixed(2);
+  document.getElementById("v-sprd").textContent = o.spread.toFixed(2);
+
+  // Chord strip — mirrors the exact gate thresholds used in synth.update()
+  const note = key.hueToNote(o.hue);
+  const thirdW = Math.max(0, Math.min(1, (o.spread - 0.15) / 0.25));
+  const fifthW = Math.max(0, Math.min(1, (o.spread - 0.4) / 0.25));
+  const weights = [1.0, thirdW, fifthW];
+
+  document.getElementById("v-numeral").textContent = note.numeral;
+  [0, 1, 2].forEach((vi) => {
+    const el = document.getElementById(`v-note-${vi}`);
+    if (!el) return;
+    el.textContent = note.triad[vi].name;
+    el.style.opacity = (0.15 + weights[vi] * 0.85).toFixed(2);
+  });
+
   // Mirror dominant hue on root so panel accents track Program 1's view
-  document.documentElement.style.setProperty(
-    "--accent-h",
-    o.hue.toFixed(1),
-  );
+  document.documentElement.style.setProperty("--accent-h", o.hue.toFixed(1));
 }
 
 function paintAudioReadout(frame) {
@@ -154,7 +167,20 @@ function paintAudioReadout(frame) {
 function buildChromaReadout() {
   const container = document.getElementById("chroma-bars");
   if (!container) return;
-  const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const names = [
+    "C",
+    "C#",
+    "D",
+    "D#",
+    "E",
+    "F",
+    "F#",
+    "G",
+    "G#",
+    "A",
+    "A#",
+    "B",
+  ];
   const hues = key.chromaticHues;
   chromaBars = [];
   for (let i = 0; i < 12; i++) {

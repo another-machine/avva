@@ -116,7 +116,7 @@ export class Synth {
    * @param {{ hue:number, bri:number, sat:number, act:number,
    *           hi:number, lo:number, vy:number, contrast:number }} out
    */
-  update({ hue, bri, act, actBg = 0, vy = 0.5, spread = 0 }) {
+  update({ hue, bri, act, actBg = 0, vy = 0.5, spread = 0, histBins = null }) {
     if (!this.running || !this.key) return;
 
     // Clamp all inputs — NaN/Infinity from any signal will crash setTargetAtTime.
@@ -145,15 +145,23 @@ export class Synth {
     const bassW = vt >= 1 ? (vt - 1) * safeBri : 0;
     const tierSignals = [bassW, midW, trebleW];
 
+    // Triad voice weights driven by hue spread (color diversity).
+    // Monochromatic → root only; more colors → 3rd fades in; rainbow → 5th fades in.
+    //   spread 0.00–0.15 → root alone
+    //   spread 0.15–0.40 → 3rd crossfades in
+    //   spread 0.40–0.65 → 5th crossfades in
+    const thirdW = Math.max(0, Math.min(1, (safeSpread - 0.15) / 0.25));
+    const fifthW = Math.max(0, Math.min(1, (safeSpread - 0.4) / 0.25));
+    const voiceWeights = [1.0, thirdW, fifthW];
+
     this._tiers.forEach(({ octaveShift, voices }, ti) => {
       const freqScale = Math.pow(2, octaveShift);
-      // Each voice gets its own gain slice; /3 was over-attenuating since
-      // the three voices are incoherent (different freqs).
-      const targetGain = Math.max(0, tierSignals[ti] * 0.25);
+      const tierBase = Math.max(0, tierSignals[ti] * 0.25);
 
       note.triad.forEach(({ freq }, vi) => {
         const targetFreq = freq * freqScale;
         if (!Number.isFinite(targetFreq)) return;
+        const targetGain = tierBase * voiceWeights[vi];
         const { osc, gain } = voices[vi];
         // cancelAndHoldAtTime + setTargetAtTime for smooth glide;
         // fall back to cancelScheduledValues approach for older browsers.
@@ -175,7 +183,22 @@ export class Synth {
       });
     });
 
-    this._maybePluck(note, rawAct, rawActBg, safeSpread, now);
+    // Map histogram bins → per-degree prevalence weights.
+    // Each bin's center hue maps to a scale degree; its weight (sat×val) accumulates.
+    // A small floor keeps all degrees reachable even when they're off-screen.
+    let degreeWeights = null;
+    if (histBins && histBins.length > 0) {
+      const nBins = histBins.length;
+      const raw = new Float64Array(7);
+      for (let b = 0; b < nBins; b++) {
+        const di = Math.floor(((b + 0.5) / nBins) * 7) % 7;
+        raw[di] += histBins[b];
+      }
+      const maxW = Math.max(...raw, 1e-6);
+      degreeWeights = Array.from(raw, (w) => Math.max(0.04, w / maxW));
+    }
+
+    this._maybePluck(note, rawAct, rawActBg, safeSpread, now, degreeWeights);
   }
 
   /**
@@ -193,21 +216,27 @@ export class Synth {
    *   spread ≈ 0 → only chord tones (root, 3rd, 5th)
    *   spread ≈ 1 → all 7 diatonic degrees roughly equally likely
    */
-  _maybePluck(note, quickness, slowness, spread, now) {
+  _maybePluck(note, quickness, slowness, spread, now, degreeWeights = null) {
     if (!this._pluck || now < this._pluck.nextAllowed) return;
 
     // Fast motion fires more often; slow motion fires less (each note resonates longer)
     const trigProb = Math.max(quickness * 0.4, slowness * 0.2);
     if (Math.random() > trigProb) return;
 
-    // Chord tones: root, diatonic 3rd, diatonic 5th (mod 7)
-    const d = note.degree;
-    const chordSet = new Set([d, (d + 2) % 7, (d + 4) % 7]);
-
-    // Non-chord-tone weight rises with spread (0 = stay on chord, 1 = roam freely)
-    const weights = this.key.degrees.map((_, i) =>
-      chordSet.has(i) ? 1.0 : spread * 0.8,
-    );
+    // Note selection weights.
+    // If histogram data is available: each degree's weight = how much of its hue
+    // range is present in the frame (already normalized + floored by update()).
+    // Fallback (no histBins): chord tones boosted, non-chord tones gated by spread.
+    let weights;
+    if (degreeWeights) {
+      weights = degreeWeights;
+    } else {
+      const d = note.degree;
+      const chordSet = new Set([d, (d + 2) % 7, (d + 4) % 7]);
+      weights = this.key.degrees.map((_, i) =>
+        chordSet.has(i) ? 1.0 : spread * 0.8,
+      );
+    }
     const total = weights.reduce((a, b) => a + b, 0);
     let r = Math.random() * total;
     let chosen = 0;

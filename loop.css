@@ -187,3 +187,43 @@ body.loop {
 #stage::before {
   display: none;
 }
+
+/* ── Chord strip (left pane readout) ─────────────────────── */
+
+.rd__sep {
+  height: 1px;
+  background: var(--color-hair);
+  margin: 6px 0 4px;
+}
+
+.rd__chord-hdr {
+  text-align: center;
+  margin-bottom: 5px;
+}
+
+.rd__chord-hdr b {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-widest);
+  color: var(--color-ink);
+}
+
+.rd__chord {
+  display: flex;
+  gap: 4px;
+}
+
+.rd__note {
+  flex: 1;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-ink);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-hair);
+  padding: 4px 2px;
+  text-align: center;
+  transition: opacity 350ms ease;
+}

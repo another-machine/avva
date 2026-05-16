@@ -17,7 +17,7 @@ A human stepping in front of the camera breaks the loop and injects new signal.
 
 ---
 
-## Current state (v0.4)
+## Current state (v0.5)
 
 **Program 1: CAM→AUDIO** — `va.html` (analysis + synth)
 
@@ -26,8 +26,13 @@ Three analysis passes per frame:
 - **Hue** — saturation-weighted circular mean of vivid/lit pixels (HSV), EMA smoothed with shortest-arc interpolation
 - **Brightness** — mean HSV value across frame
 - **Activity** — weighted RGB Euclidean distance vs previous frame: `√(0.299·ΔR² + 0.587·ΔG² + 0.114·ΔB²)`. Captures chromatic motion (e.g. lava lamp blobs of similar brightness but different hue) that luma-only diffing misses.
+- **actBg** — background-subtraction activity (bgK=0.03 EMA model). Catches slow movers that frame-diff misses.
+- **spread** — 1 − resultant length of circular hue mean. 0 = monochromatic, 1 = full rainbow.
+- **histBins** — Float32Array(30), each bin weighted by `sat × value`. Vivid bright pixels vote louder.
 
-HUD: hue histogram, sparklines for bri/act, motion heat-map, video calibration panel.
+HUD: hue histogram, sparklines (ACT/SLOW/BRI/CTST/VPOS), motion heat-map, signal monitor panel (right), video calibration panel.
+
+Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTION (act, actBg/SLOW, actEdge, vy) · TEXTURE (bri, contrast, spread, sat) · REGISTER (hi, lo).
 
 **Synth:** `modules/synth.js` + `modules/music.js`
 
@@ -35,64 +40,75 @@ HUD: hue histogram, sparklines for bri/act, motion heat-map, video calibration p
   - Degrees spaced evenly across the spectrum; 0° and 360° both resolve to the tonic
   - The VII (leading tone) at ~310–360° naturally cadences back to I — the wrap IS the resolution
   - Modes: major, minor, dorian, phrygian, lydian, mixolydian, locrian
-  - URL params: `?root=A&mode=dorian&octave=4`
-- **`Synth`** class: 3 tiers × 3 triangle oscillators = 9 oscillators total
-  - **Register tiers** (independent gain per tier):
-    - Bass (octave −1): gain ← `lo` (bottom-third brightness)
-    - Mid (octave 0): gain ← `bri` (overall brightness)
-    - Treble (octave +1): gain ← `hi` (top-third brightness)
-    - Combinations: dark bottom → bass silent; bright top only → treble only; both → full stack
+  - URL params: `?root=A&mode=locrian&octave=4` (current default: A locrian)
+- **`Synth`** class: 3 tiers × 3 triangle oscillators (pads) + 1 pluck oscillator = 10 total
+  - **Register tiers** — driven by vertical brightness centroid (`vy`):
+    - `vt = vy * 2`; bassW/midW/trebleW are a triangular crossfade of `safeBri`
+    - Bass (oct −1) ↔ treble (oct +1) driven by whether brightness is bottom/top/spread
+  - **Triad voice gating by spread** (color diversity):
+    - spread 0–0.15 → root only; 0.15–0.40 → 3rd fades in; 0.40–0.65 → 5th fades in
+    - `voiceWeights = [1.0, thirdW, fifthW]`; each tier voice multiplied per slot
   - **Glide via `setTargetAtTime`**: activity drives glide speed
-    - act ≈ 0 → τ = glideMax/3 (slow, legato, up to ~3s)
-    - act ≈ 1 → τ = glideMin/3 (fast, staccato, ~50ms)
+    - act ≈ 0 → τ = glideMax/3 (slow, legato); act ≈ 1 → τ = glideMin/3 (staccato)
+  - **Pluck voice** — probabilistic melodic strike on motion:
+    - `trigProb = max(quickness*0.4, slowness*0.2)` per frame
+    - **Note selection: histogram-driven.** `histBins` (30 bins, `sat×val` weighted) summed into 7 degree buckets → normalized weights with 4% floor → used directly as RNG probabilities. So a red-dominant frame plucks near the red degree; a multicolor frame roams all 7.
+    - Fallback (no histBins): chord tones (root/3rd/5th) weighted 1.0, non-chord × `spread*0.8`
+    - **Octave by slowness**: `Math.pow(2, 1−slowness*2)` → fast motion = bright/high, slow = deep/resonant
+    - Attack τ: 3–20 ms (quickness → slowness); decay τ: 40–550 ms
+    - Cooldown prevents overlap; longer for resonant (slow) strikes
+  - `cancelAndHoldAtTime` used for glide; falls back to `cancelScheduledValues + setValueAtTime` for older browsers
   - Light dynamics compressor on master bus
   - **S key** toggles audio on/off (AudioContext requires user gesture)
-  - URL params: `?glideMin=0.05&glideMax=3.0&masterGain=0.35`
+  - `window._avva = { synth, analyzer, renderer, videoSource, testTone(), gains, signals }` debug global
 
 **Analysis signals** (`frame.out`):
 | Signal | Source | Synth role |
 |--------|--------|------------|
 | `hue` | saturation-weighted circular mean | chord target (scale degree) |
-| `bri` | mean HSV value | mid-tier gain |
-| `hi` | mean brightness, top ⅓ of frame | treble-tier gain |
-| `lo` | mean brightness, bottom ⅓ of frame | bass-tier gain |
-| `act` | weighted RGB Euclidean delta | glide speed |
-| `sat` | mean saturation of vivid pixels | _available — unused in synth so far_ |
+| `bri` | mean HSV value | pad tier gains (via vy crossfade) |
+| `hi` / `lo` | top/bottom ⅓ brightness | available; tier crossfade uses vy |
+| `vy` | vertical brightness centroid (0=top, 1=bottom) | tier bass↔treble crossfade |
+| `act` | weighted RGB Euclidean delta | glide speed + pluck trigger (quickness) |
+| `actBg` | background-subtraction delta | pluck trigger (slowness) |
+| `spread` | 1 − hue circular-mean resultant | triad voice gating |
+| `sat` | mean saturation of vivid pixels | available |
+| `contrast` | brightness std-dev within frame | available |
+| `actEdge` | activity at spatial edges | available |
+
+`frame.histBins` — Float32Array(30) passed separately into `synth.update({ ...frame.out, histBins: frame.histBins })`.
 
 **Canvas layers:**
 
 - `#heat` — 96×72 sample-resolution motion heatmap, CSS-scaled fullscreen, `image-rendering: pixelated`, `mix-blend-mode: screen`. Opacity driven by `--heat-opacity` typed property. Toggled with M key.
-- `#hud` — full display-resolution (innerWidth × dpr), reserved for future audio HUD drawings. Currently wired but unused.
+- `#hud` — full display-resolution (innerWidth × dpr), reserved for future audio HUD drawings.
 
 **Program 2: AUDIO→VIS** — in progress (`av.html` + `loop.html` harness).
 
-Polyphonic, no monophonic pitch detection. Derived from old `DetectTone`:
+Polyphonic, no monophonic pitch detection:
 
-- `AnalyserNode`, fftSize 32768, smoothingTimeConstant 0.95
-  → ~0.67 Hz bin resolution at 44.1k. Enough to separate adjacent semitones from C2 up.
-- 60 chromatic notes scanned (octaves 2–6). Per note: take the bin amplitude, but only if it dominates its harmonic neighbors (octave ±1, ±2 bins) — kills octave bleed.
-- Asymmetric EMA per note (fast attack, slow release) on `pow(v/128, 50)` — sharp gating that keeps short staccato hits visible while sustaining chord sweeps.
-- Aggregate by chromatic class → 12-element pitch class profile (`chroma[12]`).
-- Sum across octaves into 3 EQ bands → `{lo, mid, hi}`.
-- Top-N chromatic prominences + chord-template lookup (maj/min/dim/aug/7ths) gives a chord guess; sticky on previous chord for stability.
+- `AnalyserNode`, fftSize 32768, smoothingTimeConstant 0.95 → ~0.67 Hz bin resolution at 44.1k
+- 60 chromatic notes scanned (octaves 2–6); per note: dominates harmonic neighbors → kills octave bleed
+- Asymmetric EMA per note: `pow(v/128, 50)` — sharp gating, sustains chord sweeps
+- Aggregate by chromatic class → 12-element pitch class profile (`chroma[12]`)
+- Sum into 3 EQ bands `{lo, mid, hi}`. Chord template lookup gives chord guess.
 
-**Audio frame contract** (mirrors Program 1's `frame.out` so renderers are interchangeable):
+**Audio frame contract:**
 
-| Signal     | Derivation                                          | Symmetric to video |
-|------------|-----------------------------------------------------|--------------------|
-| `chroma`   | Float32Array(12) — normalized per-class prominence  | (new — polyphonic) |
-| `bands`    | `{lo, mid, hi}` — band-summed FFT energy            | hi / lo / bri      |
-| `hue`      | circular mean of `chroma` mapped via `Key.degreeToHue` (in-scale) and chromatic position (out-of-scale) | hue |
-| `spread`   | 1 − resultant length of circular mean              | spread             |
-| `bri`      | total spectral RMS                                  | bri                |
-| `act`      | frame-to-frame delta of chroma vector (L1 norm)     | act                |
-| `sat`      | chord-template confidence (clean triad → 1, noise → 0) | sat             |
-| `chord`    | best-match chord label + `{change: bool}`           | (new)              |
+| Signal     | Derivation                                          |
+|------------|-----------------------------------------------------|
+| `chroma`   | Float32Array(12) — normalized per-class prominence  |
+| `bands`    | `{lo, mid, hi}` — band-summed FFT energy            |
+| `hue`      | circular mean of chroma mapped via `Key.degreeToHue` |
+| `spread`   | 1 − resultant length of circular mean               |
+| `bri`      | total spectral RMS                                  |
+| `act`      | frame-to-frame delta of chroma vector (L1 norm)     |
+| `sat`      | chord-template confidence                           |
+| `chord`    | best-match chord label + `{change: bool}`           |
 
-**Audio routing (closed-loop test) — Option 1 chosen:** single page harness `loop.html`.
-Shared `AudioContext`. Program 1's `synth._master` gain is connected to both `destination` AND to `AudioAnalyzer.analyser` directly. No mic, no speakers, no OS routing, no feedback risk. Both programs render side-by-side for eyeballing. Other options (BlackHole virtual device, tab capture, real acoustic loop) noted but deferred.
+**Audio routing:** `loop.html` single-page harness. `synth._master` connects to both `destination` and `AudioAnalyzer.analyser`. No mic/OS routing/feedback risk.
 
-Visuals: each of 12 chromatic classes gets a hue position (via `Key.degreeToHue` when in scale, chromatic-circle fallback when out). Per-class prominence drives intensity of that hue's band. `bands.lo/hi` drive bottom/top vertical brightness. `act` drives motion. Same `--accent-l/c/h` oklch plumbing as `va.css` so feedback stays in the palette.
+`loop.html` left pane now shows a **chord strip**: Roman numeral + 3 note pills (root/3rd/5th) whose opacity mirrors the spread-based voice gates — live visual of what the synth is playing.
 
 ---
 
@@ -100,25 +116,25 @@ Visuals: each of 12 chromatic classes gets a hue position (via `Key.degreeToHue`
 
 ```
 avva/
-  va.html             Program 1 shell — no inline styles/scripts
-  av.html             Program 2 shell — audio in, visuals out
-  loop.html           dev harness — both programs in one page, audio bus wired direct
+  va.html             Program 1 shell
+  loop.html           dev harness — both programs side-by-side, audio bus direct
+  loop.js             loop harness logic
+  loop.css            loop harness styles (extends va.css)
   va.css              shared CSS; @property typed custom properties
-  main.js             Program 1 RAF loop, begin(), wires all modules
-  main-av.js          Program 2 RAF loop
+  main.js             Program 1 RAF loop; window._avva debug global
   MEMORY.md
   modules/
     config.js         CONFIG defaults + URL param parser
     color.js          rgbToHsv, luma, hueName — pure functions, no DOM
-    video-source.js   VideoSource: camera vs looping file, same <video> element
-    analyzer.js       Analyzer: video frame analysis, EMA, heatmap — source-agnostic
-    audio-analyzer.js AudioAnalyzer: FFT → 12-class chroma + bands + chord — source-agnostic
-    renderer.js       Renderer: all DOM mutations for Program 1
-    audio-renderer.js AudioRenderer: visuals from audio frame, palette-matched
+    video-source.js   VideoSource: camera vs looping file array, same <video> element
+    analyzer.js       Analyzer: video frame → all signals + histBins + heatmap
+    audio-analyzer.js AudioAnalyzer: FFT → 12-class chroma + bands + chord
+    renderer.js       Renderer: all DOM mutations for Program 1 (signal monitor, sparklines)
+    audio-renderer.js AudioRenderer: visuals from audio frame
     controls.js       Controls: keyboard bindings, fires callbacks only
     calibration.js    Calibration (data + filterString) + CalibrationPanel (HUD)
-    music.js          Key: hue↔scale degree mapping (both directions), triad data
-    synth.js          Synth: 3 triangle oscillators, glide, activity→portamento speed
+    music.js          Key: hue↔scale degree, hueToNote, degreeToHue, chromaticHues, triad data
+    synth.js          Synth: pads (3×3 triangle) + pluck (1 sine), glide, spread-gated triad, histogram-driven note selection
 ```
 
 ---
@@ -193,15 +209,13 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 
 ## Build order (remaining)
 
-1. ✅ CAM→AUDIO analysis layer
-2. ✅ Synthesizer — triad oscillators, glide, hue→pitch, activity→portamento speed
-3. AUDIO→VIS:
-   a. ✅ Decision: polyphonic chromatic detection (12-class chroma + bands), not monophonic pitch
-   b. ✅ Decision: in-page audio bus harness (Option 1) for closed-loop dev
-   c. `Key.degreeToHue()` + chromatic-fallback hue mapping
-   d. `AudioAnalyzer` — port DetectTone, emit frame.out-shaped struct
-   e. `AudioRenderer` — render chroma + bands as palette-matched visuals
-   f. `loop.html` — wire synth master → AudioAnalyzer; both renderers side-by-side
+1. ✅ CAM→AUDIO analysis layer (all signals: hue, bri, act, actBg, spread, vy, contrast, hi, lo, actEdge, histBins)
+2. ✅ Synthesizer — pads (spread-gated triad), pluck (histogram-driven note selection), glide, slowness/quickness differentiation
+3. ✅ AUDIO→VIS:
+   a. ✅ Polyphonic chromatic detection (12-class chroma + bands + chord)
+   b. ✅ In-page audio bus harness `loop.html` — synth._master → AudioAnalyzer tap
+   c. ✅ AudioRenderer — chroma + bands palette-matched visuals
+   d. ✅ loop.html chord strip — live note pills for visual comparison
 4. Loop refinement — once stable, swap shared-AudioContext for BlackHole/tab-capture
 5. Real acoustic loop (camera ↔ speakers ↔ mic)
 
@@ -209,6 +223,6 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 
 ## Open decisions
 
-- Out-of-scale chromatic notes: render with chromatic-circle hue (12 evenly-spaced hues) OR desaturated grey? Currently planning chromatic-circle so the visual stays vivid even when audio strays out of key.
-- Whether `loop.html` should also wire Program 2's canvas → Program 1's `<video>` via `canvas.captureStream()` for full closed loop. Not blocking initial build.
-- URL param convention: `?root=G&scale=dorian&tempo=72` (still TBD; Program 2 should accept same `root`/`mode`/`octave` as Program 1 for inverse mapping to work).
+- Out-of-scale chromatic notes in AudioRenderer: chromatic-circle hue vs desaturated grey. Currently planning chromatic-circle so visual stays vivid even when audio strays out of key.
+- Whether `loop.html` should wire Program 2's canvas → Program 1's `<video>` via `canvas.captureStream()` for full closed loop.
+- URL param convention: `?root=G&mode=dorian` (synth accepts `root`/`mode`/`octave`; Program 2 should share same key params for inverse mapping).

@@ -208,7 +208,7 @@ function loop(t) {
       note: synth.key ? synth.key.hueToNote(frame.out.hue) : null,
     };
     renderer.paint(frame, state.fps, synthSnap);
-    synth.update(frame.out);
+    synth.update({ ...frame.out, histBins: frame.histBins });
   }
 
   requestAnimationFrame(loop);
