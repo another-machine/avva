@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>VA · Analysis Layer</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="va.css" />
+    <script type="module" src="main.js"></script>
+  </head>
+
+  <body>
+    <!-- ── Main stage ── -->
+    <div id="stage">
+      <!-- Video layer — source (camera or file) set by VideoSource module.
+           Filter set by Calibration via element.style.filter. -->
+      <video id="vid" playsinline muted></video>
+
+      <!-- Canvas layers -->
+      <canvas id="heat" class="canvas-layer"></canvas>
+      <canvas id="hud" class="canvas-layer"></canvas>
+
+      <!-- Identity panel (top-left) -->
+      <div id="p-id" class="panel" aria-label="Program identity">
+        <div class="p-id__name">CAM→AUDIO</div>
+        <div class="p-id__desc">ANALYSIS LAYER · v0.2</div>
+      </div>
+
+      <!-- Video calibration panel (top-right) — toggled with V key -->
+      <div
+        id="calibrate"
+        class="panel"
+        aria-label="Video calibration"
+        aria-live="polite"
+      >
+        <div class="cal__header">Video Calibration</div>
+
+        <div class="cal__row" id="cal-row-brightness">
+          <span class="cal__name">Brightness</span>
+          <span class="cal__value" id="cal-val-brightness">1.00</span>
+        </div>
+        <div class="cal__row" id="cal-row-contrast">
+          <span class="cal__name">Contrast</span>
+          <span class="cal__value" id="cal-val-contrast">1.00</span>
+        </div>
+        <div class="cal__row" id="cal-row-saturation">
+          <span class="cal__name">Saturation</span>
+          <span class="cal__value" id="cal-val-saturation">1.00</span>
+        </div>
+        <div class="cal__row" id="cal-row-hueRotate">
+          <span class="cal__name">Hue Rotate</span>
+          <span class="cal__value" id="cal-val-hueRotate">0°</span>
+        </div>
+
+        <div class="cal__hint">↑↓ adjust · TAB next · 0 reset · V close</div>
+        <div class="cal__url" id="cal-url"></div>
+      </div>
+
+      <!-- Hue panel (bottom-left) -->
+      <div id="p-hue" class="panel" aria-label="Hue readout">
+        <div class="panel__label">Hue</div>
+        <div class="panel__value">
+          <span id="hue-v">—</span><span class="panel__unit">°</span>
+          <span id="hue-n" class="panel__unit"></span>
+        </div>
+        <div class="huebar">
+          <div class="huebar__marker" id="huemark" aria-hidden="true"></div>
+        </div>
+        <div class="huehist" id="huehist" aria-hidden="true"></div>
+      </div>
+
+      <!-- Brightness panel -->
+      <div id="p-bri" class="panel" aria-label="Brightness readout">
+        <div class="panel__label">Brightness</div>
+        <div class="panel__value">
+          <span id="bri-v">—</span><span class="panel__unit">%</span>
+        </div>
+        <canvas class="spark" id="bri-spark"></canvas>
+      </div>
+
+      <!-- Activity panel -->
+      <div id="p-act" class="panel" aria-label="Activity readout">
+        <div class="panel__label">Activity</div>
+        <div class="panel__value">
+          <span id="act-v">—</span><span class="panel__unit">%</span>
+        </div>
+        <canvas class="spark" id="act-spark"></canvas>
+      </div>
+
+      <!-- Meta bar (bottom-left) -->
+      <div id="p-meta" class="panel" aria-label="Signal metadata">
+        SIGNAL <b id="m-src">—</b><br />
+        SAMPLE <b id="m-res">—</b> · <b id="m-fps">—</b> FPS
+      </div>
+
+      <!-- Key reference (bottom-right) -->
+      <div id="keys" class="panel" aria-label="Keyboard shortcuts">
+        <b>V</b> calibrate &nbsp; <b>H</b> hud<br />
+        <b>M</b> motion-map &nbsp; <b>R</b> mirror<br />
+        <b>F</b> fullscreen &nbsp; <b>C</b> cycle
+      </div>
+    </div>
+    <!-- /#stage -->
+
+    <!-- ── Gate (splash / permission screen) ── -->
+    <div id="gate">
+      <h1 class="gate__title">CAM&nbsp;→&nbsp;AUDIO</h1>
+      <p class="gate__sub">
+        Analysis layer. This instrument observes hue, brightness, and activity.
+        No sound is produced yet — this stage verifies the eyes.
+      </p>
+      <button class="gate__btn" id="go">Grant camera · begin</button>
+      <div class="gate__err" id="err" role="alert"></div>
+    </div>
+  </body>
+</html>

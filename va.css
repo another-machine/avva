@@ -1,0 +1,660 @@
+/* ============================================================
+   AVVA · Analysis Layer — va.css
+   ============================================================ */
+
+/* ============================================================
+   @property — typed custom properties
+   Typed registration enables CSS interpolation between frames
+   when JS updates these each animation tick.
+   ============================================================ */
+
+/* Accent color — oklch components.
+   JS sets these on :root; :root derives --color-accent.
+   Being typed <number> means CSS can animate between values. */
+@property --accent-l {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.65;
+}
+
+@property --accent-c {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.15;
+}
+
+@property --accent-h {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+/* Hue marker position — set on .huebar__marker; CSS transitions it. */
+@property --hue-marker-pos {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+/* Heat canvas opacity — set on #heat; CSS transitions it. */
+@property --heat-opacity {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+/* HUD layer opacity — JS sets this on body; all HUD elements inherit
+   the live interpolated value. Timing is fully controlled by CSS vars. */
+@property --hud-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+/* Stage/background layer opacity — JS may set this on #stage to fade
+   the video layer independently from the HUD. Starts at 1 (full). */
+@property --stage-opacity {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+/* ============================================================
+   Design tokens
+   ============================================================ */
+
+:root {
+  /* — palette — */
+  --color-bg: #070707;
+  --color-ink: #e8e6e0;
+  --color-dim: #6f6c64;
+  --color-hair: rgba(232, 230, 224, 0.18);
+  --color-error: #d8736a;
+  --color-black: #000;
+  --color-white: #fff;
+
+  /* — accent: derived from typed oklch components —
+     JS sets --accent-l (0–1), --accent-c (0–0.4), --accent-h (0–360)
+     per frame; this composite updates automatically throughout the tree. */
+  --color-accent: oklch(var(--accent-l) var(--accent-c) var(--accent-h));
+
+  /* — hue spectrum display (used in huebar gradient + histogram bars) — */
+  --spectrum-l: 0.65; /* oklch lightness — perceptually uniform across hues */
+  --spectrum-c: 0.2; /* oklch chroma — safe gamut for all hue angles */
+
+  /* — typography — */
+  --font-mono: "IBM Plex Mono", monospace;
+  --font-display: "Space Mono", monospace;
+
+  --text-2xs: 9px;
+  --text-xs: 9.5px;
+  --text-sm: 11px;
+  --text-base: 13px;
+  --text-lg: 30px;
+
+  --tracking-tight: 0.04em;
+  --tracking-base: 0.16em;
+  --tracking-wide: 0.24em;
+  --tracking-wider: 0.28em;
+  --tracking-widest: 0.34em;
+
+  --lh-meta: 2.2;
+  --lh-keys: 2.1;
+  --lh-sub: 2;
+
+  /* — spacing — */
+  --inset: 34px; /* edge offset: panels, reticle, calibration panel */
+  --panel-bottom: 120px; /* bottom offset: readout panels */
+  --footer-bottom: 40px; /* bottom offset: meta + keys */
+  --corner-size: 46px; /* reticle corner bracket size */
+  --crosshair-size: 30px;
+
+  /* — component dimensions — */
+  --huebar-h: 6px;
+  --huemark-h: 14px;
+  --huemark-w: 2px;
+  --huehist-h: 34px;
+  --spark-h: 42px;
+
+  /* — panel layout — */
+  --panel-hue-w: 230px;
+  --panel-bri-w: 200px;
+  --panel-act-w: 200px;
+  --panel-bri-l: 300px;
+  --panel-act-l: 526px;
+
+  /* — gate — */
+  --gate-gap: 28px;
+  --gate-padding: 40px;
+  --gate-max-w: 520px;
+  --gate-btn-py: 18px;
+  --gate-btn-px: 46px;
+  --gate-btn-radius: 1px;
+  --err-max-w: 540px;
+
+  /* — calibration panel — */
+  --cal-w: 260px;
+  --cal-pad-x: 20px;
+  --cal-pad-y: 16px;
+  --cal-blur: 8px;
+  --cal-bg: rgba(7, 7, 7, 0.88);
+  --cal-row-indent: 8px;
+  --cal-border-w: 2px;
+
+  /* — transitions — */
+  --dur-snap: 0.12s;
+  --dur-short: 0.35s;
+  --dur-medium: 0.5s;
+  --dur-long: 0.8s;
+  --ease: ease;
+  --ease-linear: linear;
+
+  /* — HUD hide/show — retimeable independently from other transitions.
+     Change these vars to reshape the fade without touching JS. */
+  --dur-hud-hide: 0.6s;
+  --ease-hud-hide: ease;
+
+  /* — Stage/background fade — independent timing for the video layer. */
+  --dur-stage-fade: 1.2s;
+  --ease-stage-fade: ease;
+}
+
+/* ============================================================
+   Base reset
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  background: #000; /* absolute fallback */
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: default;
+}
+
+body {
+  /* Background lives in ::before so it can carry --hud-opacity.
+     body itself is transparent — the ::before layer shows through #stage. */
+  background: transparent;
+  font-family: var(--font-mono);
+  color: var(--color-ink);
+  /* Transitioning --hud-opacity (typed @property) on the body means
+     all inheriting children — including ::before — see the live
+     interpolated value each frame. Retime via --dur-hud-hide / --ease-hud-hide. */
+  transition: --hud-opacity var(--dur-hud-hide) var(--ease-hud-hide);
+}
+
+/* Background/gradient layer — fades with the HUD at the same rate.
+   Place any background gradient here. Because body::before is a fixed
+   element rendered before #stage in stacking order, it sits below the
+   video without needing an explicit z-index. */
+#stage::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--hud-opacity);
+  background: linear-gradient(
+    var(--color-bg) 0%,
+    transparent 40%,
+    transparent 60%,
+    var(--color-bg) 100%
+  );
+  z-index: 1;
+}
+
+/* ============================================================
+   Stage
+   ============================================================ */
+
+#stage {
+  position: fixed;
+  inset: 0;
+  background: transparent; /* background lives in body::before, visible behind video gaps */
+  /* --stage-opacity lets you fade the entire video/background layer
+     independently from the HUD. Set via JS or override in CSS.
+     Retime with --dur-stage-fade / --ease-stage-fade. */
+  opacity: var(--stage-opacity);
+  transition: --stage-opacity var(--dur-stage-fade) var(--ease-stage-fade);
+
+  > .panel {
+    z-index: 2;
+  }
+}
+
+/* ============================================================
+   Video layer
+   Filter is set by JS (Calibration) on element.style.filter —
+   no filter rule here so JS stays in full control.
+   ============================================================ */
+
+#vid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  object-fit: cover;
+  object-position: center;
+}
+
+#vid.mirror,
+#heat.mirror {
+  transform: scaleX(-1);
+}
+
+/* ============================================================
+   Canvas layers
+   #heat: low-res (sampleW × sampleH), CSS-scaled up, pixelated.
+   #hud:  full display-res (set by JS on resize).
+   ============================================================ */
+
+.canvas-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+#heat {
+  mix-blend-mode: difference;
+  image-rendering: pixelated;
+  object-fit: cover;
+  object-position: center;
+  opacity: var(--heat-opacity);
+  transition: --heat-opacity var(--dur-long) var(--ease);
+}
+
+#hud {
+  pointer-events: none;
+}
+
+/* ============================================================
+   Gate — splash / permission screen
+   ============================================================ */
+
+#gate {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gate-gap);
+  padding: var(--gate-padding);
+  background: radial-gradient(circle at 50% 45%, #101010 0%, #040404 70%);
+  text-align: center;
+  transition: opacity var(--dur-long) var(--ease);
+}
+
+#gate.hide {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gate__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(22px, 4.4vw, 46px);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--color-ink);
+}
+
+.gate__sub {
+  max-width: var(--gate-max-w);
+  color: var(--color-dim);
+  font-size: var(--text-base);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  line-height: var(--lh-sub);
+}
+
+.gate__btn {
+  margin-top: 6px;
+  padding: var(--gate-btn-py) var(--gate-btn-px);
+  border: 1px solid var(--color-hair);
+  border-radius: var(--gate-btn-radius);
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  cursor: pointer;
+  transition:
+    background var(--dur-short) var(--ease),
+    color var(--dur-short) var(--ease),
+    letter-spacing var(--dur-short) var(--ease);
+}
+
+.gate__btn:hover {
+  background: var(--color-ink);
+  color: var(--color-black);
+  letter-spacing: 0.42em;
+}
+
+.gate__err {
+  min-height: 1.2em;
+  max-width: var(--err-max-w);
+  color: var(--color-error);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  line-height: 1.9;
+}
+
+/* ============================================================
+   Panels — shared readout styles
+   ============================================================ */
+
+.panel {
+  position: absolute;
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-base);
+  text-transform: uppercase;
+}
+
+.panel__label {
+  margin-bottom: 7px;
+  color: var(--color-dim);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-widest);
+}
+
+.panel__value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-lg);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1;
+  color: var(--color-ink);
+}
+
+.panel__unit {
+  font-size: var(--text-base);
+  font-weight: 400;
+  color: var(--color-dim);
+  margin-left: 4px;
+}
+
+/* ============================================================
+   Panel — identity (top-left)
+   ============================================================ */
+
+#p-id {
+  top: var(--inset);
+  left: var(--inset);
+}
+
+.p-id__name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-base);
+  letter-spacing: 0.3em;
+}
+
+.p-id__desc {
+  margin-top: 6px;
+  color: var(--color-dim);
+  font-size: var(--text-xs);
+  letter-spacing: 0.26em;
+}
+
+/* ============================================================
+   Panel — Hue
+   ============================================================ */
+
+#p-hue {
+  bottom: var(--panel-bottom);
+  left: var(--inset);
+  width: var(--panel-hue-w);
+}
+
+/* Spectrum bar — oklch gradient gives perceptually uniform lightness.
+   `in oklch` interpolation mode produces a clean rainbow between stops. */
+.huebar {
+  position: relative;
+  width: 100%;
+  height: var(--huebar-h);
+  margin-top: 10px;
+  border: 1px solid var(--color-hair);
+  background: linear-gradient(
+    in oklch 90deg,
+    oklch(var(--spectrum-l) var(--spectrum-c) 0),
+    oklch(var(--spectrum-l) var(--spectrum-c) 60),
+    oklch(var(--spectrum-l) var(--spectrum-c) 120),
+    oklch(var(--spectrum-l) var(--spectrum-c) 180),
+    oklch(var(--spectrum-l) var(--spectrum-c) 240),
+    oklch(var(--spectrum-l) var(--spectrum-c) 300),
+    oklch(var(--spectrum-l) var(--spectrum-c) 360)
+  );
+}
+
+/* Marker: --hue-marker-pos is a typed @property set on this element;
+   CSS transitions the custom property directly. */
+.huebar__marker {
+  position: absolute;
+  top: -4px;
+  width: var(--huemark-w);
+  height: var(--huemark-h);
+  background: var(--color-white);
+  box-shadow: 0 0 6px var(--color-white);
+  left: var(--hue-marker-pos);
+  transition: --hue-marker-pos var(--dur-snap) var(--ease-linear);
+}
+
+/* Histogram — bar colors set inline (oklch) by buildHistBars() */
+.huehist {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: var(--huehist-h);
+  margin-top: 9px;
+}
+
+.huehist__bar {
+  flex: 1;
+  min-height: 1px;
+  opacity: 0.8;
+  transition: height 0.15s var(--ease);
+}
+
+/* ============================================================
+   Panel — Brightness
+   ============================================================ */
+
+#p-bri {
+  bottom: var(--panel-bottom);
+  left: var(--panel-bri-l);
+  width: var(--panel-bri-w);
+}
+
+/* ============================================================
+   Panel — Activity
+   ============================================================ */
+
+#p-act {
+  bottom: var(--panel-bottom);
+  left: var(--panel-act-l);
+  width: var(--panel-act-w);
+}
+
+/* ============================================================
+   Sparklines
+   ============================================================ */
+
+.spark {
+  display: block;
+  width: 100%;
+  height: var(--spark-h);
+  margin-top: 10px;
+  border-bottom: 1px solid var(--color-hair);
+}
+
+/* ============================================================
+   Meta bar (bottom-left)
+   ============================================================ */
+
+#p-meta {
+  bottom: var(--footer-bottom);
+  left: var(--inset);
+  color: var(--color-dim);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  line-height: var(--lh-meta);
+}
+
+#p-meta b {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+/* ============================================================
+   Key reference (bottom-right)
+   ============================================================ */
+
+#keys {
+  position: absolute;
+  bottom: var(--footer-bottom);
+  right: var(--inset);
+  text-align: right;
+  color: var(--color-dim);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.22em;
+  line-height: var(--lh-keys);
+}
+
+#keys b {
+  color: var(--color-ink);
+}
+
+/* ============================================================
+   Calibration panel (top-right)
+   Shown/hidden with .visible; keyboard-driven via CalibrationPanel.
+   ============================================================ */
+
+#calibrate {
+  position: absolute;
+  top: var(--inset);
+  right: var(--inset);
+  z-index: 5;
+  width: var(--cal-w);
+  padding: var(--cal-pad-y) var(--cal-pad-x) calc(var(--cal-pad-y) + 2px);
+  border: 1px solid var(--color-hair);
+  background: var(--cal-bg);
+  backdrop-filter: blur(var(--cal-blur));
+  -webkit-backdrop-filter: blur(var(--cal-blur));
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-medium) var(--ease);
+}
+
+#calibrate.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cal__header {
+  margin-bottom: 14px;
+  color: var(--color-dim);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-widest);
+}
+
+.cal__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 5px 0 5px var(--cal-row-indent);
+  border-left: var(--cal-border-w) solid transparent;
+  color: var(--color-dim);
+  transition:
+    color var(--dur-short) var(--ease),
+    border-color var(--dur-short) var(--ease);
+}
+
+.cal__row.is-active {
+  color: var(--color-ink);
+  border-left-color: var(--color-accent);
+}
+
+.cal__name {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-base);
+}
+
+.cal__value {
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  min-width: 5ch;
+  text-align: right;
+}
+
+.cal__hint {
+  margin-top: 14px;
+  color: var(--color-dim);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.16em;
+  line-height: 1.9;
+  opacity: 0.65;
+}
+
+.cal__url {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-hair);
+  color: var(--color-dim);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.1em;
+  word-break: break-all;
+  opacity: 0.55;
+}
+
+/* ============================================================
+   HUD element opacity
+   All HUD elements inherit --hud-opacity from body.
+   JS sets body's --hud-opacity value (0 or 1); body's typed
+   transition interpolates it; children read the live value.
+   No class toggle needed — timing lives entirely in CSS.
+   (#calibrate has its own class-based visibility on top of this.)
+   ============================================================ */
+
+.panel,
+.bracket,
+#cross,
+#keys {
+  opacity: var(--hud-opacity);
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+
+@media (max-width: 760px) {
+  #p-bri,
+  #p-act,
+  #keys {
+    display: none;
+  }
+
+  #p-hue {
+    width: 180px;
+  }
+}
