@@ -64,7 +64,7 @@ const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII"];
 // Diatonic circle-of-fifths order: each step is +4 scale degrees mod 7.
 // Arrangement on hue wheel: I→V→II→VI→III→VII→IV→(wrap to I)
 // Adjacent hues are a diatonic fifth apart, not a scale step apart.
-const DIATONIC_FIFTHS     = [0, 4, 1, 5, 2, 6, 3]; // sector→degree
+const DIATONIC_FIFTHS = [0, 4, 1, 5, 2, 6, 3]; // sector→degree
 const DIATONIC_FIFTHS_INV = [0, 2, 4, 6, 1, 3, 5]; // degree→sector
 const SECTOR_DEG = 360 / 7; // ≈ 51.43° per degree
 
@@ -201,21 +201,28 @@ export class Key {
         out[cIdx] = semiToHue.get(rel);
       } else {
         // Interpolate between chromatic neighbours that are in-scale.
-        let loRel = rel, hiRel = rel;
+        let loRel = rel,
+          hiRel = rel;
         for (let s = 1; s <= 12; s++) {
-          if (semiToHue.has((rel - s + 12) % 12)) { loRel = (rel - s + 12) % 12; break; }
+          if (semiToHue.has((rel - s + 12) % 12)) {
+            loRel = (rel - s + 12) % 12;
+            break;
+          }
         }
         for (let s = 1; s <= 12; s++) {
-          if (semiToHue.has((rel + s) % 12)) { hiRel = (rel + s) % 12; break; }
+          if (semiToHue.has((rel + s) % 12)) {
+            hiRel = (rel + s) % 12;
+            break;
+          }
         }
         const loHue = semiToHue.get(loRel);
         const hiHue = semiToHue.get(hiRel);
         const span = (hiRel - loRel + 12) % 12 || 12;
-        const pos  = (rel   - loRel + 12) % 12;
+        const pos = (rel - loRel + 12) % 12;
         let dh = hiHue - loHue;
-        if (dh >  180) dh -= 360; // shortest arc
+        if (dh > 180) dh -= 360; // shortest arc
         if (dh < -180) dh += 360;
-        out[cIdx] = ((loHue + (pos / span) * dh) % 360 + 360) % 360;
+        out[cIdx] = (((loHue + (pos / span) * dh) % 360) + 360) % 360;
       }
     }
     return out;

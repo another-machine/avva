@@ -74,6 +74,7 @@ export class Synth {
     this._tremolo = null; // { lfo, depth }
     this.key = null;
     this.running = false;
+    this._prevRootFreq = 0; // mid-tier root freq, used for voice-leading the 5th
   }
 
   // ── Lifecycle ──────────────────────────────────────────────
@@ -321,8 +322,22 @@ export class Synth {
       voices.forEach(({ fm, panner, ratioBase }, vi) => {
         if (vi < 3) {
           // Triad voices: root (0), 3rd (1), 5th (2)
-          const targetFreq = note.triad[vi].freq * freqScale;
+          let targetFreq = note.triad[vi].freq * freqScale;
           if (!Number.isFinite(targetFreq)) return;
+
+          // Mid-tier 5th: voice-lead by choosing the octave closest to where
+          // the previous root sat. Keeps the 5th from leaping when chords change
+          // and naturally produces open voicing when the root hasn't moved far.
+          if (ti === 1 && vi === 2 && this._prevRootFreq > 0) {
+            const fcDrop = targetFreq * 0.5;
+            const logPrev = Math.log2(this._prevRootFreq);
+            if (
+              Math.abs(Math.log2(fcDrop) - logPrev) <
+              Math.abs(Math.log2(targetFreq) - logPrev)
+            ) {
+              targetFreq = fcDrop;
+            }
+          }
 
           fm.glideTo(targetFreq, tau);
           fm.setGain(tierBase * voiceWeights[vi], tau);
@@ -350,6 +365,9 @@ export class Synth {
         }
       });
     });
+
+    // Store mid-tier root for voice-leading on the next frame.
+    this._prevRootFreq = note.triad[0].freq; // freqScale=1 for mid tier
 
     this._maybePluck(
       note,
@@ -419,19 +437,27 @@ export class Synth {
     const fc = this.key.degrees[chosen].freq * Math.pow(2, octShift);
     if (!Number.isFinite(fc) || fc <= 0) return;
 
-    // Envelope shaping (same character knobs as v0.5 pluck)
-    const attackTau = 0.003 + slowness * 0.017;
-    const ampDecayTau =
-      0.04 + slowness * 0.36 + Math.random() * (0.05 + slowness * 0.15);
-    const peak = 0.1 + slowness * 0.08;
+    // Activity-driven spatial vs. prominent character.
+    // quickness=0 (still scene) → spacious, distant, wide, lingering.
+    // quickness=1 (busy scene) → tight, punchy, centred, short.
+    const spacious = 1 - quickness;
 
-    // FM specifics
-    // Index peak kept low so the attack has body without harsh metallic clang.
-    // Edge adds a little brightness but stays muted.
-    const indexPeak = (0.6 + edge * 1.0) * (1 - slowness * 0.4);
-    // Mod envelope decays very quickly — the harmonic colour snaps to a
-    // near-pure tone almost immediately, giving a warm pluck/mallet character.
-    const modDecayTau = ampDecayTau * (0.06 + slowness * 0.14);
+    // Amplitude: soft when spacious, present when active.
+    const peak = 0.04 + quickness * 0.13 + slowness * 0.03;
+
+    // Attack: slow diffuse onset when spacious; sharp transient when active.
+    const attackTau = 0.014 - quickness * 0.011; // 0.014 → 0.003
+
+    // Decay: long and lingering when spacious; tight when active.
+    const baseDecay = 0.06 + slowness * 0.4;
+    const ampDecayTau =
+      baseDecay * (1 + spacious * 1.8) +
+      Math.random() * (0.05 + slowness * 0.12);
+
+    // FM: more harmonic colour on the attack when active.
+    const indexPeak =
+      (0.3 + quickness * 0.7 + edge * 0.6) * (1 - slowness * 0.3);
+    const modDecayTau = ampDecayTau * (0.04 + slowness * 0.14);
 
     pluck.fm.pluck(fc, {
       peak,
@@ -441,14 +467,14 @@ export class Synth {
       attackTau,
     });
 
-    // Pan from chosen degree position: tonic left → leading-tone right.
-    // Scale by current stereo width × 0.75 (don't slam the corners).
+    // Pan: wide and spatial when quiet; centred and present when active.
     const degPan = (chosen / 6 - 0.5) * 2; // -1 .. +1
-    const pluckPan = degPan * widthScale * 0.75;
+    const panMult = 0.35 + spacious * 1.1; // 0.35 (tight) → 1.45 (wide)
+    const pluckPan = degPan * widthScale * panMult;
     this._panTo(pluck.panner.pan, pluckPan, 0.04, now);
 
-    pluck.nextAllowed =
-      now + 0.08 + (1 - Math.max(quickness, slowness)) * 0.12 + slowness * 0.4;
+    // Cooldown: rare, widely-spaced plucks when still; busier when active.
+    pluck.nextAllowed = now + 0.06 + spacious * 0.5 + slowness * 0.25;
   }
 
   // ── Helpers ─────────────────────────────────────────────────
