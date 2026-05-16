@@ -17,7 +17,7 @@ A human stepping in front of the camera breaks the loop and injects new signal.
 
 ---
 
-## Current state (v0.5)
+## Current state (v0.6)
 
 **Program 1: CAM→AUDIO** — `va.html` (analysis + synth)
 
@@ -34,32 +34,41 @@ HUD: hue histogram, sparklines (ACT/SLOW/BRI/CTST/VPOS), motion heat-map, signal
 
 Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTION (act, actBg/SLOW, actEdge, vy) · TEXTURE (bri, contrast, spread, sat) · REGISTER (hi, lo).
 
-**Synth:** `modules/synth.js` + `modules/music.js`
+**Synth:** `modules/synth.js` + `modules/music.js` + `modules/fm-voice.js`
 
 - **`Key`** class maps hue (0–360°) → diatonic scale degree (I–VII) in a circular path
   - Degrees spaced evenly across the spectrum; 0° and 360° both resolve to the tonic
   - The VII (leading tone) at ~310–360° naturally cadences back to I — the wrap IS the resolution
   - Modes: major, minor, dorian, phrygian, lydian, mixolydian, locrian
   - URL params: `?root=A&mode=locrian&octave=4` (current default: A locrian)
-- **`Synth`** class: 3 tiers × 3 triangle oscillators (pads) + 1 pluck oscillator = 10 total
-  - **Register tiers** — driven by vertical brightness centroid (`vy`):
-    - `vt = vy * 2`; bassW/midW/trebleW are a triangular crossfade of `safeBri`
-    - Bass (oct −1) ↔ treble (oct +1) driven by whether brightness is bottom/top/spread
-  - **Triad voice gating by spread** (color diversity):
-    - spread 0–0.15 → root only; 0.15–0.40 → 3rd fades in; 0.40–0.65 → 5th fades in
-    - `voiceWeights = [1.0, thirdW, fifthW]`; each tier voice multiplied per slot
-  - **Glide via `setTargetAtTime`**: activity drives glide speed
-    - act ≈ 0 → τ = glideMax/3 (slow, legato); act ≈ 1 → τ = glideMin/3 (staccato)
-  - **Pluck voice** — probabilistic melodic strike on motion:
-    - `trigProb = max(quickness*0.4, slowness*0.2)` per frame
-    - **Note selection: histogram-driven.** `histBins` (30 bins, `sat×val` weighted) summed into 7 degree buckets → normalized weights with 4% floor → used directly as RNG probabilities. So a red-dominant frame plucks near the red degree; a multicolor frame roams all 7.
-    - Fallback (no histBins): chord tones (root/3rd/5th) weighted 1.0, non-chord × `spread*0.8`
-    - **Octave by slowness**: `Math.pow(2, 1−slowness*2)` → fast motion = bright/high, slow = deep/resonant
-    - Attack τ: 3–20 ms (quickness → slowness); decay τ: 40–550 ms
-    - Cooldown prevents overlap; longer for resonant (slow) strikes
-  - `cancelAndHoldAtTime` used for glide; falls back to `cancelScheduledValues + setValueAtTime` for older browsers
+- **`FMVoice`** — 2-operator FM primitive
+  - `modulator (sine) → modGain → carrier.frequency`, `carrier (sine) → outGain → dest`
+  - `modGain.gain = index × current modulator freq` — keeps timbre stable across pitch
+  - Methods: `glideTo(fc, tau)` · `setIndex(i, tau)` · `setRatio(r, tau)` · `setGain(g, tau)` · `pluck(fc, opts)`
+  - Pluck schedules mod-depth and amp-gain envelopes independently — mod decays faster than amp → classic DX "metallic ping → pure tone" arc
+- **`Synth`** — 9 FM pads + 1 FM pluck (replaced triangle/sine v0.5 build)
+  - 3 tiers × 3 chord-tone voices (root/3rd/5th); per-tier base FM ratio:
+    - Bass (oct −1) ratio 2 — even harmonics only → fat, woody
+    - Mid (oct 0) ratio 1 — full harmonic
+    - Treble (oct +1) ratio 1 — full harmonic, slightly brighter index range
+  - **Tier crossfade by `vy`** (vertical brightness centroid) — unchanged from v0.5
+  - **Triad voice gating by `spread`** — unchanged from v0.5 (root → 3rd → 5th fade-in)
+  - **`sat` → pad modulation index** — vivid color = bright timbre (idxBase + sat × idxScale)
+  - **`contrast` → bass modulation index** — structured frames grow growl in the low end
+  - **`spread` → ratio drift** — voices 0/1/2 drift +0/+δ/−δ off integer ratio (δ = spread × fmRatioDrift). Monochromatic frames stay perfectly harmonic; rainbow frames produce chorusy beating sidebands.
+  - **Stereo width — per-voice StereoPannerNode** chained after each FMVoice.outGain
+    - Base pan positions widen from bass (±0.18) → mid (±0.42) → treble (±0.7); voice 1 (3rd) sits center
+    - Whole field scaled by `0.25 + spread × fmStereoWidth` (default 0.75 max width). Monochromatic = near-center, rainbow = open field.
+    - Pan glides at slowTau (~4× freq tau) to avoid frame-rate twitching
+  - **Glide via `setTargetAtTime`**: activity drives glide speed (act≈0 → glideMax/3, act≈1 → glideMin/3). Index and ratio glides use slowTau to feel like timbre evolution rather than per-frame jitter.
+  - **Pluck voice** — FMVoice with ratio 7 (DX-style):
+    - `trigProb = max(quickness×0.4, slowness×0.2)`, histogram-driven note pick (or chord-tones × spread fallback)
+    - Octave by slowness: `Math.pow(2, 1 − slowness×2)`
+    - Index peak boosted by `actEdge` (sharp edges → sharper ping); mod-decay shorter than amp-decay
+    - Pan from chosen scale degree: tonic = leftmost, leading tone = rightmost, scaled by current width × 0.75
   - Light dynamics compressor on master bus
   - **S key** toggles audio on/off (AudioContext requires user gesture)
+  - Each pad voice carries v0.5-compat aliases `voice.gain = fm.outGain` and `voice.osc = fm.carrier` so `window._avva.gains` debug tap still works
   - `window._avva = { synth, analyzer, renderer, videoSource, testTone(), gains, signals }` debug global
 
 **Analysis signals** (`frame.out`):
@@ -71,10 +80,10 @@ Signal monitor panel sections: SYNTH (dot, key, numeral, note, quality) · MOTIO
 | `vy` | vertical brightness centroid (0=top, 1=bottom) | tier bass↔treble crossfade |
 | `act` | weighted RGB Euclidean delta | glide speed + pluck trigger (quickness) |
 | `actBg` | background-subtraction delta | pluck trigger (slowness) |
-| `spread` | 1 − hue circular-mean resultant | triad voice gating |
-| `sat` | mean saturation of vivid pixels | available |
-| `contrast` | brightness std-dev within frame | available |
-| `actEdge` | activity at spatial edges | available |
+| `spread` | 1 − hue circular-mean resultant | triad voice gating + FM ratio drift + stereo width |
+| `sat` | mean saturation of vivid pixels | pad/treble FM modulation index (timbre brightness) |
+| `contrast` | brightness std-dev within frame | bass FM modulation index (low-end growl) |
+| `actEdge` | activity at spatial edges | pluck FM index peak (ping sharpness) |
 
 `frame.histBins` — Float32Array(30) passed separately into `synth.update({ ...frame.out, histBins: frame.histBins })`.
 
@@ -134,7 +143,8 @@ avva/
     controls.js       Controls: keyboard bindings, fires callbacks only
     calibration.js    Calibration (data + filterString) + CalibrationPanel (HUD)
     music.js          Key: hue↔scale degree, hueToNote, degreeToHue, chromaticHues, triad data
-    synth.js          Synth: pads (3×3 triangle) + pluck (1 sine), glide, spread-gated triad, histogram-driven note selection
+    fm-voice.js       FMVoice: 2-op FM primitive (sine carrier + sine modulator)
+    synth.js          Synth: 9 FM pads + 1 FM pluck, per-voice stereo panning, sat→index, spread→ratio drift + width
 ```
 
 ---
@@ -210,7 +220,9 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 ## Build order (remaining)
 
 1. ✅ CAM→AUDIO analysis layer (all signals: hue, bri, act, actBg, spread, vy, contrast, hi, lo, actEdge, histBins)
-2. ✅ Synthesizer — pads (spread-gated triad), pluck (histogram-driven note selection), glide, slowness/quickness differentiation
+2. ✅ Synthesizer:
+   a. ✅ Triangle pads + sine pluck (v0.5)
+   b. ✅ 2-op FM pads + FM pluck (v0.6) — sat→index timbre, spread→ratio drift + stereo width, per-voice panning
 3. ✅ AUDIO→VIS:
    a. ✅ Polyphonic chromatic detection (12-class chroma + bands + chord)
    b. ✅ In-page audio bus harness `loop.html` — synth.\_master → AudioAnalyzer tap
@@ -226,3 +238,5 @@ Accent color: `oklch(l c h)` where l/c are derived from brightness/saturation an
 - Out-of-scale chromatic notes in AudioRenderer: chromatic-circle hue vs desaturated grey. Currently planning chromatic-circle so visual stays vivid even when audio strays out of key.
 - Whether `loop.html` should wire Program 2's canvas → Program 1's `<video>` via `canvas.captureStream()` for full closed loop.
 - URL param convention: `?root=G&mode=dorian` (synth accepts `root`/`mode`/`octave`; Program 2 should share same key params for inverse mapping).
+- FM tuning knobs all URL-overridable: `?fmIndexBase=0.15&fmIndexScale=2.4&fmRatioDrift=0.04&fmStereoWidth=0.75&fmPluckRatio=7`. The pluckRatio is the most expressive single knob — 3 = clarinet, 5 = wooden, 7 = DX bell, 11+ = pure metallic.
+- AudioRenderer in `loop.html` will need updating to react to FM-driven timbre changes (currently only reacts to chroma/bands, doesn't know about the synth's brightness/width). Not urgent — Program 2 reads the actual audio, so timbre changes already flow through chroma analysis.

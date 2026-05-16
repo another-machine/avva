@@ -50,6 +50,17 @@ const DEFAULTS = {
   glideMin: 0.01, // seconds at act=1 (staccato)
   glideMax: 2.0, // seconds at act=0 (legato)
   masterGain: 0.35,
+
+  // --- FM synthesis ---
+  // sat → pad modulation index (timbre brightness)
+  fmIndexBase: 0.15, // index when sat=0 (near-pure sine)
+  fmIndexScale: 2.4, // index swing range driven by sat
+  // spread → modulator ratio drift (chorusy detune at rainbow frames)
+  fmRatioDrift: 0.04, // max ±drift off integer ratio at spread=1
+  // spread → stereo width
+  fmStereoWidth: 0.75, // max width multiplier at spread=1 (0.25 minimum)
+  // pluck FM ratio (DX-style metallic ping at 7; clarinet-ish at 3)
+  fmPluckRatio: 7,
 };
 
 /** Parse URL search params and return overrides matching known keys. */
@@ -78,6 +89,11 @@ function parseUrlParams() {
     "glideMin",
     "glideMax",
     "masterGain",
+    "fmIndexBase",
+    "fmIndexScale",
+    "fmRatioDrift",
+    "fmStereoWidth",
+    "fmPluckRatio",
   ]) {
     if (p.has(k)) {
       const v = Number(p.get(k));
