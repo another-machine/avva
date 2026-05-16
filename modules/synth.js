@@ -122,12 +122,13 @@ export class Synth {
     // Clamp all inputs — NaN/Infinity from any signal will crash setTargetAtTime.
     const safeHue = Number.isFinite(hue) ? hue : 0;
     const safeBri = Number.isFinite(bri) ? Math.max(0, bri) : 0;
-    // Use the larger of frame-diff activity and background-subtraction activity.
-    // actBg catches slow movers that frame-diff misses (only sees edge pixels).
-    const safeAct = Math.max(
-      Number.isFinite(act) ? Math.max(0, Math.min(1, act)) : 0,
-      Number.isFinite(actBg) ? Math.max(0, Math.min(1, actBg)) : 0,
-    );
+    // Keep both raw signals so the pluck can distinguish slow from fast motion.
+    const rawAct = Number.isFinite(act) ? Math.max(0, Math.min(1, act)) : 0;
+    const rawActBg = Number.isFinite(actBg)
+      ? Math.max(0, Math.min(1, actBg))
+      : 0;
+    // Combined for glide speed and tier volumes.
+    const safeAct = Math.max(rawAct, rawActBg);
     const safeVy = Number.isFinite(vy) ? Math.max(0, Math.min(1, vy)) : 0.5;
     const safeSpread = Number.isFinite(spread)
       ? Math.max(0, Math.min(1, spread))
@@ -146,37 +147,58 @@ export class Synth {
 
     this._tiers.forEach(({ octaveShift, voices }, ti) => {
       const freqScale = Math.pow(2, octaveShift);
-      const targetGain = Math.max(0, (tierSignals[ti] * 0.25) / 3);
+      // Each voice gets its own gain slice; /3 was over-attenuating since
+      // the three voices are incoherent (different freqs).
+      const targetGain = Math.max(0, tierSignals[ti] * 0.25);
 
       note.triad.forEach(({ freq }, vi) => {
         const targetFreq = freq * freqScale;
         if (!Number.isFinite(targetFreq)) return;
         const { osc, gain } = voices[vi];
-        osc.frequency.cancelAndHoldAtTime(now);
-        osc.frequency.setTargetAtTime(targetFreq, now, tau);
-        gain.gain.cancelAndHoldAtTime(now);
-        gain.gain.setTargetAtTime(targetGain, now, tau);
+        // cancelAndHoldAtTime + setTargetAtTime for smooth glide;
+        // fall back to cancelScheduledValues approach for older browsers.
+        if (osc.frequency.cancelAndHoldAtTime) {
+          osc.frequency.cancelAndHoldAtTime(now);
+          osc.frequency.setTargetAtTime(targetFreq, now, tau);
+          gain.gain.cancelAndHoldAtTime(now);
+          gain.gain.setTargetAtTime(targetGain, now, tau);
+        } else {
+          const cf = osc.frequency.value;
+          const cg = gain.gain.value;
+          osc.frequency.cancelScheduledValues(0);
+          osc.frequency.setValueAtTime(cf, now);
+          osc.frequency.setTargetAtTime(targetFreq, now, tau);
+          gain.gain.cancelScheduledValues(0);
+          gain.gain.setValueAtTime(cg, now);
+          gain.gain.setTargetAtTime(targetGain, now, tau);
+        }
       });
     });
 
-    this._maybePluck(note, safeAct, safeSpread, now);
+    this._maybePluck(note, rawAct, rawActBg, safeSpread, now);
   }
 
   /**
-   * Probabilistic melodic pluck triggered by motion.
+   * Probabilistic melodic pluck, shaped by the balance of quickness vs slowness.
+   *
+   * quickness (frame-diff act)  → high octave, sharp attack, short decay
+   * slowness  (bg-subtract actBg) → low octave,  mallet attack, long resonance
+   *
+   * Octave: Math.pow(2, 1 - slowness*2)
+   *   slowness 0 → ×2  (base+1 oct, bright)
+   *   slowness .5 → ×1  (base oct)
+   *   slowness 1 → ×0.5 (base−1 oct, deep)
    *
    * Note selection is weighted by spread:
-   *   spread ≈ 0  →  only chord tones (root, 3rd, 5th) are picked
-   *   spread ≈ 1  →  all 7 diatonic degrees roughly equally likely
-   *
-   * The pluck plays one octave above the base register so it sits
-   * clearly above the sustained pad tones.
+   *   spread ≈ 0 → only chord tones (root, 3rd, 5th)
+   *   spread ≈ 1 → all 7 diatonic degrees roughly equally likely
    */
-  _maybePluck(note, act, spread, now) {
+  _maybePluck(note, quickness, slowness, spread, now) {
     if (!this._pluck || now < this._pluck.nextAllowed) return;
 
-    // Per-frame trigger probability — scales with activity
-    if (Math.random() > act * 0.35) return;
+    // Fast motion fires more often; slow motion fires less (each note resonates longer)
+    const trigProb = Math.max(quickness * 0.4, slowness * 0.2);
+    if (Math.random() > trigProb) return;
 
     // Chord tones: root, diatonic 3rd, diatonic 5th (mod 7)
     const d = note.degree;
@@ -197,25 +219,31 @@ export class Synth {
       }
     }
 
-    // One octave above base — sits above the mid-register pads
-    const freq = this.key.degrees[chosen].freq * 2;
+    // Octave: continuous shift driven by slowness (deep gong ↔ bright pluck)
+    const octMult = Math.pow(2, 1 - slowness * 2);
+    const freq = this.key.degrees[chosen].freq * octMult;
     if (!Number.isFinite(freq) || freq <= 0) return;
 
-    // Randomised decay for organic variation (70 – 200 ms τ)
-    const decayTau = 0.07 + Math.random() * 0.13;
-    const peak = 0.12;
+    // Attack: snappy for quickness, mallet-like bloom for slowness
+    const attackTau = 0.003 + slowness * 0.017; // 3 ms → 20 ms
+    // Decay: 40–90 ms τ for quickness, 400–550 ms τ for slowness
+    const decayTau =
+      0.04 + slowness * 0.36 + Math.random() * (0.05 + slowness * 0.15);
+    // Slightly louder for resonant notes so they project through the pads
+    const peak = 0.1 + slowness * 0.08;
 
     const pg = this._pluck.gain.gain;
     pg.cancelScheduledValues(now);
-    pg.setValueAtTime(0, now); // clean start
-    pg.setTargetAtTime(peak, now, 0.003); // fast attack  ~9 ms
-    pg.setTargetAtTime(0, now + 0.015, decayTau); // exponential decay
+    pg.setValueAtTime(0, now);
+    pg.setTargetAtTime(peak, now, attackTau); // rise
+    pg.setTargetAtTime(0, now + attackTau * 5, decayTau); // fall after bloom
 
     this._pluck.osc.frequency.cancelScheduledValues(now);
     this._pluck.osc.frequency.setValueAtTime(freq, now);
 
-    // Cooldown: shorter when activity is high (more dense = faster rhythm)
-    this._pluck.nextAllowed = now + 0.08 + (1 - act) * 0.18;
+    // Cooldown: resonant notes need room to breathe before the next strike
+    this._pluck.nextAllowed =
+      now + 0.08 + (1 - Math.max(quickness, slowness)) * 0.12 + slowness * 0.4;
   }
 
   // ── Helpers ─────────────────────────────────────────────────

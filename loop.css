@@ -1,0 +1,189 @@
+/* ============================================================
+   AVVA · Loop Harness — loop.css
+   Loads on top of va.css; only the split-pane layout + readouts.
+   ============================================================ */
+
+body.loop {
+  background: var(--color-bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.loop__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--color-hair);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+}
+
+.loop__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: var(--tracking-widest);
+  color: var(--color-ink);
+}
+
+.loop__meta {
+  display: flex;
+  gap: 22px;
+  color: var(--color-dim);
+}
+
+.loop__meta b {
+  color: var(--color-ink);
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.loop__hint {
+  opacity: 0.7;
+}
+
+.loop__stage {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.loop__pane {
+  position: relative;
+  overflow: hidden;
+  border-right: 1px solid var(--color-hair);
+  background: #000;
+}
+
+.loop__pane:last-child {
+  border-right: 0;
+}
+
+.loop__pane-label {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 5;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-widest);
+  color: var(--color-ink);
+  text-transform: uppercase;
+  opacity: 0.85;
+  pointer-events: none;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+.loop__video,
+.loop__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.loop__readout {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--color-hair);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-base);
+  color: var(--color-ink);
+  text-transform: uppercase;
+  min-width: 140px;
+}
+
+.rd__row {
+  display: grid;
+  grid-template-columns: 36px 1fr 14px;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.rd__row--wide {
+  grid-template-columns: 60px 1fr;
+}
+
+.rd__row span {
+  color: var(--color-dim);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wider);
+}
+
+.rd__row b {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-align: right;
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-ink);
+}
+
+/* ── Chroma prevalence readout (12 bars) ──────────────────── */
+
+.chroma {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 4px;
+  height: 120px;
+  padding: 10px 12px 8px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--color-hair);
+}
+
+.chroma__cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.chroma__bar {
+  width: 100%;
+  height: 0%;
+  min-height: 1px;
+  transition: height 80ms linear;
+}
+
+.chroma__lbl {
+  margin-top: 4px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  color: var(--color-dim);
+  text-transform: uppercase;
+}
+
+/* Hide va.css's #stage::before background (we don't use #stage in loop.html) */
+#stage::before {
+  display: none;
+}

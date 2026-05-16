@@ -138,6 +138,47 @@ async function begin() {
   // Dismiss gate
   document.getElementById("gate").classList.add("hide");
 
+  // Debug handle — console: _avva.synth._actx.state, _avva.analyzer, etc.
+  window._avva = {
+    synth,
+    analyzer,
+    renderer,
+    videoSource,
+    /** Play a 440 Hz beep directly to destination — tests the audio chain. */
+    testTone(freq = 440, dur = 0.5) {
+      const ctx = synth._actx;
+      if (!ctx || ctx.state !== "running")
+        return `actx not running (${ctx?.state})`;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      g.gain.value = 0.3;
+      osc.frequency.value = freq;
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + dur);
+      return `${freq} Hz for ${dur}s`;
+    },
+    /** Current AudioParam gain values for all pad voices. */
+    get gains() {
+      return synth._tiers?.map((t, ti) =>
+        t.voices.map((v) => +v.gain.gain.value.toFixed(4)),
+      );
+    },
+    /** Current analysis signals. */
+    get signals() {
+      const o = analyzer._out;
+      return o
+        ? {
+            bri: +o.bri.toFixed(3),
+            act: +o.act.toFixed(3),
+            actBg: +o.actBg.toFixed(3),
+            vy: +o.vy.toFixed(3),
+          }
+        : null;
+    },
+  };
+
   // Start loop
   state.lastT = performance.now();
   requestAnimationFrame(loop);
