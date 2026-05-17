@@ -56,6 +56,10 @@ const TIER_BASE_PAN_EXT = [
 // 3rd drifts up, the 5th drifts down. Extensions stay on integer ratio.
 const VOICE_DRIFT_SIGN = [0, +1, -1];
 
+// Per-voice glide-time multipliers — gives each chord voice a slightly
+// different legato speed so unison chords don't move in lockstep.
+const VOICE_GLIDE_SPREAD = [0.88, 1.0, 1.18, 0.94, 1.09];
+
 // Number of concurrent polyphonic pluck voices.
 const N_PLUCKS = 3;
 
@@ -368,7 +372,7 @@ export class Synth {
             }
           }
 
-          fm.glideTo(targetFreq, tau);
+          fm.glideTo(targetFreq, tau * VOICE_GLIDE_SPREAD[vi]);
           fm.setGain(tierBase * voiceWeights[vi], tau);
           fm.setIndex(tierIndex[ti], slowTau);
           const targetRatio = ratioBase + ratioDrift * VOICE_DRIFT_SIGN[vi];
@@ -379,7 +383,7 @@ export class Synth {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
           if (extOk[ei]) {
-            fm.glideTo(extFreqs[ei], tau);
+            fm.glideTo(extFreqs[ei], tau * VOICE_GLIDE_SPREAD[vi]);
             fm.setGain(
               tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
               tau,

@@ -138,6 +138,15 @@ body.loop {
   color: var(--color-ink);
 }
 
+/* ── Calibration panel: bottom-left of the camera pane ───── */
+
+.loop__pane > #calibrate {
+  top: auto;
+  bottom: var(--inset);
+  right: auto;
+  left: var(--inset);
+}
+
 /* ── Chroma prevalence readout (12 bars) ──────────────────── */
 
 .chroma {
@@ -147,7 +156,7 @@ body.loop {
   right: 16px;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 4px;
   height: 120px;
   padding: 10px 12px 8px;

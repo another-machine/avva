@@ -15,7 +15,14 @@ const DEFAULTS = {
   // --- video source ---
   // "camera" → getUserMedia; any other string → treated as a video file path
   // source: "camera",
-  source: ["assets/lavalamp.mp4", "assets/mario.mp4", "assets/tmnt.mp4"],
+  source: [
+    "assets/mariotrailer.mp4",
+    "assets/mario1.mp4",
+    "assets/mario3.mp4",
+    "assets/lavalamp.mp4",
+    "assets/mario.mp4",
+    "assets/tmnt.mp4",
+  ],
 
   // --- analysis resolution ---
   // Low values = faster, more stable; high values = more spatial detail
@@ -61,6 +68,10 @@ const DEFAULTS = {
   fmStereoWidth: 0.75, // max width multiplier at spread=1 (0.25 minimum)
   // pluck FM ratio (DX-style metallic ping at 7; clarinet-ish at 3; mallet/pluck at 2)
   fmPluckRatio: 2,
+
+  // --- audio visualizer ---
+  feedback: 0.92, // frame-to-frame feedback decay (0=no trail, 1=frozen)
+  noiseScale: 2.5, // noise domain scale for territory blobs (larger = finer)
 };
 
 /** Parse URL search params and return overrides matching known keys. */
@@ -94,6 +105,8 @@ function parseUrlParams() {
     "fmRatioDrift",
     "fmStereoWidth",
     "fmPluckRatio",
+    "feedback",
+    "noiseScale",
   ]) {
     if (p.has(k)) {
       const v = Number(p.get(k));

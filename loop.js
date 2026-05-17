@@ -21,11 +21,11 @@
 import { CONFIG } from "./modules/config.js";
 import { VideoSource } from "./modules/video-source.js";
 import { Analyzer } from "./modules/analyzer.js";
-import { Calibration } from "./modules/calibration.js";
+import { Calibration, CalibrationPanel } from "./modules/calibration.js";
 import { Key } from "./modules/music.js";
 import { Synth } from "./modules/synth.js";
 import { AudioAnalyzer } from "./modules/audio-analyzer.js";
-import { AudioRenderer } from "./modules/audio-renderer.js";
+import { AudioRendererGL } from "./modules/audio-renderer-gl.js";
 
 const state = {
   fps: 0,
@@ -35,7 +35,7 @@ const state = {
   tapped: false,
 };
 
-let videoEl, videoSource, vidAnalyzer, calibration, synth, key;
+let videoEl, videoSource, vidAnalyzer, calibration, calPanel, synth, key;
 let audioAnalyzer, audioRenderer, audioCanvas;
 let chromaBars = []; // 12 DOM elements for chromatic prevalence readout
 
@@ -45,6 +45,12 @@ async function begin() {
 
   calibration = new Calibration();
   videoEl.style.filter = calibration.filterString;
+
+  calPanel = new CalibrationPanel(calibration, {
+    onChange: (cal) => {
+      videoEl.style.filter = cal.filterString;
+    },
+  });
 
   key = new Key({
     root: CONFIG.root,
@@ -65,7 +71,10 @@ async function begin() {
     return;
   }
 
-  audioRenderer = new AudioRenderer(audioCanvas, key.chromaticHues);
+  audioRenderer = new AudioRendererGL(audioCanvas, key.degreeHues, {
+    feedback: CONFIG.feedback,
+    noiseScale: CONFIG.noiseScale,
+  });
   window.addEventListener("resize", () => audioRenderer.resize());
 
   buildChromaReadout();
@@ -155,11 +164,11 @@ function paintAudioReadout(frame) {
   document.getElementById("a-lo").textContent = frame.bands.lo.toFixed(2);
   document.getElementById("a-chord").textContent = frame.chord.label;
 
-  // Update 12 chroma bars
-  for (let i = 0; i < 12; i++) {
+  // Update 7 degree bars
+  for (let i = 0; i < 7; i++) {
     const bar = chromaBars[i];
     if (!bar) continue;
-    const p = frame.chroma[i] || 0;
+    const p = frame.degrees[i] || 0;
     bar.style.height = `${(p * 100).toFixed(1)}%`;
   }
 }
@@ -167,41 +176,42 @@ function paintAudioReadout(frame) {
 function buildChromaReadout() {
   const container = document.getElementById("chroma-bars");
   if (!container) return;
-  const names = [
-    "C",
-    "C#",
-    "D",
-    "D#",
-    "E",
-    "F",
-    "F#",
-    "G",
-    "G#",
-    "A",
-    "A#",
-    "B",
-  ];
-  const hues = key.chromaticHues;
-  chromaBars = [];
-  for (let i = 0; i < 12; i++) {
+
+  // Sort degrees by hue so bars form a continuous spectrum left→right.
+  // (Circle-of-fifths mapping makes degree order non-sequential by hue.)
+  const sorted = Array.from({ length: 7 }, (_, i) => ({
+    degree: i,
+    hue: key.degreeToHue(i, 0.5),
+    h0: key.degreeToHue(i, 0),
+    h1: key.degreeToHue(i, 1),
+    numeral: key.degrees[i].numeral,
+  })).sort((a, b) => a.hue - b.hue);
+
+  chromaBars = new Array(7); // still indexed by degree for height updates
+  for (const { degree, h0, h1, numeral } of sorted) {
     const cell = document.createElement("div");
     cell.className = "chroma__cell";
     const bar = document.createElement("div");
     bar.className = "chroma__bar";
-    bar.style.background = `oklch(0.65 0.22 ${hues[i]})`;
+    bar.style.background = `linear-gradient(to right, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
     cell.appendChild(bar);
     const lbl = document.createElement("div");
     lbl.className = "chroma__lbl";
-    lbl.textContent = names[i];
+    lbl.textContent = numeral;
     cell.appendChild(lbl);
     container.appendChild(cell);
-    chromaBars.push(bar);
+    chromaBars[degree] = bar; // keyed by degree so paintAudioReadout works
   }
 }
 
 // ── Keyboard ──────────────────────────────────────────────────
 window.addEventListener("keydown", async (e) => {
-  if (e.key === "s" || e.key === "S") {
+  // Let the calibration panel consume arrow/tab/0 keys when visible
+  if (calPanel?.handleKey(e)) return;
+
+  if (e.key === "v" || e.key === "V") {
+    calPanel?.toggle();
+  } else if (e.key === "s" || e.key === "S") {
     synth.toggle();
   } else if (e.key === "c" || e.key === "C") {
     try {

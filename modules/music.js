@@ -165,6 +165,31 @@ export class Key {
   }
 
   /**
+   * Chromatic pitch-class index (0=C..11=B) for a diatonic degree (0–6).
+   * @param   {number} degree  0–6 (wraps)
+   * @returns {number}         pitch class 0..11
+   */
+  pitchClassForDegree(degree) {
+    const d = ((degree % 7) + 7) % 7;
+    const steps = SCALE_STEPS[this.mode] ?? SCALE_STEPS.major;
+    return (this._rootIdx + steps[d]) % 12;
+  }
+
+  /**
+   * Hue at the center of each diatonic degree's sector (0.5 t-value).
+   * Cached; reuse freely.
+   * @returns {Float32Array} length-7, indexed by degree 0..6
+   */
+  get degreeHues() {
+    if (!this._degreeHues) {
+      this._degreeHues = Float32Array.from({ length: 7 }, (_, i) =>
+        this.degreeToHue(i, 0.5),
+      );
+    }
+    return this._degreeHues;
+  }
+
+  /**
    * Hue for each absolute chromatic note class (0=C..11=B), under this key.
    *
    * In-scale notes land at the center of their degree's hue slice.

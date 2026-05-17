@@ -17,34 +17,42 @@
 // ── Data ─────────────────────────────────────────────────────
 
 const DEFAULTS = {
-  brightness:  1.0,  // overall exposure         0.1 – 3.0
-  contrast:    1.0,  // contrast ratio            0.1 – 3.0
-  saturation:  1.0,  // color intensity           0.0 – 4.0
-  hueRotate:   0,    // color-cast correction °  -180 – 180
+  brightness: 1.0, // overall exposure         0.1 – 3.0
+  contrast: 1.0, // contrast ratio            0.1 – 3.0
+  saturation: 1.0, // color intensity           0.0 – 4.0
+  hueRotate: 0, // color-cast correction °  -180 – 180
 };
 
 const STEPS = {
-  brightness:  0.05,
-  contrast:    0.05,
-  saturation:  0.05,
-  hueRotate:   5,
+  brightness: 0.05,
+  contrast: 0.05,
+  saturation: 0.05,
+  hueRotate: 5,
 };
 
 const RANGES = {
-  brightness:  [0.1, 3.0],
-  contrast:    [0.1, 3.0],
-  saturation:  [0.0, 4.0],
-  hueRotate:   [-180, 180],
+  brightness: [0.1, 3.0],
+  contrast: [0.1, 3.0],
+  saturation: [0.0, 4.0],
+  hueRotate: [-180, 180],
 };
 
 export class Calibration {
   constructor() {
     const p = new URLSearchParams(location.search);
 
-    this.brightness = p.has("brightness") ? Number(p.get("brightness")) : DEFAULTS.brightness;
-    this.contrast   = p.has("contrast")   ? Number(p.get("contrast"))   : DEFAULTS.contrast;
-    this.saturation = p.has("saturation") ? Number(p.get("saturation")) : DEFAULTS.saturation;
-    this.hueRotate  = p.has("hueRotate")  ? Number(p.get("hueRotate"))  : DEFAULTS.hueRotate;
+    this.brightness = p.has("brightness")
+      ? Number(p.get("brightness"))
+      : DEFAULTS.brightness;
+    this.contrast = p.has("contrast")
+      ? Number(p.get("contrast"))
+      : DEFAULTS.contrast;
+    this.saturation = p.has("saturation")
+      ? Number(p.get("saturation"))
+      : DEFAULTS.saturation;
+    this.hueRotate = p.has("hueRotate")
+      ? Number(p.get("hueRotate"))
+      : DEFAULTS.hueRotate;
   }
 
   /**
@@ -85,10 +93,16 @@ export class Calibration {
   nudge(key, dir) {
     const [min, max] = RANGES[key];
     let v = this[key] + dir * STEPS[key];
-    v = key === "hueRotate"
-      ? Math.round(v / 5) * 5          // snap to 5° increments
-      : Math.round(v * 100) / 100;     // snap to 0.01
-    this[key] = Math.max(min, Math.min(max, v));
+    if (key === "hueRotate") {
+      v = Math.round(v / 5) * 5; // snap to 5° increments
+      // Wrap around at ±180 instead of clamping
+      if (v > 180) v -= 360;
+      else if (v < -180) v += 360;
+      this[key] = v;
+    } else {
+      v = Math.round(v * 100) / 100; // snap to 0.01
+      this[key] = Math.max(min, Math.min(max, v));
+    }
   }
 
   /** Reset one parameter to its default value. */
@@ -98,7 +112,9 @@ export class Calibration {
 
   /** True if all values are at defaults. */
   get isDefault() {
-    return Object.entries(DEFAULTS).every(([k, d]) => Math.abs(this[k] - d) < 0.001);
+    return Object.entries(DEFAULTS).every(
+      ([k, d]) => Math.abs(this[k] - d) < 0.001,
+    );
   }
 }
 
@@ -108,16 +124,16 @@ const PARAMS = ["brightness", "contrast", "saturation", "hueRotate"];
 
 const LABELS = {
   brightness: "BRIGHTNESS",
-  contrast:   "CONTRAST",
+  contrast: "CONTRAST",
   saturation: "SATURATION",
-  hueRotate:  "HUE ROTATE",
+  hueRotate: "HUE ROTATE",
 };
 
 const UNITS = {
   brightness: "",
-  contrast:   "",
+  contrast: "",
   saturation: "",
-  hueRotate:  "°",
+  hueRotate: "°",
 };
 
 export class CalibrationPanel {
@@ -126,18 +142,20 @@ export class CalibrationPanel {
    * @param {{ onChange?: (cal: Calibration) => void }} opts
    */
   constructor(calibration, opts = {}) {
-    this._cal      = calibration;
+    this._cal = calibration;
     this._onChange = opts.onChange ?? (() => {});
-    this._visible  = false;
-    this._sel      = 0;
+    this._visible = false;
+    this._sel = 0;
 
-    this._el     = document.getElementById("calibrate");
-    this._urlEl  = document.getElementById("cal-url");
-    this._rows   = PARAMS.map(k => document.getElementById(`cal-row-${k}`));
-    this._valEls = PARAMS.map(k => document.getElementById(`cal-val-${k}`));
+    this._el = document.getElementById("calibrate");
+    this._urlEl = document.getElementById("cal-url");
+    this._rows = PARAMS.map((k) => document.getElementById(`cal-row-${k}`));
+    this._valEls = PARAMS.map((k) => document.getElementById(`cal-val-${k}`));
   }
 
-  get visible() { return this._visible; }
+  get visible() {
+    return this._visible;
+  }
 
   toggle() {
     this._visible = !this._visible;
@@ -145,8 +163,12 @@ export class CalibrationPanel {
     if (this._visible) this._render();
   }
 
-  show() { if (!this._visible) this.toggle(); }
-  hide() { if (this._visible)  this.toggle(); }
+  show() {
+    if (!this._visible) this.toggle();
+  }
+  hide() {
+    if (this._visible) this.toggle();
+  }
 
   /**
    * Handle a keyboard event while panel is visible.
@@ -170,7 +192,8 @@ export class CalibrationPanel {
 
       case "Tab":
         e.preventDefault();
-        this._sel = (this._sel + (e.shiftKey ? -1 : 1) + PARAMS.length) % PARAMS.length;
+        this._sel =
+          (this._sel + (e.shiftKey ? -1 : 1) + PARAMS.length) % PARAMS.length;
         this._render();
         return true;
 
@@ -193,9 +216,11 @@ export class CalibrationPanel {
   _render() {
     for (let i = 0; i < PARAMS.length; i++) {
       const key = PARAMS[i];
-      const v   = this._cal[key];
+      const v = this._cal[key];
       this._valEls[i].textContent =
-        key === "hueRotate" ? `${v.toFixed(0)}${UNITS[key]}` : `${v.toFixed(2)}`;
+        key === "hueRotate"
+          ? `${v.toFixed(0)}${UNITS[key]}`
+          : `${v.toFixed(2)}`;
       this._rows[i].classList.toggle("is-active", i === this._sel);
     }
     this._urlEl.textContent = this._cal.urlDiff;

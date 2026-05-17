@@ -55,6 +55,36 @@
             <span class="rd__note" id="v-note-2">—</span>
           </div>
         </div>
+
+        <!-- Video calibration panel — overlays the camera feed, toggled with V -->
+        <div
+          id="calibrate"
+          class="panel"
+          aria-label="Video calibration"
+          aria-live="polite"
+        >
+          <div class="cal__header">Video Calibration</div>
+
+          <div class="cal__row" id="cal-row-brightness">
+            <span class="cal__name">Brightness</span>
+            <span class="cal__value" id="cal-val-brightness">1.00</span>
+          </div>
+          <div class="cal__row" id="cal-row-contrast">
+            <span class="cal__name">Contrast</span>
+            <span class="cal__value" id="cal-val-contrast">1.00</span>
+          </div>
+          <div class="cal__row" id="cal-row-saturation">
+            <span class="cal__name">Saturation</span>
+            <span class="cal__value" id="cal-val-saturation">1.00</span>
+          </div>
+          <div class="cal__row" id="cal-row-hueRotate">
+            <span class="cal__name">Hue Rotate</span>
+            <span class="cal__value" id="cal-val-hueRotate">0°</span>
+          </div>
+
+          <div class="cal__hint">↑↓ adjust · TAB next · 0 reset · V close</div>
+          <div class="cal__url" id="cal-url"></div>
+        </div>
       </section>
 
       <!-- Program 2 side: audio canvas + chroma readout -->

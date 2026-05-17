@@ -33,7 +33,18 @@
 import { Key } from "./music.js";
 
 const NOTE_NAMES = [
-  "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+  "C",
+  "C#",
+  "D",
+  "D#",
+  "E",
+  "F",
+  "F#",
+  "G",
+  "G#",
+  "A",
+  "A#",
+  "B",
 ];
 
 /** Equal-tempered frequency for chromatic class c (0..11) at octave o. */
@@ -43,10 +54,10 @@ function noteFreq(c, o) {
 
 // Chord interval templates (semitones from root)
 const CHORD_TYPES = {
-  maj:  [0, 4, 7],
-  min:  [0, 3, 7],
-  dim:  [0, 3, 6],
-  aug:  [0, 4, 8],
+  maj: [0, 4, 7],
+  min: [0, 3, 7],
+  dim: [0, 3, 6],
+  aug: [0, 4, 8],
   maj7: [0, 4, 7, 11],
   min7: [0, 3, 7, 10],
   dom7: [0, 4, 7, 10],
@@ -149,12 +160,31 @@ export class AudioAnalyzer {
     this._chroma = new Float32Array(12);
     this._chromaPrev = new Float32Array(12);
 
+    // Diatonic degree aggregation (7 degrees from 12-class chroma)
+    // _pcSectorDeg: for each chromatic PC, which diatonic degree owns its hue sector
+    // This drives both degrees[] weighting and sub-sector hue centering.
+    const _chHues = this.key.chromaticHues;
+    this._chromaHues = _chHues;
+    this._pcSectorDeg = new Int8Array(12);
+    for (let c = 0; c < 12; c++) {
+      this._pcSectorDeg[c] = this.key.hueToNote(_chHues[c]).degree;
+    }
+    // Primary pitch-class per degree (stored for external callers)
+    this._degreePCs = new Int8Array(7);
+    for (let d = 0; d < 7; d++) {
+      this._degreePCs[d] = this.key.pitchClassForDegree(d);
+    }
+    this._degrees = new Float32Array(7);
+    this._degreeHuesOut = new Float32Array(7);
+
     // Sticky chord state
     this._prevChordKey = "";
 
     // Output struct — reused across frames to avoid allocation
     this._out = {
       chroma: this._chroma,
+      degrees: this._degrees,
+      degreeHues: this._degreeHuesOut,
       bands: { lo: 0, mid: 0, hi: 0 },
       hue: 0,
       spread: 1,
@@ -236,11 +266,48 @@ export class AudioAnalyzer {
       for (let c = 0; c < 12; c++) chroma[c] *= inv;
     }
 
+    // ── Aggregate to 7 diatonic degrees ─────────────────────────
+    // Sum chroma energy by the degree that owns each PC's hue sector.
+    const degrees = this._degrees;
+    degrees.fill(0);
+    for (let c = 0; c < 12; c++) {
+      degrees[this._pcSectorDeg[c]] += chroma[c];
+    }
+
+    // Sub-sector weighted hue: energy-weighted circular centroid of all
+    // chromatic PCs that map into each degree's hue sector.
+    // Falls back to sector center when no energy is present.
+    const degreeHues = this._degreeHuesOut;
+    for (let d = 0; d < 7; d++) {
+      let wx = 0,
+        wy = 0,
+        wsum = 0;
+      for (let c = 0; c < 12; c++) {
+        if (this._pcSectorDeg[c] !== d) continue;
+        const w = chroma[c];
+        if (w <= 0) continue;
+        const h = this._chromaHues[c];
+        const rad = (h * Math.PI) / 180;
+        wx += Math.cos(rad) * w;
+        wy += Math.sin(rad) * w;
+        wsum += w;
+      }
+      if (wsum > 1e-6) {
+        let a = (Math.atan2(wy, wx) * 180) / Math.PI;
+        if (a < 0) a += 360;
+        degreeHues[d] = a;
+      } else {
+        degreeHues[d] = this.key.degreeToHue(d, 0.5);
+      }
+    }
+
     // ── Bands: lo/mid/hi octave slices ──────────────────────────
     const span = this._octH - this._octL + 1;
     const cutLo = Math.max(1, Math.floor(span / 3));
     const cutHi = span - cutLo;
-    let lo = 0, mid = 0, hi = 0;
+    let lo = 0,
+      mid = 0,
+      hi = 0;
     for (let i = 0; i < N; i++) {
       const oRel = this._octaves[i] - this._octL;
       if (oRel < cutLo) lo += this._noteVals[i];
@@ -259,7 +326,9 @@ export class AudioAnalyzer {
 
     // hue: weighted circular mean of chroma in `key`'s hue space
     const hues = this.key.chromaticHues;
-    let sx = 0, sy = 0, sw = 0;
+    let sx = 0,
+      sy = 0,
+      sw = 0;
     for (let c = 0; c < 12; c++) {
       const w = chroma[c];
       if (w <= 0) continue;
@@ -286,12 +355,21 @@ export class AudioAnalyzer {
     const act = Math.min(1, actSum * 1.5);
 
     // sat: top-3 share of normalized chroma (clean chord → high)
-    let s0 = 0, s1 = 0, s2 = 0;
+    let s0 = 0,
+      s1 = 0,
+      s2 = 0;
     for (let c = 0; c < 12; c++) {
       const v = chroma[c];
-      if (v > s0) { s2 = s1; s1 = s0; s0 = v; }
-      else if (v > s1) { s2 = s1; s1 = v; }
-      else if (v > s2) { s2 = v; }
+      if (v > s0) {
+        s2 = s1;
+        s1 = s0;
+        s0 = v;
+      } else if (v > s1) {
+        s2 = s1;
+        s1 = v;
+      } else if (v > s2) {
+        s2 = v;
+      }
     }
     const sat = s0 + s1 + s2;
 
@@ -302,7 +380,10 @@ export class AudioAnalyzer {
       let s = 0;
       for (let c = 0; c < 12; c++) s += t.vec[c] * chroma[c];
       s /= t.norm;
-      if (s > bestScore) { bestScore = s; best = t; }
+      if (s > bestScore) {
+        bestScore = s;
+        best = t;
+      }
     }
     // Sticky: prefer the previous chord if it's within 90% of best
     let pick = best;
