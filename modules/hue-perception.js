@@ -84,57 +84,55 @@ for (let h = 0; h < 360; h++) {
 }
 
 // Post-process: enforce strict monotone increase.
-// The deep-blue zone (display ~229–239) produces a tiny backward step in raw
-// oklch hue.  Detect any backward segment and linearly interpolate across it
-// so _fwd is everywhere strictly increasing (circular).  This makes _inv exact.
+// The deep-blue zone (display ~231–240) has a tiny backward step in raw oklch
+// hue.  Find every backward segment and linearly interpolate across it so
+// _fwd is everywhere strictly increasing (circular).
 {
-  let i = 0;
-  while (i < 360) {
+  for (let i = 0; i < 360; i++) {
     let dp = _fwd[(i + 1) % 360] - _fwd[i];
     if (dp < 0) dp += 360;
     if (dp > 180) {
-      // Backward segment starting at i.  Scan forward to find where the map
-      // resumes a genuine forward step (dp ≤ 180).
-      let end = i + 1;
-      while (end < i + 360) {
-        let dp2 = _fwd[(end + 1) % 360] - _fwd[end % 360];
-        if (dp2 < 0) dp2 += 360;
-        if (dp2 <= 180) break;
-        end++;
+      // Backward step at i→i+1.  Find j = first index where _fwd[j] strictly
+      // exceeds _fwd[i] in the forward direction (i.e. the span is > 0 and ≤ 180).
+      const target = _fwd[i];
+      let j = i + 1;
+      while (j < i + 360) {
+        let ahead = _fwd[j % 360] - target;
+        if (ahead < 0) ahead += 360;
+        if (ahead > 0 && ahead <= 180) break;
+        j++;
       }
-      // Linearly interpolate _fwd[i+1 .. end-1] from _fwd[i] to _fwd[end%360].
-      const p0 = _fwd[i],
-        p1 = _fwd[end % 360];
+      // Linearly ramp _fwd[i+1 .. j-1] from _fwd[i] to _fwd[j%360].
+      const p0 = target,
+        p1 = _fwd[j % 360];
       let span = p1 - p0;
-      if (span < 0) span += 360;
-      const n = end - i;
+      if (span < 0) span += 360; // p1 > p0 circularly, so span > 0
+      const n = j - i;
       for (let k = 1; k < n; k++) {
         _fwd[(i + k) % 360] = (p0 + (span * k) / n) % 360;
       }
-      i = end; // resume scan after the fixed segment
-    } else {
-      i++;
+      i = j - 1; // loop will increment to j
     }
   }
 }
 
 // ── Inverse LUT: perceptual (oklch) hue → display (HSV) hue ─────────────────
-// For each integer perceptual hue pi, find the display hue h (as a float)
-// such that toPerceptual(h) ≈ pi.  We scan for the consecutive pair of HSV
-// integer samples that straddles pi in the forward direction, then lerp.
-const _inv = new Float64Array(360);
-for (let pi = 0; pi < 360; pi++) {
+// The deep-blue zone compresses ~16 display degrees into ~0.5 perceptual
+// degrees, so we need sub-degree resolution.  7200 entries = 0.05°/bin gives
+// a worst-case roundtrip error of ~0.8° in that zone.
+const _INV_N = 7200;
+const _inv = new Float64Array(_INV_N);
+for (let pi = 0; pi < _INV_N; pi++) {
+  const piDeg = pi * (360 / _INV_N);
   let found = false;
   for (let h = 0; h < 360; h++) {
     const h1 = (h + 1) % 360;
     const p0 = _fwd[h];
     const p1 = _fwd[h1];
-    // Forward arc p0 → p1 in [0, 360)
     let dp = p1 - p0;
     if (dp < 0) dp += 360;
     if (dp < 1e-9 || dp > 180) continue; // degenerate or backward arc
-    // Forward arc p0 → pi
-    let dv = pi - p0;
+    let dv = piDeg - p0;
     if (dv < 0) dv += 360;
     if (dv < dp) {
       _inv[pi] = h + dv / dp;
@@ -143,11 +141,10 @@ for (let pi = 0; pi < 360; pi++) {
     }
   }
   if (!found) {
-    // Fallback: use the closest forward entry (shouldn't be reached)
     let best = 0,
       bestDist = 360;
     for (let h = 0; h < 360; h++) {
-      let d = Math.abs(_fwd[h] - pi);
+      let d = Math.abs(_fwd[h] - piDeg);
       if (d > 180) d = 360 - d;
       if (d < bestDist) {
         bestDist = d;
@@ -186,8 +183,9 @@ export function toPerceptual(h) {
  */
 export function fromPerceptual(p) {
   const pw = ((p % 360) + 360) % 360;
-  const i = Math.floor(pw) % 360;
-  return _lerpAngle(_inv[i], _inv[(i + 1) % 360], pw - i);
+  const fi = pw * (_INV_N / 360);
+  const i = Math.floor(fi) % _INV_N;
+  return _lerpAngle(_inv[i], _inv[(i + 1) % _INV_N], fi - i);
 }
 
 // ── Self-test ─────────────────────────────────────────────────────────────────
