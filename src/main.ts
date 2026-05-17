@@ -12,13 +12,13 @@ import { store } from "./store/store.js";
 import { startBroadcastSync } from "./store/sync.js";
 import { legacyConfig as CONFIG } from "./store/legacy-config.js";
 
-import { VideoSource } from "./legacy/video-source.js";
-import { Analyzer } from "./legacy/analyzer.js";
-import { Renderer } from "./legacy/renderer.js";
-import { Controls } from "./legacy/controls.js";
-import { Calibration, CalibrationPanel } from "./legacy/calibration.js";
-import { Key } from "./legacy/music.js";
-import { Synth } from "./legacy/synth.js";
+import { VideoSource } from "./input/video-source.js";
+import { Analyzer } from "./analysis/analyzer.js";
+import { Renderer } from "./render/renderer.js";
+import { Controls } from "./controls/controls.js";
+import { Calibration, CalibrationPanel } from "./controls/calibration.js";
+import { Key } from "./harmony/music.js";
+import { Synth } from "./audio/synth.js";
 
 // Seed legacy ?query=params into the store, then start cross-window sync.
 seedFromQuery();
@@ -76,7 +76,12 @@ async function begin(): Promise<void> {
   });
 
   // Re-key the synth when harmony settings change from any source.
-  for (const k of ["harmony.root", "harmony.scale", "harmony.octave", "harmony.rootHue"] as const) {
+  for (const k of [
+    "harmony.root",
+    "harmony.scale",
+    "harmony.octave",
+    "harmony.rootHue",
+  ] as const) {
     store.subscribeKey(k, () => {
       synth.key = new Key({
         root: CONFIG.root,
@@ -101,7 +106,9 @@ async function begin(): Promise<void> {
       errEl.textContent =
         (isCam ? "Camera unavailable: " : "Video file error: ") +
         (e.message || e.name) +
-        (isCam ? " — check browser permissions, or serve over https/localhost." : "");
+        (isCam
+          ? " — check browser permissions, or serve over https/localhost."
+          : "");
     }
     return;
   }
@@ -192,11 +199,13 @@ function loop(t: number): void {
 
 function initGate(): void {
   if (CONFIG.source !== "camera") {
-    const sources = Array.isArray(CONFIG.source) ? CONFIG.source : [CONFIG.source];
+    const sources = Array.isArray(CONFIG.source)
+      ? CONFIG.source
+      : [CONFIG.source];
     const subLabel =
       sources.length > 1
         ? `${sources.length} sources · C to cycle`
-        : (sources[0] as string).split("/").pop() ?? "";
+        : ((sources[0] as string).split("/").pop() ?? "");
 
     const titleEl = document.querySelector(".gate__title");
     const subEl = document.querySelector(".gate__sub");
@@ -206,7 +215,9 @@ function initGate(): void {
     if (btnEl) btnEl.textContent = "Begin";
     void begin();
   } else {
-    document.getElementById("go")?.addEventListener("click", () => void begin());
+    document
+      .getElementById("go")
+      ?.addEventListener("click", () => void begin());
   }
 }
 
