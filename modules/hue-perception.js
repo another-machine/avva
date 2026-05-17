@@ -83,6 +83,41 @@ for (let h = 0; h < 360; h++) {
   _fwd[h] = _linearRgbToOklchHue(r, g, b);
 }
 
+// Post-process: enforce strict monotone increase.
+// The deep-blue zone (display ~229–239) produces a tiny backward step in raw
+// oklch hue.  Detect any backward segment and linearly interpolate across it
+// so _fwd is everywhere strictly increasing (circular).  This makes _inv exact.
+{
+  let i = 0;
+  while (i < 360) {
+    let dp = _fwd[(i + 1) % 360] - _fwd[i];
+    if (dp < 0) dp += 360;
+    if (dp > 180) {
+      // Backward segment starting at i.  Scan forward to find where the map
+      // resumes a genuine forward step (dp ≤ 180).
+      let end = i + 1;
+      while (end < i + 360) {
+        let dp2 = _fwd[(end + 1) % 360] - _fwd[end % 360];
+        if (dp2 < 0) dp2 += 360;
+        if (dp2 <= 180) break;
+        end++;
+      }
+      // Linearly interpolate _fwd[i+1 .. end-1] from _fwd[i] to _fwd[end%360].
+      const p0 = _fwd[i],
+        p1 = _fwd[end % 360];
+      let span = p1 - p0;
+      if (span < 0) span += 360;
+      const n = end - i;
+      for (let k = 1; k < n; k++) {
+        _fwd[(i + k) % 360] = (p0 + (span * k) / n) % 360;
+      }
+      i = end; // resume scan after the fixed segment
+    } else {
+      i++;
+    }
+  }
+}
+
 // ── Inverse LUT: perceptual (oklch) hue → display (HSV) hue ─────────────────
 // For each integer perceptual hue pi, find the display hue h (as a float)
 // such that toPerceptual(h) ≈ pi.  We scan for the consecutive pair of HSV
@@ -97,7 +132,7 @@ for (let pi = 0; pi < 360; pi++) {
     // Forward arc p0 → p1 in [0, 360)
     let dp = p1 - p0;
     if (dp < 0) dp += 360;
-    if (dp < 1e-9) continue; // degenerate (shouldn't happen for full-sat HSV)
+    if (dp < 1e-9 || dp > 180) continue; // degenerate or backward arc
     // Forward arc p0 → pi
     let dv = pi - p0;
     if (dv < 0) dv += 360;

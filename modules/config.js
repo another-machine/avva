@@ -58,7 +58,7 @@ const DEFAULTS = {
   rootHue: 0, // degrees: hue angle where the root (I) sector begins
   glideMin: 0.01, // seconds at act=1 (staccato)
   glideMax: 2.0, // seconds at act=0 (legato)
-  masterGain: 0.35,
+  masterGain: 0.28,
 
   // --- FM synthesis ---
   // sat → pad modulation index (timbre brightness)

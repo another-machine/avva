@@ -98,15 +98,16 @@ export class Synth {
 
     this._actx = new AudioContext();
 
-    // Light compression keeps feedback / dense chords from clipping
+    // Light compression catches the bulk of peaks; the WaveShaper after the
+    // panner is the safety net for transients faster than comp can respond.
     const comp = this._actx.createDynamicsCompressor();
-    comp.threshold.value = -20;
+    comp.threshold.value = -24;
     comp.ratio.value = 6;
-    comp.attack.value = 0.003;
+    comp.attack.value = 0.001;
     comp.release.value = 0.25;
 
     this._master = this._actx.createGain();
-    this._master.gain.value = this._cfg.masterGain ?? 0.35;
+    this._master.gain.value = this._cfg.masterGain ?? 0.28;
     this._master.connect(comp);
 
     // Master panner: sits after the compressor so all voices track together.
@@ -114,8 +115,26 @@ export class Synth {
     const masterPanner = this._actx.createStereoPanner();
     masterPanner.pan.value = 0;
     comp.connect(masterPanner);
-    masterPanner.connect(this._actx.destination);
     this._masterPanner = masterPanner;
+
+    // Final soft-clip limiter: tanh curve in a WaveShaperNode prevents any
+    // output sample from reaching the destination's hard ±1.0 rail. This is
+    // the fix for the high-frequency clip artifacts produced when fast FM
+    // pluck attacks slip past the comp's 1 ms window.
+    const limiter = this._actx.createWaveShaper();
+    const N = 2048;
+    const curve = new Float32Array(N);
+    const drive = 1.5;
+    const norm = Math.tanh(drive);
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1)) * 2 - 1; // -1..+1
+      curve[i] = Math.tanh(x * drive) / norm;
+    }
+    limiter.curve = curve;
+    limiter.oversample = "4x";
+    masterPanner.connect(limiter);
+    limiter.connect(this._actx.destination);
+    this._limiter = limiter;
 
     // Sub-bass: pure sine 2 octaves below root, driven by lo (bottom brightness).
     const subOsc = this._actx.createOscillator();
@@ -170,7 +189,7 @@ export class Synth {
     // N_PLUCKS concurrent pluck voices — polyphonic, picked by idle time.
     this._plucks = Array.from({ length: N_PLUCKS }, () => {
       const fm = new FMVoice(this._actx, this._actx.createGain(), {
-        ratio: this._cfg.fmPluckRatio ?? 7,
+        ratio: this._cfg.fmPluckRatio ?? 2,
         index: 1.0,
       });
       const panner = this._actx.createStereoPanner();
@@ -592,10 +611,16 @@ export class Synth {
     const ampDecayTau =
       baseDecay * (1 + spacious * 1.8) +
       Math.random() * (0.05 + slowness * 0.12);
-    const indexPeak =
-      (0.3 + quickness * 0.7 + edge * 0.6) *
-      (1 - slowness * 0.3) *
-      (0.5 + compactness * 0.5);
+    // Capped at 1.0 — beyond that the FM sidebands sprawl wide enough to
+    // alias against Nyquist on high-octave plucks (audible as crunch).
+    // Component weights rebalanced so quickness=edge=compactness=1,
+    // slowness=0 lands exactly at 1.0.
+    const indexPeak = Math.min(
+      1.0,
+      (0.25 + quickness * 0.45 + edge * 0.3) *
+        (1 - slowness * 0.3) *
+        (0.5 + compactness * 0.5),
+    );
     const modDecayTau = ampDecayTau * (0.04 + slowness * 0.14);
 
     // Note frequency + pan pick — branched by key vs. palette.
