@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0e0e0e" />
+    <title>AVVA · Controller</title>
+    <link rel="stylesheet" href="/controller/controller.css" />
+  </head>
+  <body>
+    <header class="ctrl-header">
+      <span class="ctrl-header__title">AVVA · CTRL</span>
+      <span id="ws-status" class="ctrl-header__status">BC</span>
+      <button id="copy-url-btn" class="btn-icon" title="Copy page URL">
+        ⎘
+      </button>
+    </header>
+
+    <div class="ws-form" id="ws-form">
+      <input
+        id="ws-url"
+        type="url"
+        placeholder="ws://192.168.x.x:3001"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <button id="ws-connect">Connect</button>
+    </div>
+
+    <main id="controls"></main>
+
+    <script type="module" src="/controller/controller.ts"></script>
+  </body>
+</html>

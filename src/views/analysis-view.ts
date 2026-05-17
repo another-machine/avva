@@ -150,6 +150,31 @@ async function begin(): Promise<void> {
     document.getElementById("heat")?.classList.toggle("mirror", v);
   });
 
+  store.subscribeKey("view.hud", (v) => {
+    state.hudOn = v;
+    document.body.style.setProperty("--hud-opacity", v ? "1" : "0");
+    if (!v) calPanel.hide?.();
+  });
+
+  store.subscribeKey("view.heatOn", (v) => {
+    state.heatOn = v;
+    analyzer.heatOn = v;
+    renderer.setHeatVisible?.(v);
+  });
+
+  store.subscribeKey("synth.enabled", (v) => {
+    if (v && !synth.running) synth.start();
+    else if (!v && synth.running) synth.stop();
+  });
+
+  store.subscribeKey("synth.masterGain", (v) => {
+    if (synth._master) synth._master.gain.value = v;
+  });
+
+  store.subscribeKey("source.playbackRate", (v) => {
+    videoEl.playbackRate = v;
+  });
+
   document.getElementById("gate")?.classList.add("hide");
 
   (window as any)._avva = { synth, analyzer, renderer, videoSource, store };

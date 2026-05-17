@@ -164,8 +164,8 @@ export class AudioRendererGL {
   _staticDegreeHues: Float32Array;
   private readonly _chromaticHues: Float32Array | null;
   private readonly _mode: string;
-  private readonly _feedbackVal: number;
-  private readonly _noiseScaleVal: number;
+  private _feedbackVal: number;
+  private _noiseScaleVal: number;
   private readonly _gl: WebGL2RenderingContext;
   private readonly _progCache: Map<
     number,
@@ -227,6 +227,28 @@ export class AudioRendererGL {
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
+
+  /** Update the frame-feedback decay coefficient on all cached programs. */
+  setFeedback(v: number): void {
+    this._feedbackVal = v;
+    const gl = this._gl;
+    for (const [, entry] of this._progCache) {
+      gl.useProgram(entry.prog);
+      gl.uniform1f(entry.u.uFeedback, v);
+    }
+    gl.useProgram(this._prog);
+  }
+
+  /** Update the noise spatial scale on all cached programs. */
+  setNoiseScale(v: number): void {
+    this._noiseScaleVal = v;
+    const gl = this._gl;
+    for (const [, entry] of this._progCache) {
+      gl.useProgram(entry.prog);
+      gl.uniform1f(entry.u.uNoiseScale, v);
+    }
+    gl.useProgram(this._prog);
+  }
 
   /**
    * Switch to a shader compiled for N hue sectors (compiles on first use).

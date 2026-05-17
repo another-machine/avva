@@ -13,6 +13,7 @@
  * Keys: [S] synth on/off · [C] cycle video source · [V] calibration · [H] root-hue picker
  */
 
+import { store } from "../store/store.js";
 import { legacyConfig as CONFIG } from "../store/legacy-config.js";
 import { VideoSource } from "../input/video-source.js";
 import { Analyzer } from "../analysis/analyzer.js";
@@ -288,6 +289,28 @@ async function begin(): Promise<void> {
   document.getElementById("m-src")!.textContent = videoSource.label;
   document.getElementById("gate")!.classList.add("hide");
 
+  // ── Live store subscriptions (from controller) ───────────────────────────
+  store.subscribeKey("synth.enabled", (v) => {
+    if (v && !synth.running) synth.start();
+    else if (!v && synth.running) synth.stop();
+  });
+
+  store.subscribeKey("synth.masterGain", (v) => {
+    if (synth._master) synth._master.gain.value = v;
+  });
+
+  store.subscribeKey("audio.feedback", (v) => {
+    audioRenderer?.setFeedback(v);
+  });
+
+  store.subscribeKey("audio.noiseScale", (v) => {
+    audioRenderer?.setNoiseScale(v);
+  });
+
+  store.subscribeKey("source.playbackRate", (v) => {
+    videoEl.playbackRate = v;
+  });
+
   state.lastT = performance.now();
   requestAnimationFrame(tick);
 }
@@ -459,6 +482,7 @@ function bindKeys(): void {
       rhpPicker?.toggle();
     } else if (e.key === "s" || e.key === "S") {
       synth.toggle();
+      store.set("synth.enabled", synth.running);
     } else if (e.key === "c" || e.key === "C") {
       try {
         await videoSource.cycleSource();

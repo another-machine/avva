@@ -18,5 +18,5 @@
     "jsx": "preserve",
     "types": []
   },
-  "include": ["src/**/*", "controller/**/*", "server/**/*"]
+  "include": ["src/**/*", "controller/**/*"]
 }
