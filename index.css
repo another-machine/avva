@@ -480,38 +480,6 @@ body {
 }
 
 /* ============================================================
-   Panel — Brightness
-   ============================================================ */
-
-#p-bri {
-  bottom: var(--panel-bottom);
-  left: var(--panel-bri-l);
-  width: var(--panel-bri-w);
-}
-
-/* ============================================================
-   Panel — Activity
-   ============================================================ */
-
-#p-act {
-  bottom: var(--panel-bottom);
-  left: var(--panel-act-l);
-  width: var(--panel-act-w);
-}
-
-/* ============================================================
-   Sparklines
-   ============================================================ */
-
-.spark {
-  display: block;
-  width: 100%;
-  height: var(--spark-h);
-  margin-top: 10px;
-  border-bottom: 1px solid var(--color-hair);
-}
-
-/* ============================================================
    Meta bar (bottom-left)
    ============================================================ */
 
@@ -635,32 +603,50 @@ body {
 }
 
 /* ============================================================
-   Panel — Signal monitor (right side)
-   Readout for unmapped analysis signals + synth state.
+   Panel — Analysis readout (right side)
    ============================================================ */
 
 #p-signals {
   right: var(--inset);
   top: 50%;
   transform: translateY(-50%);
-  width: 200px;
+  width: 120px;
 }
 
-.sig__section {
-  margin-bottom: 10px;
-}
-
-.sig__section:last-child {
-  margin-bottom: 0;
-}
-
-.sig__section-lbl {
+.sig__hdr {
   color: var(--color-dim);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-widest);
-  margin-bottom: 5px;
-  padding-bottom: 3px;
+  margin-bottom: 10px;
+  padding-bottom: 4px;
   border-bottom: 1px solid var(--color-hair);
+}
+
+.sig__brow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 11px;
+}
+
+.sig__blbl {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wider);
+  color: var(--color-dim);
+}
+
+.sig__bval {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--color-accent);
+}
+
+.sig__divider {
+  height: 1px;
+  background: var(--color-hair);
+  margin: 12px 0;
 }
 
 .sig__key-row {
@@ -722,83 +708,6 @@ body {
   font-size: var(--text-2xs);
   color: var(--color-dim);
   letter-spacing: var(--tracking-wider);
-  margin-bottom: 2px;
-}
-
-.sig__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 12px;
-  margin-bottom: 4px;
-}
-
-.sig__row:last-child {
-  margin-bottom: 0;
-}
-
-.sig__lbl {
-  width: 36px;
-  font-size: var(--text-2xs);
-  letter-spacing: 0.12em;
-  color: var(--color-dim);
-  flex-shrink: 0;
-  text-align: right;
-}
-
-.sig__track {
-  position: relative;
-  flex: 1;
-  height: 2px;
-  background: var(--color-hair);
-}
-
-.sig__fill {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: 0%;
-  max-width: 100%;
-  background: var(--color-accent);
-}
-
-/* Position track: pip slides across the bar instead of a fill */
-.sig__track--pos {
-  height: 6px;
-}
-
-.sig__pip {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2px;
-  height: 10px;
-  background: var(--color-accent);
-  transform: translate(-50%, -50%);
-}
-
-/* Sparkline canvas below a signal row */
-.sig__spark {
-  display: block;
-  width: 100%;
-  height: 22px;
-  margin-top: 1px;
-  margin-bottom: 5px;
-  border-bottom: 1px solid var(--color-hair);
-}
-
-/* Numeric value label on the right of a signal row */
-.sig__val {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--color-ink);
-  letter-spacing: 0;
-  min-width: 3ch;
-  text-align: right;
-  flex-shrink: 0;
-  opacity: 0.7;
 }
 
 /* ============================================================
@@ -822,8 +731,6 @@ body {
    ============================================================ */
 
 @media (max-width: 760px) {
-  #p-bri,
-  #p-act,
   #p-signals,
   #keys {
     display: none;
