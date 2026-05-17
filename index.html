@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>VA · Analysis Layer</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="/index.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+
+  <body>
+    <!-- ── Main stage ── -->
+    <div id="stage">
+      <!-- Video layer — source (camera or file) set by VideoSource module.
+           Filter set by Calibration via element.style.filter. -->
+      <video id="vid" playsinline muted></video>
+
+      <!-- Canvas layers -->
+      <canvas id="heat" class="canvas-layer"></canvas>
+      <canvas id="hud" class="canvas-layer"></canvas>
+
+      <!-- Identity panel (top-left) -->
+      <div id="p-id" class="panel" aria-label="Program identity">
+        <div class="p-id__name">CAM→AUDIO</div>
+        <div class="p-id__desc">ANALYSIS LAYER · v0.2</div>
+      </div>
+
+      <!-- Video calibration panel (top-right) — toggled with V key -->
+      <div
+        id="calibrate"
+        class="panel"
+        aria-label="Video calibration"
+        aria-live="polite"
+      >
+        <div class="cal__header">Video Calibration</div>
+
+        <div class="cal__row" id="cal-row-brightness">
+          <span class="cal__name">Brightness</span>
+          <span class="cal__value" id="cal-val-brightness">1.00</span>
+        </div>
+        <div class="cal__row" id="cal-row-contrast">
+          <span class="cal__name">Contrast</span>
+          <span class="cal__value" id="cal-val-contrast">1.00</span>
+        </div>
+        <div class="cal__row" id="cal-row-saturation">
+          <span class="cal__name">Saturation</span>
+          <span class="cal__value" id="cal-val-saturation">1.00</span>
+        </div>
+        <div class="cal__row" id="cal-row-hueRotate">
+          <span class="cal__name">Hue Rotate</span>
+          <span class="cal__value" id="cal-val-hueRotate">0°</span>
+        </div>
+
+        <div class="cal__hint">↑↓ adjust · TAB next · 0 reset · V close</div>
+        <div class="cal__url" id="cal-url"></div>
+      </div>
+
+      <!-- Hue panel (bottom-left) -->
+      <div id="p-hue" class="panel" aria-label="Hue readout">
+        <div class="panel__label">Hue</div>
+        <div class="panel__value">
+          <span id="hue-v">—</span><span class="panel__unit">°</span>
+          <span id="hue-n" class="panel__unit"></span>
+        </div>
+        <div class="huebar">
+          <div class="huebar__marker" id="huemark" aria-hidden="true"></div>
+        </div>
+        <div class="huehist" id="huehist" aria-hidden="true"></div>
+      </div>
+
+      <!-- Brightness and Activity panels removed — now in signal monitor -->
+
+      <!-- Signal monitor (right side) — readout for unmapped analysis signals + synth state -->
+      <div id="p-signals" class="panel sig" aria-label="Signal monitor">
+        <div class="sig__section">
+          <div class="sig__section-lbl">SYNTH</div>
+          <div class="sig__key-row">
+            <span class="sig__dot" id="sig-dot"></span>
+            <span id="sig-key-lbl">—</span>
+          </div>
+          <div class="sig__note-row">
+            <span class="sig__numeral" id="sig-numeral">—</span>
+            <span class="sig__sep">·</span>
+            <span class="sig__notename" id="sig-notename">—</span>
+          </div>
+          <div class="sig__quality" id="sig-quality"></div>
+        </div>
+
+        <div class="sig__section">
+          <div class="sig__section-lbl">MOTION</div>
+          <div
+            class="sig__row"
+            title="Frame-diff activity — fast motion, sudden changes. Drives glide speed and pluck rate."
+          >
+            <span class="sig__lbl">ACT</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-act"></span
+            ></span>
+            <span class="sig__val" id="sv-act">—</span>
+          </div>
+          <div
+            class="sig__row"
+            title="Background-subtraction activity — slow movers against a stable background. Drives reverb depth."
+          >
+            <span class="sig__lbl">SLOW</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-actbg"></span
+            ></span>
+            <span class="sig__val" id="sv-actbg">—</span>
+          </div>
+          <div
+            class="sig__row"
+            title="Total weighted motion mass — how much coloured moving thing is in frame. Higher = more presence."
+          >
+            <span class="sig__lbl">MASS</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-mass"></span
+            ></span>
+          </div>
+          <div
+            class="sig__row"
+            title="Centroid velocity — speed and direction of the moving mass. Spikes on deliberate sweeps; fires plucks."
+          >
+            <span class="sig__lbl">VELC</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-vmag"></span
+            ></span>
+          </div>
+          <div
+            class="sig__row"
+            title="Vertical brightness centroid — 0 = all brightness at top, 100 = bottom. Crossfades treble↔bass tiers."
+          >
+            <span class="sig__lbl">V·POS</span>
+            <span class="sig__track sig__track--pos"
+              ><span class="sig__pip" id="sb-vy"></span
+            ></span>
+            <span class="sig__val" id="sv-vy">—</span>
+          </div>
+          <div
+            class="sig__row"
+            title="Horizontal motion centroid — 0 = all motion on left, 100 = right. Pans the entire mix ±0.7."
+          >
+            <span class="sig__lbl">H·POS</span>
+            <span class="sig__track sig__track--pos"
+              ><span class="sig__pip" id="sb-mx"></span
+            ></span>
+            <span class="sig__val" id="sv-mx">—</span>
+          </div>
+        </div>
+
+        <div class="sig__section">
+          <div class="sig__section-lbl">TEXTURE</div>
+          <div
+            class="sig__row"
+            title="Mean brightness across the frame. Scales overall pad volume."
+          >
+            <span class="sig__lbl">BRI</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-bri"></span
+            ></span>
+            <span class="sig__val" id="sv-bri">—</span>
+          </div>
+          <div
+            class="sig__row"
+            title="Brightness std-dev within the frame — how much light/dark structure is present. Drives bass FM growl."
+          >
+            <span class="sig__lbl">CTST</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-contrast"></span
+            ></span>
+            <span class="sig__val" id="sv-contrast">—</span>
+          </div>
+          <div
+            class="sig__row"
+            title="Hue spread — 0 = single colour, 1 = full rainbow. Gates triad voices, widens stereo, expands pluck note range."
+          >
+            <span class="sig__lbl">SPRD</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-spread"></span
+            ></span>
+          </div>
+          <div
+            class="sig__row"
+            title="Mean saturation of vivid pixels. Drives FM timbre brightness and fades in 7th and 9th extension voices."
+          >
+            <span class="sig__lbl">SAT</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-sat"></span
+            ></span>
+          </div>
+          <div
+            class="sig__row"
+            title="Mean brightness of top third of frame. Contributes to treble tier weight."
+          >
+            <span class="sig__lbl">HI</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-hi"></span
+            ></span>
+          </div>
+          <div
+            class="sig__row"
+            title="Mean brightness of bottom third of frame. Drives sub-bass amplitude."
+          >
+            <span class="sig__lbl">LO</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-lo"></span
+            ></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Meta bar (bottom-left) -->
+      <div id="p-meta" class="panel" aria-label="Signal metadata">
+        SIGNAL <b id="m-src">—</b><br />
+        SAMPLE <b id="m-res">—</b> · <b id="m-fps">—</b> FPS
+      </div>
+
+      <!-- Key reference (bottom-right) -->
+      <div id="keys" class="panel" aria-label="Keyboard shortcuts">
+        <b>V</b> calibrate &nbsp; <b>H</b> hud<br />
+        <b>M</b> motion-map &nbsp; <b>R</b> mirror<br />
+        <b>F</b> fullscreen &nbsp; <b>C</b> cycle
+      </div>
+    </div>
+    <!-- /#stage -->
+
+    <!-- ── Gate (splash / permission screen) ── -->
+    <div id="gate">
+      <h1 class="gate__title">CAM&nbsp;→&nbsp;AUDIO</h1>
+      <p class="gate__sub">
+        Analysis layer. This instrument observes hue, brightness, and activity.
+        No sound is produced yet — this stage verifies the eyes.
+      </p>
+      <button class="gate__btn" id="go">Grant camera · begin</button>
+      <div class="gate__err" id="err" role="alert"></div>
+    </div>
+  </body>
+</html>
