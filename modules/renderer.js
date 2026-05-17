@@ -167,7 +167,7 @@ export class Renderer {
       this._sparkBri,
       this._sparkContrast,
       this._sparkVy,
-    ]) {
+    ].filter(Boolean)) {
       const r = c.getBoundingClientRect();
       c.width = r.width * dpr;
       c.height = r.height * dpr;
@@ -216,7 +216,6 @@ export class Renderer {
     this._sbAct.style.width = pct(out.act);
     this._sbBri.style.width = pct(out.bri);
     this._sbActbg.style.width = pct(out.actBg);
-    this._sbActedge.style.width = pct(out.actEdge);
     // Numeric value labels
     this._svAct.textContent = (out.act * 100).toFixed(0);
     this._svActbg.textContent = (out.actBg * 100).toFixed(0);
@@ -279,6 +278,7 @@ export class Renderer {
    * properties we set each frame (avoids unresolved var() strings).
    */
   _drawSpark(canvas, data) {
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const w = canvas.getBoundingClientRect().width;
     const h = canvas.getBoundingClientRect().height;

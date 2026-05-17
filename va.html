@@ -99,99 +99,120 @@
 
         <div class="sig__section">
           <div class="sig__section-lbl">MOTION</div>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Frame-diff activity — fast motion, sudden changes. Drives glide speed and pluck rate."
+          >
             <span class="sig__lbl">ACT</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-act"></span
             ></span>
             <span class="sig__val" id="sv-act">—</span>
           </div>
-          <canvas class="sig__spark" id="ss-act"></canvas>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Background-subtraction activity — slow movers against a stable background. Drives reverb depth."
+          >
             <span class="sig__lbl">SLOW</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-actbg"></span
             ></span>
             <span class="sig__val" id="sv-actbg">—</span>
           </div>
-          <canvas class="sig__spark" id="ss-actbg"></canvas>
-          <div class="sig__row">
-            <span class="sig__lbl">EDGE</span>
+          <div
+            class="sig__row"
+            title="Total weighted motion mass — how much coloured moving thing is in frame. Higher = more presence."
+          >
+            <span class="sig__lbl">MASS</span>
             <span class="sig__track"
-              ><span class="sig__fill" id="sb-actedge"></span
+              ><span class="sig__fill" id="sb-mass"></span
             ></span>
           </div>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Centroid velocity — speed and direction of the moving mass. Spikes on deliberate sweeps; fires plucks."
+          >
+            <span class="sig__lbl">VELC</span>
+            <span class="sig__track"
+              ><span class="sig__fill" id="sb-vmag"></span
+            ></span>
+          </div>
+          <div
+            class="sig__row"
+            title="Vertical brightness centroid — 0 = all brightness at top, 100 = bottom. Crossfades treble↔bass tiers."
+          >
             <span class="sig__lbl">V·POS</span>
             <span class="sig__track sig__track--pos"
               ><span class="sig__pip" id="sb-vy"></span
             ></span>
             <span class="sig__val" id="sv-vy">—</span>
           </div>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Horizontal motion centroid — 0 = all motion on left, 100 = right. Pans the entire mix ±0.7."
+          >
             <span class="sig__lbl">H·POS</span>
             <span class="sig__track sig__track--pos"
               ><span class="sig__pip" id="sb-mx"></span
             ></span>
             <span class="sig__val" id="sv-mx">—</span>
           </div>
-          <div class="sig__row">
-            <span class="sig__lbl">MASS</span>
-            <span class="sig__track"
-              ><span class="sig__fill" id="sb-mass"></span
-            ></span>
-          </div>
-          <div class="sig__row">
-            <span class="sig__lbl">VELC</span>
-            <span class="sig__track"
-              ><span class="sig__fill" id="sb-vmag"></span
-            ></span>
-          </div>
-          <canvas class="sig__spark" id="ss-vy"></canvas>
         </div>
 
         <div class="sig__section">
           <div class="sig__section-lbl">TEXTURE</div>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Mean brightness across the frame. Scales overall pad volume."
+          >
             <span class="sig__lbl">BRI</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-bri"></span
             ></span>
             <span class="sig__val" id="sv-bri">—</span>
           </div>
-          <canvas class="sig__spark" id="ss-bri"></canvas>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Brightness std-dev within the frame — how much light/dark structure is present. Drives bass FM growl."
+          >
             <span class="sig__lbl">CTST</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-contrast"></span
             ></span>
             <span class="sig__val" id="sv-contrast">—</span>
           </div>
-          <canvas class="sig__spark" id="ss-contrast"></canvas>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Hue spread — 0 = single colour, 1 = full rainbow. Gates triad voices, widens stereo, expands pluck note range."
+          >
             <span class="sig__lbl">SPRD</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-spread"></span
             ></span>
           </div>
-          <div class="sig__row">
+          <div
+            class="sig__row"
+            title="Mean saturation of vivid pixels. Drives FM timbre brightness and fades in 7th and 9th extension voices."
+          >
             <span class="sig__lbl">SAT</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-sat"></span
             ></span>
           </div>
-        </div>
-
-        <div class="sig__section">
-          <div class="sig__section-lbl">REGISTER</div>
-          <div class="sig__row">
-            <span class="sig__lbl">TOP</span>
+          <div
+            class="sig__row"
+            title="Mean brightness of top third of frame. Contributes to treble tier weight."
+          >
+            <span class="sig__lbl">HI</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-hi"></span
             ></span>
           </div>
-          <div class="sig__row">
-            <span class="sig__lbl">BTM</span>
+          <div
+            class="sig__row"
+            title="Mean brightness of bottom third of frame. Drives sub-bass amplitude."
+          >
+            <span class="sig__lbl">LO</span>
             <span class="sig__track"
               ><span class="sig__fill" id="sb-lo"></span
             ></span>
