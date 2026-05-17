@@ -26,6 +26,7 @@ import { Key } from "./modules/music.js";
 import { Synth } from "./modules/synth.js";
 import { AudioAnalyzer } from "./modules/audio-analyzer.js";
 import { AudioRendererGL } from "./modules/audio-renderer-gl.js";
+import { fromPerceptual } from "./modules/hue-perception.js";
 
 const state = {
   fps: 0,
@@ -38,6 +39,7 @@ const state = {
 let videoEl, videoSource, vidAnalyzer, calibration, calPanel, synth, key;
 let audioAnalyzer, audioRenderer, audioCanvas;
 let chromaBars = []; // 12 DOM elements for chromatic prevalence readout
+let rhpPicker; // RootHuePicker instance (created in begin())
 
 async function begin() {
   videoEl = document.getElementById("vid");
@@ -56,6 +58,7 @@ async function begin() {
     root: CONFIG.root,
     mode: CONFIG.mode,
     octave: CONFIG.octave,
+    rootHue: CONFIG.rootHue,
   });
 
   videoSource = new VideoSource(videoEl, CONFIG);
@@ -78,6 +81,18 @@ async function begin() {
   window.addEventListener("resize", () => audioRenderer.resize());
 
   buildChromaReadout();
+  rhpPicker = new RootHuePicker({ key, onRebuild: buildChromaReadout });
+  window._avva = {
+    get key() {
+      return key;
+    },
+    get audioAnalyzer() {
+      return audioAnalyzer;
+    },
+    get audioRenderer() {
+      return audioRenderer;
+    },
+  };
   document.getElementById("m-key").textContent = key.label.toUpperCase();
   document.getElementById("m-src").textContent = videoSource.label;
 
@@ -176,6 +191,7 @@ function paintAudioReadout(frame) {
 function buildChromaReadout() {
   const container = document.getElementById("chroma-bars");
   if (!container) return;
+  container.innerHTML = ""; // clear before rebuilding
 
   // Sort degrees by hue so bars form a continuous spectrum left→right.
   // (Circle-of-fifths mapping makes degree order non-sequential by hue.)
@@ -204,6 +220,66 @@ function buildChromaReadout() {
   }
 }
 
+class RootHuePicker {
+  constructor({ key: keyInstance, onRebuild }) {
+    this._key = keyInstance;
+    this._onRebuild = onRebuild;
+    this._visible = false;
+
+    this._panel = document.getElementById("root-hue-picker");
+    this._strip = document.getElementById("rhp-strip");
+    this._marker = document.getElementById("rhp-marker");
+
+    if (!this._strip) return;
+
+    let dragging = false;
+    this._strip.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      this._strip.setPointerCapture(e.pointerId);
+      this._pick(e);
+    });
+    this._strip.addEventListener("pointermove", (e) => {
+      if (dragging) this._pick(e);
+    });
+    this._strip.addEventListener("pointerup", () => {
+      dragging = false;
+    });
+    this._strip.addEventListener("pointercancel", () => {
+      dragging = false;
+    });
+
+    this._update();
+  }
+
+  _pick(e) {
+    const rect = this._strip.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    this._key.setRootHueFromDisplay(x * 360);
+    if (audioAnalyzer) audioAnalyzer.rebuildKeyTables();
+    if (audioRenderer) audioRenderer._staticDegreeHues = this._key.degreeHues;
+    this._onRebuild();
+    this._update();
+  }
+
+  _update() {
+    const p = this._key.rootHue;
+    const d = fromPerceptual(p);
+    this._strip?.style.setProperty(
+      "--rhp-pos",
+      ((d / 360) * 100).toFixed(2) + "%",
+    );
+    const elD = document.getElementById("rhp-display");
+    const elP = document.getElementById("rhp-perceptual");
+    if (elD) elD.textContent = d.toFixed(0) + "°";
+    if (elP) elP.textContent = p.toFixed(0) + "°";
+  }
+
+  toggle() {
+    this._visible = !this._visible;
+    this._panel?.classList.toggle("hide", !this._visible);
+  }
+}
+
 // ── Keyboard ──────────────────────────────────────────────────
 window.addEventListener("keydown", async (e) => {
   // Let the calibration panel consume arrow/tab/0 keys when visible
@@ -211,6 +287,8 @@ window.addEventListener("keydown", async (e) => {
 
   if (e.key === "v" || e.key === "V") {
     calPanel?.toggle();
+  } else if (e.key === "h" || e.key === "H") {
+    rhpPicker?.toggle();
   } else if (e.key === "s" || e.key === "S") {
     synth.toggle();
   } else if (e.key === "c" || e.key === "C") {

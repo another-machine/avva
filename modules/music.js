@@ -3,17 +3,22 @@
  *
  * Minimal music theory for AVVA.
  *
- * Maps hue (0–360°) to diatonic scale degrees in a circular path:
- *   hue 0° and 360° both resolve to the tonic (degree 0),
- *   ascending through I→II→III→IV→V→VI→VII in between.
+ * Maps hue (0–360° display/HSV) to diatonic scale degrees via a
+ * perceptually-uniform sector layout.  The hue wheel is divided into
+ * 7 equal arcs of 360/7° each in *oklch perceptual* space; the display
+ * hue passed in is converted to perceptual first, then sector-looked-up,
+ * then the output hue is converted back to display.  This keeps yellow's
+ * narrow perceptual band from dominating the mapping.
  *
- * The leading tone (VII) sits just below 360°, so the wrap at the
- * hue boundary IS the canonical cadential resolution (VII→I).
+ * rootHue is stored in perceptual coordinates.  setRootHueFromDisplay()
+ * converts from display before storing.
  *
  * Pure functions + Key class — no DOM, no Web Audio.
  *
  * Derived from amplib-music-theory (another-machine/public-library).
  */
+
+import { toPerceptual, fromPerceptual } from "./hue-perception.js";
 
 // Semitone steps from root for each mode
 const SCALE_STEPS = {
@@ -66,7 +71,6 @@ const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII"];
 // Adjacent hues are a diatonic fifth apart, not a scale step apart.
 const DIATONIC_FIFTHS = [0, 4, 1, 5, 2, 6, 3]; // sector→degree
 const DIATONIC_FIFTHS_INV = [0, 2, 4, 6, 1, 3, 5]; // degree→sector
-const SECTOR_DEG = 360 / 7; // ≈ 51.43° per degree
 
 /** Equal-temperament frequency relative to A4 = 440 Hz. */
 function noteFreq(chromaticIndex, octave) {
@@ -76,23 +80,74 @@ function noteFreq(chromaticIndex, octave) {
 export class Key {
   /**
    * @param {object} [params]
-   * @param {string} [params.root='C']     Root note: 'C','C#','D','D#','E','F','F#','G','G#','A','A#','B'
-   * @param {string} [params.mode='major'] Mode: major | minor | dorian | phrygian |
-   *                                            lydian | mixolydian | locrian
-   * @param {number} [params.octave=4]     Base octave for the root (4 = middle C octave)
+   * @param {string} [params.root='C']      Root note name
+   * @param {string} [params.mode='major']  Mode name
+   * @param {number} [params.octave=4]      Base octave
+   * @param {number} [params.rootHue=0]     Perceptual (oklch) hue where the root (I)
+   *                                        sector begins.  Use setRootHueFromDisplay()
+   *                                        to set from a display/HSV hue instead.
    */
-  constructor({ root = "C", mode = "major", octave = 4 } = {}) {
+  constructor({ root = "C", mode = "major", octave = 4, rootHue = 0 } = {}) {
     this.root = root;
     this.mode = mode;
     this.octave = octave;
+    this.rootHue = ((rootHue % 360) + 360) % 360;
     const rootIdx = NOTE_NAMES.indexOf(root);
     if (rootIdx === -1) throw new Error(`Unknown root note: "${root}"`);
     this._rootIdx = rootIdx;
+    this._listeners = [];
     this.degrees = this._build();
   }
 
   get label() {
     return `${this.root} ${this.mode}`;
+  }
+
+  // ── Hue cache invalidation ────────────────────────────────────────────────
+
+  _invalidateHueCache() {
+    this._degreeHues = null;
+    this._chromaticHues = null;
+  }
+
+  // ── Live rootHue mutation ─────────────────────────────────────────────────
+
+  /**
+   * Set the root hue in *perceptual* (oklch) coordinates and invalidate caches.
+   * @param {number} p  Perceptual hue (any value; wraps to [0, 360))
+   */
+  setRootHue(p) {
+    this.rootHue = ((p % 360) + 360) % 360;
+    this._invalidateHueCache();
+    this._emit();
+  }
+
+  /**
+   * Set the root hue from a *display* (HSV) hue.  Converts to perceptual
+   * internally so all hue math stays in the right space.
+   * @param {number} h  Display/HSV hue (any value)
+   */
+  setRootHueFromDisplay(h) {
+    this.setRootHue(toPerceptual(h));
+  }
+
+  // ── Change listeners ─────────────────────────────────────────────────────
+
+  /**
+   * Register a callback that fires whenever rootHue changes.
+   * @param {function} fn
+   * @returns {function} Unsubscribe function
+   */
+  onChange(fn) {
+    this._listeners.push(fn);
+    return () => {
+      const i = this._listeners.indexOf(fn);
+      if (i >= 0) this._listeners.splice(i, 1);
+    };
+  }
+
+  _emit() {
+    for (const fn of this._listeners) fn(this);
   }
 
   _build() {
@@ -127,41 +182,69 @@ export class Key {
   }
 
   /**
-   * Map a hue angle (0–360°) to a scale degree.
+   * Map a display hue (0–360°) to a scale degree.
    *
-   * The hue circle is treated as a chromatic octave (30° per semitone).
-   * Each diatonic degree owns the hue range from its own semitone offset to
-   * the next degree's offset, so half-step intervals get a narrow 30° slice
-   * and whole-step intervals get a 60° slice.  This keeps the hue distance
-   * between two notes proportional to their musical interval.
+   * The display hue is first converted to perceptual (oklch) space, then
+   * looked up in 7 equal-width sectors (360/7° each) offset by rootHue.
+   * Equal perceptual sectors mean that equal angular shifts feel like
+   * equally distinct color changes to the viewer.
    *
-   * hue 0° = root, hue 360° wraps back to root (VII→I cadence preserved).
-   *
-   * @param   {number} hue  0–360 (wraps safely outside this range)
+   * @param   {number} hue  Display hue 0–360 (wraps safely)
    * @returns {{ degree, name, octave, freq, quality, numeral, triad, t }}
-   *          t: 0–1 interpolation position within this degree's hue slice
+   *          t: 0–1 position within this degree's sector
    */
   hueToNote(hue) {
-    const h = ((hue % 360) + 360) % 360;
-    // Divide the hue wheel into 7 equal sectors in circle-of-fifths order.
-    // Adjacent sectors are a diatonic fifth apart, not a scale step.
-    const si = Math.min(6, Math.floor(h / SECTOR_DEG));
-    const chosen = DIATONIC_FIFTHS[si];
-    const t = (h - si * SECTOR_DEG) / SECTOR_DEG;
-    return { ...this.degrees[chosen], t };
+    const p = (((toPerceptual(hue) - this.rootHue) % 360) + 360) % 360;
+    const w = 360 / 7;
+    const si = Math.min(6, Math.floor(p / w));
+    const t = (p - si * w) / w;
+    return { ...this.degrees[DIATONIC_FIFTHS[si]], t };
   }
 
   /**
-   * Inverse of hueToNote: map a scale degree (0–6) to a hue angle.
-   * t=0 → start of the degree's chromatic slice, t=0.5 → center, t=1 → end.
+   * Crossfade data for smooth sector-boundary blending in the synth.
+   * Near a sector edge both the current degree and the adjacent degree
+   * become active; blendFactor scales from 0 (sector centre) to 0.5
+   * (exact boundary).
    *
-   * @param   {number} degree   0–6 (wraps)
-   * @param   {number} [t=0.5]  0=slice start, 1=next slice start
-   * @returns {number}          hue in [0, 360)
+   * @param {number} hue
+   * @param {number} [crossZone=0.25]  fraction of sector width to crossfade (each side)
+   * @returns {{ blendDegree: number, blendFactor: number }}
+   */
+  hueToBlend(hue, crossZone = 0.25) {
+    const p = (((toPerceptual(hue) - this.rootHue) % 360) + 360) % 360;
+    const w = 360 / 7;
+    const si = Math.min(6, Math.floor(p / w));
+    const t = (p - si * w) / w;
+    if (t < crossZone) {
+      return {
+        blendDegree: DIATONIC_FIFTHS[(si + 6) % 7],
+        blendFactor: ((crossZone - t) / crossZone) * 0.5,
+      };
+    }
+    if (t > 1 - crossZone) {
+      return {
+        blendDegree: DIATONIC_FIFTHS[(si + 1) % 7],
+        blendFactor: ((t - (1 - crossZone)) / crossZone) * 0.5,
+      };
+    }
+    return { blendDegree: DIATONIC_FIFTHS[si], blendFactor: 0 };
+  }
+
+  /**
+   * Inverse: map a scale degree (0–6) to a display hue.
+   * Computes the perceptual hue for this sector position, then converts to display.
+   *
+   * @param   {number} degree  0–6 (wraps)
+   * @param   {number} [t=0.5] 0=sector start, 0.5=center, 1=next sector start
+   * @returns {number}         Display hue in [0, 360)
    */
   degreeToHue(degree, t = 0.5) {
-    const i = ((degree % 7) + 7) % 7;
-    return (DIATONIC_FIFTHS_INV[i] + t) * SECTOR_DEG;
+    const d = ((degree % 7) + 7) % 7;
+    const si = DIATONIC_FIFTHS_INV[d];
+    const w = 360 / 7;
+    const p = (((si * w + t * w + this.rootHue) % 360) + 360) % 360;
+    return fromPerceptual(p);
   }
 
   /**
@@ -215,7 +298,7 @@ export class Key {
 
   _buildChromaticHues() {
     const steps = SCALE_STEPS[this.mode] ?? SCALE_STEPS.major;
-    // In-scale notes land at the center of their hue sector.
+    // In-scale notes land at the center of their degree's hue sector (display hue).
     const semiToHue = new Map();
     for (let d = 0; d < 7; d++) semiToHue.set(steps[d], this.degreeToHue(d));
 
@@ -225,7 +308,7 @@ export class Key {
       if (semiToHue.has(rel)) {
         out[cIdx] = semiToHue.get(rel);
       } else {
-        // Interpolate between chromatic neighbours that are in-scale.
+        // Find the two adjacent in-scale semitone neighbours.
         let loRel = rel,
           hiRel = rel;
         for (let s = 1; s <= 12; s++) {
@@ -240,14 +323,16 @@ export class Key {
             break;
           }
         }
-        const loHue = semiToHue.get(loRel);
-        const hiHue = semiToHue.get(hiRel);
+        // Interpolate in *perceptual* space so the chromatic sweep stays visually linear.
+        const loP = toPerceptual(semiToHue.get(loRel));
+        const hiP = toPerceptual(semiToHue.get(hiRel));
         const span = (hiRel - loRel + 12) % 12 || 12;
         const pos = (rel - loRel + 12) % 12;
-        let dh = hiHue - loHue;
-        if (dh > 180) dh -= 360; // shortest arc
-        if (dh < -180) dh += 360;
-        out[cIdx] = (((loHue + (pos / span) * dh) % 360) + 360) % 360;
+        let dP = hiP - loP;
+        if (dP > 180) dP -= 360;
+        if (dP < -180) dP += 360;
+        const pInterp = (((loP + (pos / span) * dP) % 360) + 360) % 360;
+        out[cIdx] = fromPerceptual(pInterp);
       }
     }
     return out;

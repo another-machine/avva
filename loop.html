@@ -85,6 +85,28 @@
           <div class="cal__hint">↑↓ adjust · TAB next · 0 reset · V close</div>
           <div class="cal__url" id="cal-url"></div>
         </div>
+
+        <!-- Root-hue picker — overlays camera feed, toggled with H -->
+        <div
+          id="root-hue-picker"
+          class="panel hide"
+          aria-label="Root hue"
+          aria-live="polite"
+        >
+          <div class="cal__header">Root Hue</div>
+          <div class="rhp__strip" id="rhp-strip">
+            <div class="rhp__marker" id="rhp-marker"></div>
+          </div>
+          <div class="cal__row">
+            <span class="cal__name">Display</span>
+            <span class="cal__value" id="rhp-display">0°</span>
+          </div>
+          <div class="cal__row">
+            <span class="cal__name">Perceptual</span>
+            <span class="cal__value" id="rhp-perceptual">0°</span>
+          </div>
+          <div class="cal__hint">Click/drag strip to set · H close</div>
+        </div>
       </section>
 
       <!-- Program 2 side: audio canvas + chroma readout -->

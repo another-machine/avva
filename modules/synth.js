@@ -289,6 +289,10 @@ export class Synth {
     const compactness = clamp01(1 - (sx + sy) * 3);
 
     const note = this.key.hueToNote(safeHue);
+    // Sector-boundary crossfade: blendFactor 0 = sector centre, 0.5 = exact edge
+    const { blendDegree, blendFactor } = this.key.hueToBlend(safeHue, 0.25);
+    const note2 = blendFactor > 0.02 ? this.key.degrees[blendDegree] : null;
+    const bf2 = blendFactor * 2; // normalised 0→1 blend amount
     const now = this._actx.currentTime;
     const tau = Math.max(0.001, this._glideTime(safeAct) / 3);
     // Pan / index / ratio glide more slowly than freq/gain — keeps the
@@ -373,7 +377,7 @@ export class Synth {
           }
 
           fm.glideTo(targetFreq, tau * VOICE_GLIDE_SPREAD[vi]);
-          fm.setGain(tierBase * voiceWeights[vi], tau);
+          fm.setGain(tierBase * voiceWeights[vi] * (1 - bf2), tau);
           fm.setIndex(tierIndex[ti], slowTau);
           const targetRatio = ratioBase + ratioDrift * VOICE_DRIFT_SIGN[vi];
           fm.setRatio(targetRatio, slowTau);
@@ -382,7 +386,20 @@ export class Synth {
         } else {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
-          if (extOk[ei]) {
+          if (note2 && bf2 > 0.04) {
+            // Crossfade zone: repurpose extension slots for secondary chord
+            // root (ei=0) and 5th (ei=1), fading in with the blend factor.
+            const secTriad = [0, 2]; // triad indices: root, 5th
+            const secFreq = note2.triad[secTriad[ei]].freq * freqScale;
+            if (Number.isFinite(secFreq) && secFreq > 0 && secFreq < 8000) {
+              fm.glideTo(secFreq, tau * VOICE_GLIDE_SPREAD[vi]);
+              fm.setGain(tierBase * voiceWeights[secTriad[ei]] * bf2, tau);
+              fm.setIndex(tierIndex[ti] * 0.65, slowTau);
+              fm.setRatio(ratioBase, slowTau);
+            } else {
+              fm.setGain(0, tau);
+            }
+          } else if (extOk[ei]) {
             fm.glideTo(extFreqs[ei], tau * VOICE_GLIDE_SPREAD[vi]);
             fm.setGain(
               tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),

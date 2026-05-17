@@ -113,10 +113,11 @@ void main() {
   vec2 uv = vUV;
 
   // ── Phase 3: Degree territories ──────────────────────────────────────────
-  // Each degree gets a unique noise offset and slow independent drift speed.
-  // The noisiest degree with the highest weighted presence wins the pixel.
+  // All degrees contribute a weighted colour so territory boundaries blend
+  // through intermediate hues rather than hard-cutting to a single winner.
   float maxPresence = 0.0;
-  int   topDegree   = 0;
+  vec3  blendColor  = vec3(0.0);
+  float blendWeight = 0.0;
 
   for (int i = 0; i < N_HUES; i++) {
     vec2  noiseUV  = uv * uNoiseScale
@@ -124,10 +125,9 @@ void main() {
                           uTime * (0.04 + float(i) * 0.007));
     float n        = snoiseN(noiseUV);
     float presence = uDegrees[i] * n;
-    if (presence > maxPresence) {
-      maxPresence = presence;
-      topDegree   = i;
-    }
+    if (presence > maxPresence) maxPresence = presence;
+    blendColor  += uDegreeRGB[i] * presence;
+    blendWeight += presence;
   }
 
   // ── Phase 3: Previous frame with fluid drift ──────────────────────────────
@@ -140,8 +140,9 @@ void main() {
   vec4 prev = texture(uPrev, driftUV);
 
   // ── Phase 3: Color computation + feedback mix ─────────────────────────────
-  // Dynamic indexing of uDegreeRGB by topDegree — valid in GLSL ES 3.00.
-  vec3  newColor  = uDegreeRGB[topDegree];
+  // Weighted-average colour blends all active territories; maxPresence drives
+  // how much new colour replaces the feedback trail.
+  vec3  newColor  = blendWeight > 0.001 ? blendColor / blendWeight : vec3(0.0);
   float newAmount = clamp(maxPresence * 2.0, 0.0, 1.0);
   vec3  base      = mix(prev.rgb * uFeedback, newColor, newAmount);
 

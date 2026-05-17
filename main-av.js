@@ -23,6 +23,7 @@ async function begin() {
     root: CONFIG.root,
     mode: CONFIG.mode,
     octave: CONFIG.octave,
+    rootHue: CONFIG.rootHue,
   });
 
   actx = new AudioContext();
@@ -32,7 +33,11 @@ async function begin() {
 
   // Standalone mode: ask for mic
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
   });
   const src = actx.createMediaStreamSource(stream);
   analyzer.connect(src);

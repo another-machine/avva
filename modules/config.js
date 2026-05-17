@@ -16,6 +16,7 @@ const DEFAULTS = {
   // "camera" → getUserMedia; any other string → treated as a video file path
   // source: "camera",
   source: [
+    "assets/etho.mp4",
     "assets/mariotrailer.mp4",
     "assets/mario1.mp4",
     "assets/mario3.mp4",
@@ -54,6 +55,7 @@ const DEFAULTS = {
   root: "A",
   mode: "locrian",
   octave: 4,
+  rootHue: 0, // degrees: hue angle where the root (I) sector begins
   glideMin: 0.01, // seconds at act=1 (staccato)
   glideMax: 2.0, // seconds at act=0 (legato)
   masterGain: 0.35,

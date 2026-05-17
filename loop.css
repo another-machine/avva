@@ -236,3 +236,45 @@ body.loop {
   text-align: center;
   transition: opacity 350ms ease;
 }
+
+/* ── Root-hue picker: bottom-right of the camera pane ──────── */
+
+.loop__pane > #root-hue-picker {
+  top: auto;
+  bottom: var(--inset);
+  left: auto;
+  right: var(--inset);
+  width: 220px;
+}
+
+.rhp__strip {
+  position: relative;
+  width: 100%;
+  height: 28px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
+  );
+  cursor: crosshair;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.rhp__marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--rhp-pos, 0%);
+  width: 2px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  transform: translateX(-1px);
+  pointer-events: none;
+}

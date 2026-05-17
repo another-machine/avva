@@ -62,6 +62,7 @@ async function begin() {
     root: CONFIG.root,
     mode: CONFIG.mode,
     octave: CONFIG.octave,
+    rootHue: CONFIG.rootHue,
   });
 
   // Calibration panel — onChange keeps video display in sync with analysis

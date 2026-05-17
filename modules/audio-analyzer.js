@@ -196,6 +196,7 @@ export class AudioAnalyzer {
       chord: { label: "—", key: "", change: false },
       notes: new Float32Array(this._N),
     };
+    this._rebuildKeyTables();
   }
 
   /**
@@ -210,6 +211,25 @@ export class AudioAnalyzer {
   /** Swap the key (e.g. user changed root/mode mid-session). */
   setKey(key) {
     this.key = key;
+    this._rebuildKeyTables();
+  }
+
+  /** Rebuild key-dependent lookup tables (call after changing key or rootHue). */
+  rebuildKeyTables() {
+    this._rebuildKeyTables();
+  }
+
+  _rebuildKeyTables() {
+    const chHues = this.key.chromaticHues;
+    this._chromaHues = chHues;
+    this._pcSectorDeg = new Int8Array(12);
+    for (let c = 0; c < 12; c++) {
+      this._pcSectorDeg[c] = this.key.hueToNote(chHues[c]).degree;
+    }
+    this._degreePCs = new Int8Array(7);
+    for (let d = 0; d < 7; d++) {
+      this._degreePCs[d] = this.key.pitchClassForDegree(d);
+    }
   }
 
   /**
