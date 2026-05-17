@@ -74,6 +74,10 @@ const DEFAULTS = {
   // --- audio visualizer ---
   feedback: 0.92, // frame-to-frame feedback decay (0=no trail, 1=frozen)
   noiseScale: 2.5, // noise domain scale for territory blobs (larger = finer)
+
+  // --- palette (chord palette override) ---
+  palette: null, // URL string like "Cmaj7:2,F:1,Am7:1" — null = use Key
+  crossZone: 0.15, // fraction of each sector width used for edge overlap
 };
 
 /** Parse URL search params and return overrides matching known keys. */
@@ -82,8 +86,8 @@ function parseUrlParams() {
   const out = {};
 
   // String params
-  for (const k of ["source", "preferCamera", "root", "mode"]) {
-    if (p.has(k)) out[k] = p.get(k);
+  for (const k of ["source", "preferCamera", "root", "mode", "palette"]) {
+    if (p.has(k)) out[k] = decodeURIComponent(p.get(k));
   }
 
   // Numeric params
@@ -109,6 +113,7 @@ function parseUrlParams() {
     "fmPluckRatio",
     "feedback",
     "noiseScale",
+    "crossZone",
   ]) {
     if (p.has(k)) {
       const v = Number(p.get(k));

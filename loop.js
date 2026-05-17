@@ -26,7 +26,8 @@ import { Key } from "./modules/music.js";
 import { Synth } from "./modules/synth.js";
 import { AudioAnalyzer } from "./modules/audio-analyzer.js";
 import { AudioRendererGL } from "./modules/audio-renderer-gl.js";
-import { fromPerceptual } from "./modules/hue-perception.js";
+import { fromPerceptual, toPerceptual } from "./modules/hue-perception.js";
+import { Palette } from "./modules/palette.js";
 
 const state = {
   fps: 0,
@@ -38,7 +39,8 @@ const state = {
 
 let videoEl, videoSource, vidAnalyzer, calibration, calPanel, synth, key;
 let audioAnalyzer, audioRenderer, audioCanvas;
-let chromaBars = []; // 12 DOM elements for chromatic prevalence readout
+let palette = null; // Palette instance when ?palette= is set
+let chromaBars = []; // DOM elements for the chord-strip readout
 let rhpPicker; // RootHuePicker instance (created in begin())
 
 async function begin() {
@@ -61,10 +63,22 @@ async function begin() {
     rootHue: CONFIG.rootHue,
   });
 
+  if (CONFIG.palette) {
+    try {
+      palette = Palette.fromURLParam(CONFIG.palette, {
+        rootHue: CONFIG.rootHue ?? 0,
+        crossZone: CONFIG.crossZone,
+      });
+    } catch (e) {
+      console.error("Palette parse error:", e.message);
+    }
+  }
+
   videoSource = new VideoSource(videoEl, CONFIG);
   vidAnalyzer = new Analyzer(CONFIG, calibration);
   synth = new Synth(CONFIG);
   synth.key = key;
+  synth.palette = palette;
 
   try {
     await videoSource.start();
@@ -78,10 +92,21 @@ async function begin() {
     feedback: CONFIG.feedback,
     noiseScale: CONFIG.noiseScale,
   });
+  if (palette) audioRenderer.setN(palette.slots.length);
   window.addEventListener("resize", () => audioRenderer.resize());
 
   buildChromaReadout();
   rhpPicker = new RootHuePicker({ key, onRebuild: buildChromaReadout });
+
+  // Subscribe to palette changes so the chord strip and renderer stay in sync.
+  if (palette) {
+    palette.onChange(() => {
+      buildChromaReadout();
+      if (audioRenderer) audioRenderer.setN(palette.slots.length);
+      rhpPicker?._update();
+    });
+  }
+
   window._avva = {
     get key() {
       return key;
@@ -91,6 +116,9 @@ async function begin() {
     },
     get audioRenderer() {
       return audioRenderer;
+    },
+    get palette() {
+      return palette;
     },
   };
   document.getElementById("m-key").textContent = key.label.toUpperCase();
@@ -110,6 +138,7 @@ function maybeTapSynth() {
   audioAnalyzer = new AudioAnalyzer({
     audioContext: synth._actx,
     key,
+    palette,
   });
   synth._master.connect(audioAnalyzer.analyser);
   state.tapped = true;
@@ -179,12 +208,13 @@ function paintAudioReadout(frame) {
   document.getElementById("a-lo").textContent = frame.bands.lo.toFixed(2);
   document.getElementById("a-chord").textContent = frame.chord.label;
 
-  // Update 7 degree bars
-  for (let i = 0; i < 7; i++) {
+  // Update bars — slots (palette) or degrees (key)
+  const weights = frame.slots ?? frame.degrees;
+  const N = weights ? weights.length : 0;
+  for (let i = 0; i < N; i++) {
     const bar = chromaBars[i];
     if (!bar) continue;
-    const p = frame.degrees[i] || 0;
-    bar.style.height = `${(p * 100).toFixed(1)}%`;
+    bar.style.height = `${((weights[i] ?? 0) * 100).toFixed(1)}%`;
   }
 }
 
@@ -193,30 +223,53 @@ function buildChromaReadout() {
   if (!container) return;
   container.innerHTML = ""; // clear before rebuilding
 
-  // Sort degrees by hue so bars form a continuous spectrum left→right.
-  // (Circle-of-fifths mapping makes degree order non-sequential by hue.)
-  const sorted = Array.from({ length: 7 }, (_, i) => ({
-    degree: i,
-    hue: key.degreeToHue(i, 0.5),
-    h0: key.degreeToHue(i, 0),
-    h1: key.degreeToHue(i, 1),
-    numeral: key.degrees[i].numeral,
-  })).sort((a, b) => a.hue - b.hue);
+  if (palette) {
+    // Palette mode: N slots in sector order
+    const N = palette.slots.length;
+    container.style.gridTemplateColumns = `repeat(${N}, 1fr)`;
+    chromaBars = new Array(N);
+    for (let i = 0; i < N; i++) {
+      const h0 = palette.slotBoundaryHues[i];
+      const h1 = palette.slotBoundaryHues[i + 1] ?? palette.slotBoundaryHues[0];
+      const cell = document.createElement("div");
+      cell.className = "chroma__cell";
+      const bar = document.createElement("div");
+      bar.className = "chroma__bar";
+      bar.style.background = `linear-gradient(to right, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
+      cell.appendChild(bar);
+      const lbl = document.createElement("div");
+      lbl.className = "chroma__lbl";
+      lbl.textContent = palette.slots[i].chord.label;
+      cell.appendChild(lbl);
+      container.appendChild(cell);
+      chromaBars[i] = bar; // indexed by slot
+    }
+  } else {
+    // Key mode: 7 degree bars sorted by hue left→right
+    container.style.gridTemplateColumns = "repeat(7, 1fr)";
+    const sorted = Array.from({ length: 7 }, (_, i) => ({
+      degree: i,
+      hue: key.degreeToHue(i, 0.5),
+      h0: key.degreeToHue(i, 0),
+      h1: key.degreeToHue(i, 1),
+      numeral: key.degrees[i].numeral,
+    })).sort((a, b) => a.hue - b.hue);
 
-  chromaBars = new Array(7); // still indexed by degree for height updates
-  for (const { degree, h0, h1, numeral } of sorted) {
-    const cell = document.createElement("div");
-    cell.className = "chroma__cell";
-    const bar = document.createElement("div");
-    bar.className = "chroma__bar";
-    bar.style.background = `linear-gradient(to right, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
-    cell.appendChild(bar);
-    const lbl = document.createElement("div");
-    lbl.className = "chroma__lbl";
-    lbl.textContent = numeral;
-    cell.appendChild(lbl);
-    container.appendChild(cell);
-    chromaBars[degree] = bar; // keyed by degree so paintAudioReadout works
+    chromaBars = new Array(7);
+    for (const { degree, h0, h1, numeral } of sorted) {
+      const cell = document.createElement("div");
+      cell.className = "chroma__cell";
+      const bar = document.createElement("div");
+      bar.className = "chroma__bar";
+      bar.style.background = `linear-gradient(to right, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
+      cell.appendChild(bar);
+      const lbl = document.createElement("div");
+      lbl.className = "chroma__lbl";
+      lbl.textContent = numeral;
+      cell.appendChild(lbl);
+      container.appendChild(cell);
+      chromaBars[degree] = bar;
+    }
   }
 }
 
@@ -254,15 +307,21 @@ class RootHuePicker {
   _pick(e) {
     const rect = this._strip.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    this._key.setRootHueFromDisplay(x * 360);
+    const displayHue = x * 360;
+    // Phase 6: drive palette or key
+    if (palette) palette.setRootHue(toPerceptual(displayHue));
+    else this._key.setRootHueFromDisplay(displayHue);
     if (audioAnalyzer) audioAnalyzer.rebuildKeyTables();
-    if (audioRenderer) audioRenderer._staticDegreeHues = this._key.degreeHues;
+    if (audioRenderer && palette) audioRenderer.setN(palette.slots.length);
+    if (audioRenderer && !palette)
+      audioRenderer._staticDegreeHues = this._key.degreeHues;
     this._onRebuild();
     this._update();
   }
 
   _update() {
-    const p = this._key.rootHue;
+    // Track either palette.rootHue or key.rootHue for the strip marker.
+    const p = palette ? palette.rootHue : this._key.rootHue;
     const d = fromPerceptual(p);
     this._strip?.style.setProperty(
       "--rhp-pos",

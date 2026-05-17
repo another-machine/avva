@@ -206,17 +206,17 @@ export class AudioRendererGL {
     if (!gl) throw new Error("AudioRendererGL: WebGL2 is not available.");
     this._gl = gl;
 
-    // Phase 6: compile both the 7-degree diatonic program and a 12-degree
-    // chromatic placeholder.  Only the diatonic one runs at runtime.
-    this._prog7 = this._compile(makeFragSrc(7));
-    this._prog12 = this._compile(makeFragSrc(12)); // reserved for chromatic mode
+    // On-demand shader cache keyed by N (number of hue/slot sectors).
+    // N=7 compiled upfront; other values compiled lazily by setN().
+    this._progCache = new Map();
+    this._activeN = 7;
+    const p7 = this._compile(makeFragSrc(7));
+    const u7 = this._cacheUniforms(p7);
+    this._progCache.set(7, { prog: p7, u: u7 });
+    this._prog = p7;
+    this._u = u7;
 
-    // Active program and its cached uniform locations
-    this._prog = this._prog7;
-    this._u = this._cacheUniforms(this._prog7);
-    this._u12 = this._cacheUniforms(this._prog12); // reserved
-
-    // Linear-RGB buffer for degree colors (updated per-frame from degreeHues)
+    // Linear-RGB buffer for sector colors (updated per-frame from hues)
     this._degreeRGBBuf = new Float32Array(7 * 3);
     this._fillDegreeRGB(degreeHues);
 
@@ -241,6 +241,31 @@ export class AudioRendererGL {
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
+
+  /**
+   * Switch the active shader to one compiled for N hue sectors.
+   * Compiles a new program on the fly if this N hasn't been seen before.
+   * Also reallocates the RGB buffer to match.
+   * @param {number} n
+   */
+  setN(n) {
+    if (n === this._activeN) return;
+    this._activeN = n;
+    if (!this._progCache.has(n)) {
+      const prog = this._compile(makeFragSrc(n));
+      const u = this._cacheUniforms(prog);
+      this._progCache.set(n, { prog, u });
+    }
+    const entry = this._progCache.get(n);
+    this._prog = entry.prog;
+    this._u = entry.u;
+    this._degreeRGBBuf = new Float32Array(n * 3);
+    const gl = this._gl;
+    gl.useProgram(this._prog);
+    gl.uniform2f(this._u.uRes, this._w, this._h);
+    gl.uniform1f(this._u.uFeedback, this._feedbackVal);
+    gl.uniform1f(this._u.uNoiseScale, this._noiseScaleVal);
+  }
 
   /** Resize canvas backing store to CSS px × min(2, dpr). Re-allocates textures. */
   resize() {
@@ -279,14 +304,19 @@ export class AudioRendererGL {
 
     const t = (performance.now() - this._startT) / 1000;
 
-    // Update per-frame degree colors from sub-sector weighted hues if available
-    const degHues = frame.degreeHues ?? this._staticDegreeHues;
-    this._fillDegreeRGB(degHues);
+    // Switch shader if N has changed (e.g. palette with different slot count)
+    const N = frame.slots ? frame.slots.length : 7;
+    if (N !== this._activeN) this.setN(N);
+
+    // Update per-frame sector colors from slot/degree weighted hues if available
+    const hues = frame.slotHues ?? frame.degreeHues ?? this._staticDegreeHues;
+    this._fillDegreeRGB(hues);
 
     gl.useProgram(this._prog);
 
     gl.uniform1f(u.uTime, t);
-    gl.uniform1fv(u.uDegrees, frame.degrees);
+    const weights = frame.slots ?? frame.degrees;
+    gl.uniform1fv(u.uDegrees, weights);
     gl.uniform3fv(u.uDegreeRGB, this._degreeRGBBuf);
     gl.uniform1f(u.uBri, frame.bri);
     gl.uniform1f(u.uSpread, frame.spread);
@@ -452,8 +482,9 @@ export class AudioRendererGL {
    */
   _fillDegreeRGB(hues) {
     const buf = this._degreeRGBBuf;
-    for (let i = 0; i < 7; i++) {
-      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, hues[i]);
+    const n = this._activeN;
+    for (let i = 0; i < n; i++) {
+      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, hues[i] ?? 0);
       buf[i * 3] = r;
       buf[i * 3 + 1] = g;
       buf[i * 3 + 2] = b;

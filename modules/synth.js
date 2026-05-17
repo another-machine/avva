@@ -78,6 +78,7 @@ export class Synth {
     this._tremolo = null; // { lfo, depth }
     this._masterPanner = null; // final StereoPannerNode — driven by mx centroid
     this.key = null;
+    this.palette = null; // Palette instance when ?palette= is active
     this.running = false;
     this._prevRootFreq = 0; // mid-tier root freq, used for voice-leading the 5th
   }
@@ -219,6 +220,11 @@ export class Synth {
     this.running = false;
   }
 
+  /** Swap the Palette (or pass null to revert to Key mode). */
+  setPalette(p) {
+    this.palette = p;
+  }
+
   toggle() {
     if (this.running) this.stop();
     else this.start();
@@ -262,7 +268,7 @@ export class Synth {
     sy = 0.5,
     mass = 0,
   }) {
-    if (!this.running || !this.key) return;
+    if (!this.running || (!this.key && !this.palette)) return;
 
     // Clamp everything — a stray NaN crashes setTargetAtTime hard.
     const safeHue = Number.isFinite(hue) ? hue : 0;
@@ -288,11 +294,33 @@ export class Synth {
     // sx/sy are std-devs of normalised coords; typical tight blob ≈ 0.10, diffuse ≈ 0.35.
     const compactness = clamp01(1 - (sx + sy) * 3);
 
-    const note = this.key.hueToNote(safeHue);
-    // Sector-boundary crossfade: blendFactor 0 = sector centre, 0.5 = exact edge
-    const { blendDegree, blendFactor } = this.key.hueToBlend(safeHue, 0.25);
-    const note2 = blendFactor > 0.02 ? this.key.degrees[blendDegree] : null;
-    const bf2 = blendFactor * 2; // normalised 0→1 blend amount
+    // ── Source: Key or Palette chord data ───────────────────
+    let note, note2, bf2;
+    const baseOctave = this._cfg.octave ?? 4;
+    if (this.palette) {
+      const blend = this.palette.hueToBlend(safeHue);
+      const primarySlot = blend[0].slot;
+      const secEntry = blend.length > 1 ? blend[1] : null;
+      bf2 = secEntry ? secEntry.weight * 2 : 0;
+      note2 = secEntry ? secEntry.slot : null; // slot object (not a key-degree)
+      const pcs = primarySlot.chord.pitchClasses;
+      // Synthetic note-like object used by _maybePluck and sub-bass.
+      note = {
+        degree: 0,
+        _palettePrimary: primarySlot,
+        _paletteBf2: bf2,
+        triad: pcs.slice(0, 3).map((pc) => ({
+          freq: _pcToFreq(pc, baseOctave),
+          name: "",
+        })),
+      };
+    } else {
+      note = this.key.hueToNote(safeHue);
+      // Sector-boundary crossfade: blendFactor 0 = sector centre, 0.5 = exact edge
+      const { blendDegree, blendFactor } = this.key.hueToBlend(safeHue, 0.25);
+      note2 = blendFactor > 0.02 ? this.key.degrees[blendDegree] : null;
+      bf2 = blendFactor * 2; // normalised 0→1 blend amount
+    }
     const now = this._actx.currentTime;
     const tau = Math.max(0.001, this._glideTime(safeAct) / 3);
     // Pan / index / ratio glide more slowly than freq/gain — keeps the
@@ -343,24 +371,40 @@ export class Synth {
       const freqScale = Math.pow(2, octaveShift);
       const tierBase = Math.max(0, tierSignals[ti] * 0.25);
 
-      // Extension frequencies — diatonic 7th and 9th, octave-shifted above the 5th.
-      const d = note.degree;
-      const f5ref = note.triad[2].freq * freqScale;
-      let f7 = this.key.degrees[(d + 6) % 7].freq * freqScale;
-      let f9 = this.key.degrees[(d + 1) % 7].freq * freqScale;
-      while (f7 < f5ref && f7 > 0) f7 *= 2;
-      while (f9 <= f7 && f9 > 0) f9 *= 2;
-      const extFreqs = [f7, f9];
-      const extOk = [
-        Number.isFinite(f7) && f7 < 6000,
-        Number.isFinite(f9) && f9 < 8000,
-      ];
+      // Extension frequencies (key mode only — palette uses pitchClasses directly).
+      let extFreqs, extOk;
+      if (!this.palette) {
+        const d = note.degree;
+        const f5ref = note.triad[2].freq * freqScale;
+        let f7 = this.key.degrees[(d + 6) % 7].freq * freqScale;
+        let f9 = this.key.degrees[(d + 1) % 7].freq * freqScale;
+        while (f7 < f5ref && f7 > 0) f7 *= 2;
+        while (f9 <= f7 && f9 > 0) f9 *= 2;
+        extFreqs = [f7, f9];
+        extOk = [
+          Number.isFinite(f7) && f7 < 6000,
+          Number.isFinite(f9) && f9 < 8000,
+        ];
+      }
 
       voices.forEach(({ fm, panner, ratioBase }, vi) => {
         if (vi < 3) {
           // Triad voices: root (0), 3rd (1), 5th (2)
-          let targetFreq = note.triad[vi].freq * freqScale;
-          if (!Number.isFinite(targetFreq)) return;
+          let targetFreq;
+          if (this.palette) {
+            const pcs = note._palettePrimary.chord.pitchClasses;
+            if (vi >= pcs.length) {
+              fm.setGain(0, tau);
+              return;
+            }
+            targetFreq = _pcToFreq(pcs[vi], baseOctave + octaveShift);
+          } else {
+            targetFreq = note.triad[vi].freq * freqScale;
+          }
+          if (!Number.isFinite(targetFreq) || targetFreq <= 0) {
+            fm.setGain(0, tau);
+            return;
+          }
 
           // Mid-tier 5th: voice-lead by choosing the octave closest to where
           // the previous root sat. Keeps the 5th from leaping when chords change
@@ -377,7 +421,13 @@ export class Synth {
           }
 
           fm.glideTo(targetFreq, tau * VOICE_GLIDE_SPREAD[vi]);
-          fm.setGain(tierBase * voiceWeights[vi] * (1 - bf2), tau);
+          const triadGain = this.palette
+            ? tierBase *
+              voiceWeights[vi] *
+              (1 - bf2) *
+              (note._palettePrimary.gain ?? 1)
+            : tierBase * voiceWeights[vi] * (1 - bf2);
+          fm.setGain(triadGain, tau);
           fm.setIndex(tierIndex[ti], slowTau);
           const targetRatio = ratioBase + ratioDrift * VOICE_DRIFT_SIGN[vi];
           fm.setRatio(targetRatio, slowTau);
@@ -386,29 +436,70 @@ export class Synth {
         } else {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
-          if (note2 && bf2 > 0.04) {
-            // Crossfade zone: repurpose extension slots for secondary chord
-            // root (ei=0) and 5th (ei=1), fading in with the blend factor.
-            const secTriad = [0, 2]; // triad indices: root, 5th
-            const secFreq = note2.triad[secTriad[ei]].freq * freqScale;
-            if (Number.isFinite(secFreq) && secFreq > 0 && secFreq < 8000) {
-              fm.glideTo(secFreq, tau * VOICE_GLIDE_SPREAD[vi]);
-              fm.setGain(tierBase * voiceWeights[secTriad[ei]] * bf2, tau);
-              fm.setIndex(tierIndex[ti] * 0.65, slowTau);
-              fm.setRatio(ratioBase, slowTau);
+          if (this.palette) {
+            // Palette extension path
+            const pcs = note._palettePrimary.chord.pitchClasses;
+            const secSlot = note2; // slot object or null
+            let handled = false;
+            if (secSlot && bf2 > 0.04) {
+              const secPCs = secSlot.chord.pitchClasses;
+              const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
+              if (si < secPCs.length) {
+                const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
+                fm.glideTo(sf, tau * VOICE_GLIDE_SPREAD[vi]);
+                fm.setGain(
+                  tierBase *
+                    voiceWeights[[0, 2][ei]] *
+                    bf2 *
+                    (secSlot.gain ?? 1),
+                  tau,
+                );
+                fm.setIndex(tierIndex[ti] * 0.65, slowTau);
+                fm.setRatio(ratioBase, slowTau);
+                handled = true;
+              }
+            }
+            if (!handled) {
+              const xi = 3 + ei;
+              if (xi < pcs.length) {
+                const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
+                fm.glideTo(ef, tau * VOICE_GLIDE_SPREAD[vi]);
+                fm.setGain(
+                  tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
+                  tau,
+                );
+                fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), slowTau);
+                fm.setRatio(ratioBase, slowTau);
+                handled = true;
+              }
+            }
+            if (!handled) fm.setGain(0, tau);
+          } else {
+            // Key mode extension path
+            if (note2 && bf2 > 0.04) {
+              // Crossfade zone: repurpose extension slots for secondary chord
+              // root (ei=0) and 5th (ei=1), fading in with the blend factor.
+              const secTriad = [0, 2]; // triad indices: root, 5th
+              const secFreq = note2.triad[secTriad[ei]].freq * freqScale;
+              if (Number.isFinite(secFreq) && secFreq > 0 && secFreq < 8000) {
+                fm.glideTo(secFreq, tau * VOICE_GLIDE_SPREAD[vi]);
+                fm.setGain(tierBase * voiceWeights[secTriad[ei]] * bf2, tau);
+                fm.setIndex(tierIndex[ti] * 0.65, slowTau);
+                fm.setRatio(ratioBase, slowTau);
+              } else {
+                fm.setGain(0, tau);
+              }
+            } else if (extOk[ei]) {
+              fm.glideTo(extFreqs[ei], tau * VOICE_GLIDE_SPREAD[vi]);
+              fm.setGain(
+                tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
+                tau,
+              );
+              fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), slowTau);
+              fm.setRatio(ratioBase, slowTau); // no drift on extensions
             } else {
               fm.setGain(0, tau);
             }
-          } else if (extOk[ei]) {
-            fm.glideTo(extFreqs[ei], tau * VOICE_GLIDE_SPREAD[vi]);
-            fm.setGain(
-              tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
-              tau,
-            );
-            fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), slowTau);
-            fm.setRatio(ratioBase, slowTau); // no drift on extensions
-          } else {
-            fm.setGain(0, tau);
           }
           const extPan = TIER_BASE_PAN_EXT[ti][ei] * widthScale;
           this._panTo(panner.pan, extPan, slowTau, now);
@@ -417,7 +508,9 @@ export class Synth {
     });
 
     // Store mid-tier root for voice-leading on the next frame.
-    this._prevRootFreq = note.triad[0].freq; // freqScale=1 for mid tier
+    this._prevRootFreq = this.palette
+      ? _pcToFreq(note._palettePrimary.chord.pitchClasses[0], baseOctave)
+      : note.triad[0].freq; // freqScale=1 for mid tier
 
     this._maybePluck(
       note,
@@ -447,7 +540,9 @@ export class Synth {
     this._tremolo.lfo.frequency.setTargetAtTime(5 + rawAct * 4, now, slowTau);
 
     // === Sub-bass: root − 2 octaves, driven by lo (bottom brightness) ===
-    const subFreq = this.key.degrees[note.degree].freq / 4;
+    const subFreq = this.palette
+      ? _pcToFreq(note._palettePrimary.chord.pitchClasses[0], baseOctave - 2)
+      : this.key.degrees[note.degree].freq / 4;
     if (Number.isFinite(subFreq) && subFreq > 0) {
       this._cancelParam(this._sub.osc.frequency, now);
       this._sub.osc.frequency.setTargetAtTime(subFreq, now, tau);
@@ -488,45 +583,52 @@ export class Synth {
     const trigProb = Math.max(quickness * 0.4, slowness * 0.2, vMag * 0.5);
     if (Math.random() > trigProb) return;
 
-    // Note pick: degrees ordered by consonance from root (root→5th→3rd→7th→6th→4th→2nd).
-    // Triad tones first, then extensions, then suspensions, then the dissonant 2nd last.
-    // spread gates how many are reachable: monochromatic → root only; full spectrum → all 7.
-    const d = note.degree;
-    const CONSONANCE_STEPS = [0, 4, 2, 6, 5, 3, 1];
-    const orderedDegrees = CONSONANCE_STEPS.map((s) => (d + s) % 7);
-    const nUnlocked = Math.round(1 + spread * 6); // 1 at spread=0, 7 at spread=1
-    const chosen = orderedDegrees[Math.floor(Math.random() * nUnlocked)];
-
-    // Snap to nearest integer octave so the pluck is always in tune.
-    // slowness 0–0.25 → +1 oct, 0.25–0.75 → same oct, 0.75–1 → −1 oct.
-    const octShift = Math.round(1 - slowness * 2);
-    const fc = this.key.degrees[chosen].freq * Math.pow(2, octShift);
-    if (!Number.isFinite(fc) || fc <= 0) return;
-
-    // Activity-driven spatial vs. prominent character.
-    // quickness=0 (still scene) → spacious, distant, wide, lingering.
-    // quickness=1 (busy scene) → tight, punchy, centred, short.
+    // Shared timbral parameters — computed before note selection so both
+    // palette and key paths can reference them.
     const spacious = 1 - quickness;
-
-    // Amplitude: soft when spacious, present when active.
     const peak = 0.04 + quickness * 0.13 + slowness * 0.03;
-
-    // Attack: slow diffuse onset when spacious; sharp transient when active.
     const attackTau = 0.014 - quickness * 0.011; // 0.014 → 0.003
-
-    // Decay: long and lingering when spacious; tight when active.
     const baseDecay = 0.06 + slowness * 0.4;
     const ampDecayTau =
       baseDecay * (1 + spacious * 1.8) +
       Math.random() * (0.05 + slowness * 0.12);
-
-    // FM: more harmonic colour on the attack when active.
-    // Tight blob (high compactness) → full brightness; diffuse wash → softer ping.
     const indexPeak =
       (0.3 + quickness * 0.7 + edge * 0.6) *
       (1 - slowness * 0.3) *
       (0.5 + compactness * 0.5);
     const modDecayTau = ampDecayTau * (0.04 + slowness * 0.14);
+
+    // Note frequency + pan pick — branched by key vs. palette.
+    let fc, pluckPan;
+    if (this.palette) {
+      // Palette mode: pick from the primary slot's pitch classes.
+      // spread gates how many are reachable: monochromatic → root only; full → all.
+      const pcs = note._palettePrimary.chord.pitchClasses;
+      const nUnlocked = Math.max(1, Math.round(1 + spread * (pcs.length - 1)));
+      const chosenIdx = Math.floor(Math.random() * nUnlocked);
+      const baseOct = this._cfg.octave ?? 4;
+      const octShift = Math.round(1 - slowness * 2);
+      fc = _pcToFreq(pcs[chosenIdx], baseOct + octShift);
+      const pcFrac = pcs.length > 1 ? chosenIdx / (pcs.length - 1) : 0.5;
+      pluckPan =
+        (pcFrac - 0.5) * 2 * widthScale * (0.35 + spacious * 1.1) +
+        (mx - 0.5) * 0.8;
+    } else {
+      // Key mode: degrees ordered by consonance from root.
+      // root→5th→3rd→7th→6th→4th→2nd. spread gates reachable range.
+      const d = note.degree;
+      const CONSONANCE_STEPS = [0, 4, 2, 6, 5, 3, 1];
+      const orderedDegrees = CONSONANCE_STEPS.map((s) => (d + s) % 7);
+      const nUnlocked = Math.round(1 + spread * 6); // 1 at spread=0, 7 at spread=1
+      const chosen = orderedDegrees[Math.floor(Math.random() * nUnlocked)];
+      const octShift = Math.round(1 - slowness * 2);
+      fc = this.key.degrees[chosen].freq * Math.pow(2, octShift);
+      const degPan = (chosen / 6 - 0.5) * 2; // −1..+1 from scale degree position
+      pluckPan =
+        degPan * widthScale * (0.35 + spacious * 1.1) + (mx - 0.5) * 0.8;
+    }
+
+    if (!Number.isFinite(fc) || fc <= 0) return;
 
     pluck.fm.pluck(fc, {
       peak,
@@ -536,13 +638,12 @@ export class Synth {
       attackTau,
     });
 
-    // Pan: wide and spatial when quiet; centred and present when active.
-    // mx centroid pulls the pluck toward the horizontal position of the moving thing.
-    const degPan = (chosen / 6 - 0.5) * 2; // −1..+1 from scale degree position
-    const mxBias = (mx - 0.5) * 0.8; // ±0.4 pull toward weighted centroid
-    const panMult = 0.35 + spacious * 1.1; // 0.35 (tight) → 1.45 (wide)
-    const pluckPan = degPan * widthScale * panMult + mxBias;
-    this._panTo(pluck.panner.pan, pluckPan, 0.04, now);
+    this._panTo(
+      pluck.panner.pan,
+      Math.max(-1, Math.min(1, pluckPan)),
+      0.04,
+      now,
+    );
 
     // Cooldown: rare, widely-spaced plucks when still; busier when active.
     pluck.nextAllowed = now + 0.06 + spacious * 0.5 + slowness * 0.25;
@@ -587,4 +688,12 @@ export class Synth {
 
 function clamp01(x) {
   return Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0;
+}
+
+/**
+ * Equal-tempered frequency for pitch class `pc` (0=C, 9=A, ...) at `octave`.
+ * A4 (pc=9, oct=4) = 440 Hz.
+ */
+function _pcToFreq(pc, octave) {
+  return 440 * Math.pow(2, (pc - 9 + (octave - 4) * 12) / 12);
 }

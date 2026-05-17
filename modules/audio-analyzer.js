@@ -110,9 +110,12 @@ export class AudioAnalyzer {
    * @param {number}       [params.opts.octaveLow=2]
    * @param {number}       [params.opts.octaveHigh=6]
    */
-  constructor({ audioContext, key, opts = {} }) {
+  constructor({ audioContext, key, palette = null, opts = {} }) {
     this._actx = audioContext;
     this.key = key ?? new Key();
+    this.palette = palette;
+    this._paletteUnsubscribe = null;
+    this._slotsOut = palette ? new Float32Array(palette.slots.length) : null;
 
     this.analyser = audioContext.createAnalyser();
     this.analyser.fftSize = opts.fftSize ?? 32768;
@@ -212,6 +215,26 @@ export class AudioAnalyzer {
   setKey(key) {
     this.key = key;
     this._rebuildKeyTables();
+  }
+
+  /** Swap the palette (or pass null to revert to Key mode). */
+  setPalette(p) {
+    if (this._paletteUnsubscribe) {
+      this._paletteUnsubscribe();
+      this._paletteUnsubscribe = null;
+    }
+    this.palette = p;
+    if (p) {
+      this._slotsOut = new Float32Array(p.slots.length);
+      this._paletteUnsubscribe = p.onChange(() => {
+        const newN = p.slots.length;
+        if (!this._slotsOut || this._slotsOut.length !== newN) {
+          this._slotsOut = new Float32Array(newN);
+        }
+      });
+    } else {
+      this._slotsOut = null;
+    }
   }
 
   /** Rebuild key-dependent lookup tables (call after changing key or rootHue). */
@@ -394,21 +417,46 @@ export class AudioAnalyzer {
     const sat = s0 + s1 + s2;
 
     // ── Chord template lookup ──────────────────────────────────
-    let best = CHORD_TEMPLATES[0];
-    let bestScore = -1;
-    for (const t of CHORD_TEMPLATES) {
-      let s = 0;
-      for (let c = 0; c < 12; c++) s += t.vec[c] * chroma[c];
-      s /= t.norm;
-      if (s > bestScore) {
-        bestScore = s;
-        best = t;
+    let best, bestScore;
+    if (this.palette) {
+      // Palette mode: match against N slot templates and populate slotsOut
+      const slotsOut = this._slotsOut;
+      const templates = this.palette.chordTemplates;
+      const M = templates.length;
+      best = templates[0];
+      bestScore = -1;
+      for (let i = 0; i < M; i++) {
+        const t = templates[i];
+        let s = 0;
+        for (let c = 0; c < 12; c++) s += t.vec[c] * chroma[c];
+        s /= t.norm;
+        slotsOut[i] = Math.max(0, s);
+        if (s > bestScore) {
+          bestScore = s;
+          best = t;
+        }
+      }
+    } else {
+      // Key mode: match against full 84-chord CHORD_TEMPLATES bank
+      best = CHORD_TEMPLATES[0];
+      bestScore = -1;
+      for (const t of CHORD_TEMPLATES) {
+        let s = 0;
+        for (let c = 0; c < 12; c++) s += t.vec[c] * chroma[c];
+        s /= t.norm;
+        if (s > bestScore) {
+          bestScore = s;
+          best = t;
+        }
       }
     }
-    // Sticky: prefer the previous chord if it's within 90% of best
+    // Sticky: prefer the previous chord if it’s within 90% of best
+    const searchBank = this.palette
+      ? this.palette.chordTemplates
+      : CHORD_TEMPLATES;
     let pick = best;
     if (this._prevChordKey) {
-      const prev = CHORD_TEMPLATES.find((t) => t.key === this._prevChordKey);
+      const prev = searchBank.find((t) => t.key === this._prevChordKey);
       if (prev) {
         let s = 0;
         for (let c = 0; c < 12; c++) s += prev.vec[c] * chroma[c];
@@ -420,6 +468,14 @@ export class AudioAnalyzer {
     this._prevChordKey = pick.key;
 
     // ── Assemble output ────────────────────────────────────────
+    // Palette mode: populate slots/slotHues for renderer + synth
+    if (this.palette) {
+      this._out.slots = this._slotsOut;
+      this._out.slotHues = this.palette.slotHues;
+    } else {
+      this._out.slots = undefined;
+      this._out.slotHues = undefined;
+    }
     this._out.bands.lo = lo;
     this._out.bands.mid = mid;
     this._out.bands.hi = hi;
