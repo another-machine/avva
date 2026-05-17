@@ -224,13 +224,28 @@ function buildChromaReadout() {
   container.innerHTML = ""; // clear before rebuilding
 
   if (palette) {
-    // Palette mode: N slots in sector order
+    // Palette mode: N slots sorted by center display hue (same as key mode)
+    // so bars always form a left→right rainbow regardless of rootHue.
     const N = palette.slots.length;
     container.style.gridTemplateColumns = `repeat(${N}, 1fr)`;
     chromaBars = new Array(N);
-    for (let i = 0; i < N; i++) {
-      const h0 = palette.slotBoundaryHues[i];
-      const h1 = palette.slotBoundaryHues[i + 1] ?? palette.slotBoundaryHues[0];
+
+    const sorted = palette.slots
+      .map((slot, i) => {
+        let h0 = palette.slotBoundaryHues[i];
+        let h1 = palette.slotBoundaryHues[i + 1] ?? palette.slotBoundaryHues[0];
+        if (h1 <= h0) h1 += 360; // forward wrap
+        return {
+          slotIdx: i,
+          centerHue: palette.slotHues[i],
+          h0,
+          h1,
+          label: slot.chord.label,
+        };
+      })
+      .sort((a, b) => a.centerHue - b.centerHue);
+
+    for (const { slotIdx, h0, h1, label } of sorted) {
       const cell = document.createElement("div");
       cell.className = "chroma__cell";
       const bar = document.createElement("div");
@@ -239,10 +254,10 @@ function buildChromaReadout() {
       cell.appendChild(bar);
       const lbl = document.createElement("div");
       lbl.className = "chroma__lbl";
-      lbl.textContent = palette.slots[i].chord.label;
+      lbl.textContent = label;
       cell.appendChild(lbl);
       container.appendChild(cell);
-      chromaBars[i] = bar; // indexed by slot
+      chromaBars[slotIdx] = bar; // keep indexed by slot so paintAudioReadout works
     }
   } else {
     // Key mode: 7 degree bars sorted by hue left→right
