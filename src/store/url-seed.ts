@@ -39,7 +39,7 @@ const ALIAS: Record<string, SchemaKey> = {
   fmStereoWidth: "synth.fmStereoWidth",
   fmPluckRatio: "synth.fmPluckRatio",
   feedback: "audio.feedback",
-  noiseScale: "audio.noiseScale",
+  blobWarp: "audio.blobWarp",
   preferCamera: "source.preferCamera",
 };
 
@@ -60,7 +60,11 @@ export function seedFromQuery(): void {
 
   if (params.has("palette")) {
     store.set("harmony.mode", "palette", "url");
-    store.set("harmony.palette", decodeURIComponent(params.get("palette")!), "url");
+    store.set(
+      "harmony.palette",
+      decodeURIComponent(params.get("palette")!),
+      "url",
+    );
   }
 
   for (const [raw, key] of Object.entries(ALIAS)) {

@@ -40,14 +40,17 @@ export interface LegacyConfig {
   fmStereoWidth: number;
   fmPluckRatio: number;
 
-  carrierType: OscillatorType;
+  carrierTypeBass: OscillatorType;
+  carrierTypeMid: OscillatorType;
+  carrierTypeTreble: OscillatorType;
+  carrierTypePluck: OscillatorType;
   glideSpread: number;
   octaveOffsetBass: number;
   octaveOffsetMid: number;
   octaveOffsetTreble: number;
 
   feedback: number;
-  noiseScale: number;
+  blobWarp: number;
 
   palette: string | null;
   crossZone: number;
@@ -137,8 +140,17 @@ export const legacyConfig: LegacyConfig = {
     return store.get("synth.fmPluckRatio");
   },
 
-  get carrierType() {
-    return store.get("synth.carrierType") as OscillatorType;
+  get carrierTypeBass() {
+    return store.get("synth.carrierTypeBass") as OscillatorType;
+  },
+  get carrierTypeMid() {
+    return store.get("synth.carrierTypeMid") as OscillatorType;
+  },
+  get carrierTypeTreble() {
+    return store.get("synth.carrierTypeTreble") as OscillatorType;
+  },
+  get carrierTypePluck() {
+    return store.get("synth.carrierTypePluck") as OscillatorType;
   },
   get glideSpread() {
     return store.get("synth.glideSpread");
@@ -156,8 +168,8 @@ export const legacyConfig: LegacyConfig = {
   get feedback() {
     return store.get("audio.feedback");
   },
-  get noiseScale() {
-    return store.get("audio.noiseScale");
+  get blobWarp() {
+    return store.get("audio.blobWarp");
   },
 
   get palette() {

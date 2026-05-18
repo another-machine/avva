@@ -110,7 +110,7 @@ async function begin(): Promise<void> {
 
   audioRenderer = new AudioRendererGL(audioCanvas, key.degreeHues, {
     feedback: CONFIG.feedback,
-    noiseScale: CONFIG.noiseScale,
+    noiseScale: CONFIG.blobWarp,
   });
   if (palette) audioRenderer.setN(palette.slots.length);
 
@@ -167,8 +167,23 @@ async function begin(): Promise<void> {
   store.subscribeKey("audio.feedback", (v) => {
     audioRenderer?.setFeedback(v);
   });
-  store.subscribeKey("audio.noiseScale", (v) => {
-    audioRenderer?.setNoiseScale(v);
+  store.subscribeKey("audio.blobWarp", (v) => {
+    audioRenderer?.setBlobWarp(v);
+  });
+  store.subscribeKey("audio.blobSpeed", (v) => {
+    audioRenderer?.setBlobSpeed(v);
+  });
+  store.subscribeKey("audio.blobDrive", (v) => {
+    audioRenderer?.setBlobDrive(v);
+  });
+  store.subscribeKey("audio.shiftSpeed", (v) => {
+    audioRenderer?.setShiftSpeed(v);
+  });
+  store.subscribeKey("audio.blobSize", (v) => {
+    audioRenderer?.setBlobSize(v);
+  });
+  store.subscribeKey("audio.blobSharp", (v) => {
+    audioRenderer?.setBlobSharp(v);
   });
   store.subscribeKey("source.playbackRate", (v) => {
     videoEl.playbackRate = v;

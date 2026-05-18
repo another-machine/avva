@@ -71,7 +71,13 @@ uniform float uBandLo;
 uniform float uBandHi;
 uniform float uPulse;
 uniform float uFeedback;
-uniform float uNoiseScale;
+uniform float uBlobWarp;
+uniform float uBlobSpeed;
+uniform float uBlobDrive;
+uniform float uBlobSize;
+uniform float uBlobSharp;
+uniform float uShiftSpeed;
+uniform vec3  uDegreeRGB2[N_HUES];
 uniform sampler2D uPrev;
 
 vec2 _h2(vec2 p) {
@@ -95,63 +101,96 @@ float snoiseN(vec2 p) { return snoise(p) * 0.5 + 0.5; }
 void main() {
   vec2 uv = vUV;
 
-  float maxPresence = 0.0;
-  vec3  blendColor  = vec3(0.0);
-  float blendWeight = 0.0;
+  // Correct for aspect ratio so blobs are round not oval
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
 
-  // Activity-scaled noise scroll speed — faster/more chaotic with movement
-  float nSpeed = 0.12 + uAct * 0.45;
+  // Activity speeds everything up
+  float tSpeed = 1.0 + uAct * 1.2;
+  float t = uTime * tSpeed;
+
+  // Organic edge warp — small noise displacement before distance test
+  float warpAmt = 0.022 + uAct * 0.014;
+  vec2 uvW = uvA + vec2(
+    snoise(uv * 2.8 + vec2(t * 0.09, 0.0)),
+    snoise(uv * 2.8 + vec2(0.0, t * 0.09 + 5.7))
+  ) * warpAmt;
+
+  // ── Metaball accumulation ────────────────────────────────────────────────
+  // Each active degree drives 2 blobs on independent Lissajous paths.
+  // Field = Σ presence * (r² / d²); threshold crossing = inside a blob.
+  float totalField = 0.0;
+  vec3  totalColor = vec3(0.0);
 
   for (int i = 0; i < N_HUES; i++) {
-    float fi = float(i);
-    // Each degree scrolls in a unique direction; speed scales with activity
-    vec2  noiseUV = uv * uNoiseScale
-                  + vec2(fi * 17.3 + uTime * (nSpeed * 0.55 + fi * 0.013),
-                         fi * 31.7 + uTime * (nSpeed         + fi * 0.009));
-    float n        = snoiseN(noiseUV);
-    float presence = uDegrees[i] * n;
-    if (presence > maxPresence) maxPresence = presence;
-    blendColor  += uDegreeRGB[i] * presence;
-    blendWeight += presence;
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+
+    float fi   = float(i);
+    float seed = fi * 1.618;
+    float r    = (0.20 + presence * 0.10) * aspect; // scale r with aspect
+
+    // Blob A — primary, slow Lissajous + secondary wobble
+    vec2 cA = vec2(
+      0.5 * aspect + 0.36 * aspect * sin(t * (0.088 + fi * 0.019) + seed)
+                   + 0.07 * aspect * sin(t * (0.23  + fi * 0.041) + seed + 2.4),
+      0.5           + 0.36 * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
+                   + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1)
+    );
+
+    // Blob B — secondary, offset phase so they separate and merge
+    vec2 cB = vec2(
+      0.5 * aspect + 0.30 * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
+                   + 0.06 * aspect * sin(t * (0.31  + fi * 0.017) + seed + 0.8),
+      0.5           + 0.30 * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
+                   + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0)
+    );
+
+    float rB = r * 0.72;
+    vec2 dA  = uvW - cA;
+    vec2 dB  = uvW - cB;
+    float fA = (r  * r ) / (dot(dA, dA) + 0.0001);
+    float fB = (rB * rB) / (dot(dB, dB) + 0.0001);
+
+    float contrib = (fA + fB) * presence;
+    totalField   += contrib;
+    totalColor   += uDegreeRGB[i] * contrib;
   }
 
-  // Feedback drift — also slightly activity-responsive
-  float driftAmt = 0.00125 + uAct * 0.002;
+  vec3  blobColor = totalField > 0.001 ? totalColor / totalField : vec3(0.0);
+  // Soft isosurface: uBlobSharp controls edge width (higher = softer/glowier)
+  float newAmount = smoothstep(1.2 - uBlobSharp, 1.2 + uBlobSharp, totalField);
+
+  // ── Feedback (ping-pong) ─────────────────────────────────────────────────
+  float driftAmt = 0.0015 + uAct * 0.002;
   vec2 driftUV = uv + vec2(
-    snoise(uv * 4.0 + vec2(uTime * 0.07,        0.0)),
-    snoise(uv * 4.0 + vec2(uTime * 0.07 + 100.0, 0.0))
+    snoise(uv * 4.0 + vec2(uTime * 0.06, 0.0)),
+    snoise(uv * 4.0 + vec2(uTime * 0.06 + 100.0, 0.0))
   ) * driftAmt;
-  driftUV = clamp(driftUV, 0.0, 1.0);
-  vec4 prev = texture(uPrev, driftUV);
+  vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
 
-  vec3  newColor  = blendWeight > 0.001 ? blendColor / blendWeight : vec3(0.0);
-  float newAmount = clamp(maxPresence * 2.0, 0.0, 1.0);
-  vec3  base      = mix(prev.rgb * uFeedback, newColor, newAmount);
+  vec3 base = mix(prev.rgb * uFeedback, blobColor, newAmount);
 
+  // ── Brightness ───────────────────────────────────────────────────────────
   float bScale = uBri * 5.0;
-  float bFloor = newAmount * 0.55;
-  base *= clamp(max(bScale, bFloor), 0.0, 1.0);
+  base *= clamp(max(bScale, newAmount * 0.55), 0.0, 1.0);
+  float briOver = max(0.0, bScale - 1.0);
+  base += mix(vec3(1.0), blobColor, 0.5) * briOver * 0.4;
 
-  // Brightness overflow: tint toward current chord color rather than pure white
-  float briOver   = max(0.0, bScale - 1.0);
-  vec3  briTint   = blendWeight > 0.001 ? blendColor / blendWeight : vec3(1.0);
-  base += mix(vec3(1.0), briTint, 0.45) * briOver * 0.4;
+  // ── Band flashes ─────────────────────────────────────────────────────────
+  base += vec3(smoothstep(0.0, 0.33, 1.0 - uv.y) * uBandHi * 0.6
+             + smoothstep(0.0, 0.33, uv.y)       * uBandLo * 0.6);
 
-  float topBand    = smoothstep(0.0, 0.33, 1.0 - uv.y) * uBandHi * 0.6;
-  float bottomBand = smoothstep(0.0, 0.33, uv.y)       * uBandLo * 0.6;
-  base += vec3(topBand + bottomBand);
-
-  // Fragment flash on chord change — scattered patches of the current chord
-  // color instead of a flat white overlay
-  vec3  flashColor = blendWeight > 0.001 ? blendColor / blendWeight : vec3(1.0);
-  float flashFrag  = snoiseN(uv * 9.0  + vec2(uTime * 20.0,  0.0))
-                   * snoiseN(uv * 3.5  + vec2(0.0, uTime * 13.0));
+  // ── Chord-change pulse: fragmented color burst ───────────────────────────
+  vec3  flashColor = totalField > 0.001 ? totalColor / totalField : vec3(1.0);
+  float flashFrag  = snoiseN(uv * 9.0 + vec2(uTime * 20.0, 0.0))
+                   * snoiseN(uv * 3.5 + vec2(0.0, uTime * 13.0));
   base += flashColor * uPulse * flashFrag * 0.65;
-  base += vec3(uPulse * 0.035); // faint residual white pop
+  base += vec3(uPulse * 0.035);
 
-  float grain    = snoise(uv * uRes / 2.5 + vec2(uTime * 8.0));
-  float grainAmt = 0.04 + uAct * 0.06;
-  base          += vec3(grain * grainAmt);
+  // ── Film grain ───────────────────────────────────────────────────────────
+  base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
+        * (0.03 + uAct * 0.045);
 
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
@@ -182,7 +221,12 @@ export class AudioRendererGL {
   private readonly _chromaticHues: Float32Array | null;
   private readonly _mode: string;
   private _feedbackVal: number;
-  private _noiseScaleVal: number;
+  private _blobWarpVal: number;
+  private _blobSpeedVal = 1.0;
+  private _blobDriveVal = 1.2;
+  private _blobSizeVal = 0.2;
+  private _blobSharpVal = 0.4;
+  private _shiftSpeedVal = 1.5;
   private readonly _gl: WebGL2RenderingContext;
   private readonly _progCache: Map<
     number,
@@ -194,6 +238,7 @@ export class AudioRendererGL {
   private _prog: WebGLProgram;
   private _u: UniformMap;
   private _degreeRGBBuf: Float32Array;
+  private _degreeRGB2Buf: Float32Array;
   private _pulse = 0;
   private readonly _startT: number;
   private _w = 0;
@@ -211,7 +256,7 @@ export class AudioRendererGL {
     this._chromaticHues = opts.chromaticHues ?? null;
     this._mode = opts.mode ?? "diatonic";
     this._feedbackVal = opts.feedback ?? 0.92;
-    this._noiseScaleVal = opts.noiseScale ?? 2.5;
+    this._blobWarpVal = opts.noiseScale ?? 0.022;
 
     const gl = canvas.getContext("webgl2", {
       antialias: false,
@@ -230,6 +275,7 @@ export class AudioRendererGL {
     this._u = u7;
 
     this._degreeRGBBuf = new Float32Array(7 * 3);
+    this._degreeRGB2Buf = new Float32Array(7 * 3);
     this._fillDegreeRGB(degreeHues);
 
     this._vao = gl.createVertexArray()!;
@@ -237,7 +283,12 @@ export class AudioRendererGL {
 
     gl.useProgram(this._prog);
     gl.uniform1f(this._u.uFeedback, this._feedbackVal);
-    gl.uniform1f(this._u.uNoiseScale, this._noiseScaleVal);
+    gl.uniform1f(this._u.uBlobWarp, this._blobWarpVal);
+    gl.uniform1f(this._u.uBlobSpeed, this._blobSpeedVal);
+    gl.uniform1f(this._u.uBlobDrive, this._blobDriveVal);
+    gl.uniform1f(this._u.uBlobSize, this._blobSizeVal);
+    gl.uniform1f(this._u.uBlobSharp, this._blobSharpVal);
+    gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
 
     this._startT = performance.now();
     this.resize();
@@ -256,13 +307,30 @@ export class AudioRendererGL {
     gl.useProgram(this._prog);
   }
 
-  /** Update the noise spatial scale on all cached programs. */
-  setNoiseScale(v: number): void {
-    this._noiseScaleVal = v;
+  setBlobWarp(v: number): void {
+    this._setAll("uBlobWarp", (this._blobWarpVal = v));
+  }
+  setBlobSpeed(v: number): void {
+    this._setAll("uBlobSpeed", (this._blobSpeedVal = v));
+  }
+  setBlobDrive(v: number): void {
+    this._setAll("uBlobDrive", (this._blobDriveVal = v));
+  }
+  setBlobSize(v: number): void {
+    this._setAll("uBlobSize", (this._blobSizeVal = v));
+  }
+  setBlobSharp(v: number): void {
+    this._setAll("uBlobSharp", (this._blobSharpVal = v));
+  }
+  setShiftSpeed(v: number): void {
+    this._setAll("uShiftSpeed", (this._shiftSpeedVal = v));
+  }
+
+  private _setAll(name: string, v: number): void {
     const gl = this._gl;
     for (const [, entry] of this._progCache) {
       gl.useProgram(entry.prog);
-      gl.uniform1f(entry.u.uNoiseScale, v);
+      gl.uniform1f(entry.u[name], v);
     }
     gl.useProgram(this._prog);
   }
@@ -283,11 +351,17 @@ export class AudioRendererGL {
     this._prog = entry.prog;
     this._u = entry.u;
     this._degreeRGBBuf = new Float32Array(n * 3);
+    this._degreeRGB2Buf = new Float32Array(n * 3);
     const gl = this._gl;
     gl.useProgram(this._prog);
     gl.uniform2f(this._u.uRes, this._w, this._h);
     gl.uniform1f(this._u.uFeedback, this._feedbackVal);
-    gl.uniform1f(this._u.uNoiseScale, this._noiseScaleVal);
+    gl.uniform1f(this._u.uBlobWarp, this._blobWarpVal);
+    gl.uniform1f(this._u.uBlobSpeed, this._blobSpeedVal);
+    gl.uniform1f(this._u.uBlobDrive, this._blobDriveVal);
+    gl.uniform1f(this._u.uBlobSize, this._blobSizeVal);
+    gl.uniform1f(this._u.uBlobSharp, this._blobSharpVal);
+    gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
   }
 
   /** Resize canvas backing store to CSS px × min(2, dpr). Re-allocates textures. */
@@ -342,6 +416,7 @@ export class AudioRendererGL {
     const weights = frame.slots ?? frame.degrees!;
     gl.uniform1fv(u.uDegrees, weights);
     gl.uniform3fv(u.uDegreeRGB, this._degreeRGBBuf);
+    gl.uniform3fv(u.uDegreeRGB2, this._degreeRGB2Buf);
     gl.uniform1f(u.uBri, frame.bri);
     gl.uniform1f(u.uSpread, frame.spread);
     gl.uniform1f(u.uAct, frame.act);
@@ -426,7 +501,13 @@ export class AudioRendererGL {
       "uBandHi",
       "uPulse",
       "uFeedback",
-      "uNoiseScale",
+      "uBlobWarp",
+      "uBlobSpeed",
+      "uBlobDrive",
+      "uBlobSize",
+      "uBlobSharp",
+      "uShiftSpeed",
+      "uDegreeRGB2",
       "uPrev",
     ];
     const locs: UniformMap = {};
@@ -484,12 +565,19 @@ export class AudioRendererGL {
   /** (Re-)compute _degreeRGBBuf from hues using oklch(0.65, 0.32, H). */
   private _fillDegreeRGB(hues: Float32Array): void {
     const buf = this._degreeRGBBuf;
+    const buf2 = this._degreeRGB2Buf;
     const n = this._activeN;
+    const step = 360 / n; // sector width — edge hue offset
     for (let i = 0; i < n; i++) {
-      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, hues[i] ?? 0);
+      const h = hues[i] ?? 0;
+      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, h);
+      const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, h + step * 0.55);
       buf[i * 3] = r;
       buf[i * 3 + 1] = g;
       buf[i * 3 + 2] = b;
+      buf2[i * 3] = r2;
+      buf2[i * 3 + 1] = g2;
+      buf2[i * 3 + 2] = b2;
     }
   }
 }

@@ -197,6 +197,11 @@ body {
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.018);
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.group__header:hover h2 {
+  color: var(--text);
 }
 
 .group__header h2 {
@@ -205,6 +210,27 @@ body {
   letter-spacing: 0.16em;
   color: var(--text-dim);
   flex: 1;
+}
+
+.group__chevron::after {
+  content: "▾";
+  font-size: 10px;
+  color: var(--text-muted);
+  display: inline-block;
+  transition: transform 0.18s ease;
+}
+.group.collapsed .group__chevron::after {
+  transform: rotate(-90deg);
+}
+
+.group__body {
+  overflow: hidden;
+}
+.group.collapsed .group__chevron::after {
+  transform: rotate(-90deg);
+}
+.group.collapsed .group__header {
+  border-bottom: none;
 }
 
 .btn-reset {
@@ -222,18 +248,42 @@ body {
   border-color: var(--danger);
 }
 
-/* ── Section headers ──────────────────────────────────────────────────────── */
+/* ── Collapsible sections ──────────────────────────────────────────────────── */
+.section-body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.22em;
   color: var(--accent);
   text-transform: uppercase;
   padding: 14px 2px 4px;
+  margin-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
-.section-hdr:first-of-type {
-  padding-top: 6px;
+.section-hdr:hover {
+  color: #fff;
+}
+
+.section-hdr__chevron::after {
+  content: "▾";
+  font-size: 11px;
+  display: inline-block;
+  transition: transform 0.18s ease;
+}
+
+.collapsible-section.collapsed .section-hdr__chevron::after {
+  transform: rotate(-90deg);
 }
 
 /* ── Select dropdown ──────────────────────────────────────────────────────── */

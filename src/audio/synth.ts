@@ -160,7 +160,7 @@ export class Synth {
   palette: Palette | null;
   running: boolean;
   private _prevRootFreq: number;
-  private _lastCarrierType: OscillatorType;
+  private _lastCarrierTypes: OscillatorType[];
 
   constructor(config: LegacyConfig) {
     this._cfg = config;
@@ -178,7 +178,7 @@ export class Synth {
     this.palette = null;
     this.running = false;
     this._prevRootFreq = 0;
-    this._lastCarrierType = "sine";
+    this._lastCarrierTypes = ["sine", "sine", "sine", "sine"];
   }
 
   // ── Lifecycle ──────────────────────────────────────────────
@@ -424,13 +424,24 @@ export class Synth {
       this._cfg.octaveOffsetTreble ?? 1,
     ] as const;
 
-    // ── Carrier waveform ─────────────────────────────────────────
-    const carrierType = (this._cfg.carrierType ?? "sine") as OscillatorType;
-    if (carrierType !== this._lastCarrierType) {
-      this._lastCarrierType = carrierType;
-      for (const { voices } of this._tiers)
-        for (const { fm } of voices) fm.carrier.type = carrierType;
-      for (const { fm } of this._plucks) fm.carrier.type = carrierType;
+    // ── Carrier waveforms (per-tier + pluck) ──────────────────────────
+    const tierCarrierTypes: OscillatorType[] = [
+      (this._cfg.carrierTypeBass ?? "sine") as OscillatorType,
+      (this._cfg.carrierTypeMid ?? "sine") as OscillatorType,
+      (this._cfg.carrierTypeTreble ?? "sine") as OscillatorType,
+    ];
+    const pluckCarrierType = (this._cfg.carrierTypePluck ??
+      "sine") as OscillatorType;
+    this._tiers.forEach(({ voices }, ti) => {
+      const ct = tierCarrierTypes[ti];
+      if (ct !== this._lastCarrierTypes[ti]) {
+        this._lastCarrierTypes[ti] = ct;
+        for (const { fm } of voices) fm.carrier.type = ct;
+      }
+    });
+    if (pluckCarrierType !== this._lastCarrierTypes[3]) {
+      this._lastCarrierTypes[3] = pluckCarrierType;
+      for (const { fm } of this._plucks) fm.carrier.type = pluckCarrierType;
     }
 
     // ── Glide spread ─────────────────────────────────────────────

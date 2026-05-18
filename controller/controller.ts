@@ -155,62 +155,202 @@ const controlsEl = document.getElementById("controls")!;
 // Source section (custom — conditional rows + asset dropdown)
 buildSourceGroup(controlsEl);
 
+// ── Collapse animation helper ────────────────────────────────────────────────
+// grid-template-rows animation is unreliable; measure actual px height instead.
+
+function setBodyHeight(
+  bodyEl: HTMLElement,
+  collapse: boolean,
+  animate: boolean,
+): void {
+  if (!animate) {
+    // Set instantly — suppress transition so initial state doesn't animate in
+    bodyEl.style.transition = "none";
+    bodyEl.style.height = collapse ? "0px" : "";
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        bodyEl.style.transition = "";
+      });
+    });
+    return;
+  }
+  if (collapse) {
+    // Snapshot rendered height → reflow → animate to 0
+    bodyEl.style.height = bodyEl.scrollHeight + "px";
+    bodyEl.offsetHeight; // force reflow
+    bodyEl.style.height = "0px";
+  } else {
+    // Animate from 0 → measured content height, then clear to allow reflow
+    bodyEl.style.height = bodyEl.scrollHeight + "px";
+    bodyEl.addEventListener(
+      "transitionend",
+      () => {
+        bodyEl.style.height = "";
+      },
+      { once: true },
+    );
+  }
+}
+
+// ── Collapsible section helpers ───────────────────────────────────────────────
+
+const LS_PREFIX = "avva.ctrl.section.";
+const LS_GROUP_PREFIX = "avva.ctrl.group.";
+
+function getGroupCollapsed(group: string): boolean {
+  try {
+    return localStorage.getItem(LS_GROUP_PREFIX + group) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setGroupCollapsed(group: string, collapsed: boolean): void {
+  try {
+    if (collapsed) {
+      localStorage.setItem(LS_GROUP_PREFIX + group, "1");
+    } else {
+      localStorage.removeItem(LS_GROUP_PREFIX + group);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function makeGroupCard(
+  group: string,
+  onReset: () => void,
+  buildBody: (bodyEl: HTMLElement) => void,
+): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "group";
+  section.dataset.group = group;
+
+  const header = document.createElement("div");
+  header.className = "group__header";
+  const h2 = document.createElement("h2");
+  h2.textContent = group.toUpperCase();
+  const chevron = document.createElement("span");
+  chevron.className = "group__chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "btn-reset";
+  resetBtn.textContent = "reset";
+  resetBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onReset();
+  });
+  header.append(h2, chevron, resetBtn);
+  section.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "group__body";
+  buildBody(body);
+  section.appendChild(body);
+
+  const startCollapsed = getGroupCollapsed(group);
+  if (startCollapsed) section.classList.add("collapsed");
+  setBodyHeight(body, startCollapsed, false);
+
+  header.addEventListener("click", () => {
+    const isNowCollapsed = section.classList.toggle("collapsed");
+    setGroupCollapsed(group, isNowCollapsed);
+    setBodyHeight(body, isNowCollapsed, true);
+  });
+
+  return section;
+}
+
+function getSectionCollapsed(label: string): boolean {
+  try {
+    return localStorage.getItem(LS_PREFIX + label) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setSectionCollapsed(label: string, collapsed: boolean): void {
+  try {
+    if (collapsed) {
+      localStorage.setItem(LS_PREFIX + label, "1");
+    } else {
+      localStorage.removeItem(LS_PREFIX + label);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 // Auto-generated sections from schema
 for (const { label, groups } of SECTIONS) {
+  let bodyEl: HTMLElement = controlsEl;
+
   if (label) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "collapsible-section";
+
     const hdr = document.createElement("div");
     hdr.className = "section-hdr";
-    hdr.textContent = label;
-    controlsEl.appendChild(hdr);
+
+    const titleSpan = document.createElement("span");
+    titleSpan.textContent = label;
+
+    const chevron = document.createElement("span");
+    chevron.className = "section-hdr__chevron";
+    chevron.setAttribute("aria-hidden", "true");
+
+    hdr.append(titleSpan, chevron);
+
+    const sectionBody = document.createElement("div");
+    sectionBody.className = "section-body";
+
+    const collapsed = getSectionCollapsed(label);
+    if (collapsed) wrapper.classList.add("collapsed");
+
+    hdr.addEventListener("click", () => {
+      const isNowCollapsed = wrapper.classList.toggle("collapsed");
+      setSectionCollapsed(label, isNowCollapsed);
+      setBodyHeight(sectionBody, isNowCollapsed, true);
+    });
+
+    wrapper.append(hdr, sectionBody);
+    controlsEl.appendChild(wrapper);
+    setBodyHeight(sectionBody, collapsed, false);
+    bodyEl = sectionBody;
   }
+
   for (const group of groups) {
     const keys = (Object.keys(SCHEMA) as SchemaKey[]).filter(
       (k) => SCHEMA[k].group === group,
     );
     if (!keys.length) continue;
 
-    const section = document.createElement("section");
-    section.className = "group";
-    section.dataset.group = group;
-
-    const header = document.createElement("div");
-    header.className = "group__header";
-    const h2 = document.createElement("h2");
-    h2.textContent = group.toUpperCase();
-    const resetBtn = document.createElement("button");
-    resetBtn.className = "btn-reset";
-    resetBtn.textContent = "reset";
-    resetBtn.addEventListener("click", () => store.resetGroup(group));
-    header.append(h2, resetBtn);
-    section.appendChild(header);
-
-    for (const key of keys) {
-      const field = SCHEMA[key];
-      if ((field.kind as string) === "json") continue;
-      section.appendChild(buildRow(key));
-    }
-
-    controlsEl.appendChild(section);
+    const card = makeGroupCard(
+      group,
+      () => store.resetGroup(group),
+      (body) => {
+        for (const key of keys) {
+          const field = SCHEMA[key];
+          if ((field.kind as string) === "json") continue;
+          body.appendChild(buildRow(key));
+        }
+      },
+    );
+    bodyEl.appendChild(card);
   }
 }
 
 // ── Custom source group ───────────────────────────────────────────────────────
 
 function buildSourceGroup(container: HTMLElement): void {
-  const section = document.createElement("section");
-  section.className = "group";
-  section.dataset.group = "source";
-
-  const header = document.createElement("div");
-  header.className = "group__header";
-  const h2 = document.createElement("h2");
-  h2.textContent = "SOURCE";
-  const resetBtn = document.createElement("button");
-  resetBtn.className = "btn-reset";
-  resetBtn.textContent = "reset";
-  resetBtn.addEventListener("click", () => store.resetGroup("source"));
-  header.append(h2, resetBtn);
-  section.appendChild(header);
+  let sectionBody!: HTMLElement;
+  const section = makeGroupCard(
+    "source",
+    () => store.resetGroup("source"),
+    (body) => {
+      sectionBody = body;
+    },
+  );
 
   // ─ Kind selector ─────────────────────────────────────────────────────────
   const UI_KINDS = ["camera", "file", "screen", "url"] as const;
@@ -233,11 +373,11 @@ function buildSourceGroup(container: HTMLElement): void {
     kindCtrl.appendChild(btn);
   }
   kindRow.append(kindLabel, kindCtrl);
-  section.appendChild(kindRow);
+  sectionBody.appendChild(kindRow);
 
   // ─ URL input (shown only for url) ────────────────────────────────────────
   const urlRow = buildRow("source.url");
-  section.appendChild(urlRow);
+  sectionBody.appendChild(urlRow);
 
   // ─ File dropdown (shown only for file) ───────────────────────────────────
   const fileRow = document.createElement("div");
@@ -269,15 +409,15 @@ function buildSourceGroup(container: HTMLElement): void {
   });
   fileCtrl.appendChild(fileSelect);
   fileRow.append(fileLabel, fileCtrl);
-  section.appendChild(fileRow);
+  sectionBody.appendChild(fileRow);
 
   // ─ Camera facing (shown only for camera) ─────────────────────────────────
   const cameraRow = buildRow("source.preferCamera");
-  section.appendChild(cameraRow);
+  sectionBody.appendChild(cameraRow);
 
   // ─ Playback rate (shown for file/url) ────────────────────────────────────
   const rateRow = buildRow("source.playbackRate");
-  section.appendChild(rateRow);
+  sectionBody.appendChild(rateRow);
 
   // ─ Visibility logic ───────────────────────────────────────────────────────
   const updateVisibility = () => {
