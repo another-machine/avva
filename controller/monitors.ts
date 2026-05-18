@@ -459,12 +459,19 @@ export function mountAudioMonitor(host: HTMLElement): {
     return el;
   };
 
-  // ── Chord section ─────────────────────────────────────────────
+  // ── Chord section (mirrors video monitor SYNTH layout) ───────
   const chordHdr = mk("div", "sig__hdr", "CHORD");
-  const chordRow = mk("div", "audio-chord");
-  const chordLabel = mk("span", "audio-chord__label", "—");
-  const chordKey = mk("span", "audio-chord__key", "");
-  chordRow.append(chordLabel, chordKey);
+  const chordKeyRow = mk("div", "sig__key-row");
+  const chordDot = mk("span", "sig__dot");
+  const chordKeyLbl = mk("span", undefined, "—");
+  chordKeyRow.append(chordDot, chordKeyLbl);
+
+  const chordNoteRow = mk("div", "sig__note-row");
+  const chordNumeral = mk("span", "sig__numeral", "—");
+  const chordRoot = mk("span", "sig__notename", "—");
+  chordNoteRow.append(chordNumeral, mk("span", "sig__sep", "·"), chordRoot);
+
+  const chordQualityEl = mk("div", "sig__quality");
 
   // ── Band meters ───────────────────────────────────────────────
   const bandsHdr = mk("div", "sig__hdr", "BANDS");
@@ -519,7 +526,9 @@ export function mountAudioMonitor(host: HTMLElement): {
 
   host.append(
     chordHdr,
-    chordRow,
+    chordKeyRow,
+    chordNoteRow,
+    chordQualityEl,
     div1,
     bandsHdr,
     bandLo.row,
@@ -673,10 +682,32 @@ export function mountAudioMonitor(host: HTMLElement): {
     levelSprd.fill.style.width = pct(audio.spread);
     levelSprd.val.textContent = fmt(audio.spread);
 
-    // Chord
-    chordLabel.textContent = audio.chord.label || "—";
-    chordKey.textContent = audio.chord.key || "";
-    chordRow.classList.toggle("is-change", audio.chord.change);
+    // Chord — derive numeral from current key
+    if (audio.chord.label) {
+      const rootMatch = audio.chord.label.match(/^([A-G][#b]?)/);
+      const rootName = rootMatch ? rootMatch[1] : null;
+      const qualitySuffix = rootName
+        ? audio.chord.label.slice(rootName.length)
+        : audio.chord.label;
+      const deg = rootName
+        ? currentKey.degrees.find(
+            (d) => d.name.replace(/\d+$/, "") === rootName,
+          )
+        : null;
+      chordKeyLbl.textContent = audio.chord.label;
+      chordNumeral.textContent = deg?.numeral ?? "—";
+      chordRoot.textContent = rootName ?? "—";
+      chordQualityEl.textContent = qualitySuffix
+        ? qualitySuffix.toUpperCase()
+        : "";
+      chordDot.classList.toggle("is-on", audio.chord.change);
+    } else {
+      chordKeyLbl.textContent = "—";
+      chordNumeral.textContent = "—";
+      chordRoot.textContent = "—";
+      chordQualityEl.textContent = "";
+      chordDot.classList.remove("is-on");
+    }
 
     // Chroma bars
     const weights = (audio.slots ?? audio.degrees) as Float32Array;

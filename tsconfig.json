@@ -16,7 +16,7 @@
     "allowJs": true,
     "noEmit": true,
     "jsx": "preserve",
-    "types": []
+    "types": ["vite/client"]
   },
   "include": ["src/**/*", "controller/**/*"]
 }

@@ -222,6 +222,42 @@ body {
   border-color: var(--danger);
 }
 
+/* ── Section headers ──────────────────────────────────────────────────────── */
+.section-hdr {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  text-transform: uppercase;
+  padding: 14px 2px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.section-hdr:first-of-type {
+  padding-top: 6px;
+}
+
+/* ── Select dropdown ──────────────────────────────────────────────────────── */
+.ctrl--select {
+  display: flex;
+}
+.ctrl--select select {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-family: monospace;
+  padding: 6px 10px;
+  min-height: 36px;
+  cursor: pointer;
+  appearance: auto;
+}
+.ctrl--select select:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
 /* ── Row ──────────────────────────────────────────────────────────────────── */
 
 .row {

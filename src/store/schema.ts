@@ -52,14 +52,8 @@ export type Field =
 
 // ── Source types ────────────────────────────────────────────────
 
-export type SourceKind = "camera" | "file" | "files" | "screen" | "url";
-export const SOURCE_KINDS = [
-  "camera",
-  "file",
-  "files",
-  "screen",
-  "url",
-] as const;
+export type SourceKind = "camera" | "file" | "screen" | "url";
+export const SOURCE_KINDS = ["camera", "file", "screen", "url"] as const;
 
 export type HarmonyMode = "scale" | "palette";
 export type FacingMode = "environment" | "user";
@@ -87,12 +81,6 @@ export const SCHEMA = {
     default: "camera" as SourceKind,
     options: SOURCE_KINDS,
     label: "Source",
-    group: "source",
-  },
-  "source.files": {
-    kind: "json",
-    default: [] as string[],
-    label: "File list (files mode)",
     group: "source",
   },
   "source.file": {

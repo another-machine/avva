@@ -8,7 +8,12 @@
  *   (cheap, and keeps the address bar in sync for shareable links).
  */
 
-import { SCHEMA, SCHEMA_VERSION, type SchemaKey, type Settings } from "./schema.js";
+import {
+  SCHEMA,
+  SCHEMA_VERSION,
+  type SchemaKey,
+  type Settings,
+} from "./schema.js";
 
 export type Origin = "local" | "url" | "storage" | "broadcast" | "ws" | "init";
 
@@ -66,9 +71,13 @@ function sanitize(obj: unknown): Partial<Settings> {
       (out as Record<string, unknown>)[k] = v;
     } else if (field.kind === "string" && typeof v === "string") {
       (out as Record<string, unknown>)[k] = v;
-    } else if (field.kind === "enum" && typeof v === "string" && (field.options as readonly string[]).includes(v)) {
+    } else if (
+      field.kind === "enum" &&
+      typeof v === "string" &&
+      (field.options as readonly string[]).includes(v)
+    ) {
       (out as Record<string, unknown>)[k] = v;
-    } else if (field.kind === "json") {
+    } else if ((field.kind as string) === "json") {
       (out as Record<string, unknown>)[k] = v;
     }
   }
@@ -98,7 +107,11 @@ export class Store {
    * Set a value. No-op if the value is unchanged. Origin tag is forwarded
    * to subscribers so transports can suppress echoes.
    */
-  set<K extends SchemaKey>(key: K, value: Settings[K], origin: Origin = "local"): void {
+  set<K extends SchemaKey>(
+    key: K,
+    value: Settings[K],
+    origin: Origin = "local",
+  ): void {
     if (Object.is(this.state[key], value)) return;
     this.state[key] = value;
     const patch: Patch = { key, value, origin };
@@ -123,7 +136,10 @@ export class Store {
     return () => this.listeners.delete(fn);
   }
 
-  subscribeKey<K extends SchemaKey>(key: K, fn: (value: Settings[K], origin: Origin) => void): () => void {
+  subscribeKey<K extends SchemaKey>(
+    key: K,
+    fn: (value: Settings[K], origin: Origin) => void,
+  ): () => void {
     let set = this.keyListeners.get(key);
     if (!set) {
       set = new Set();
@@ -183,7 +199,8 @@ export class Store {
     try {
       const diff = this.diffFromDefaults();
       if (Object.keys(diff).length === 0) {
-        if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+        if (location.hash)
+          history.replaceState(null, "", location.pathname + location.search);
       } else {
         const next = HASH_PREFIX + encodeURIComponent(JSON.stringify(diff));
         if (location.hash.slice(1) !== next) {

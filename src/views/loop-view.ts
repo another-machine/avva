@@ -51,7 +51,9 @@ async function begin(): Promise<void> {
 
   calibration = new Calibration();
   videoEl.style.filter = calibration.filterString;
-  calibration.onChange((cal: any) => { videoEl.style.filter = cal.filterString; });
+  calibration.onChange((cal: any) => {
+    videoEl.style.filter = cal.filterString;
+  });
 
   key = new Key({
     root: CONFIG.root,
@@ -84,10 +86,14 @@ async function begin(): Promise<void> {
     gate?.classList.remove("hide");
     const errEl = document.getElementById("err");
     if (errEl) errEl.textContent = "Video error: " + (e.message || e.name);
-    document.getElementById("go")?.addEventListener("click", () => {
-      gate?.classList.add("hide");
-      void begin();
-    }, { once: true });
+    document.getElementById("go")?.addEventListener(
+      "click",
+      () => {
+        gate?.classList.add("hide");
+        void begin();
+      },
+      { once: true },
+    );
     return;
   }
 
@@ -116,7 +122,9 @@ async function begin(): Promise<void> {
 
   document.getElementById("gate")?.classList.add("hide");
 
-  window.addEventListener("resize", () => { audioRenderer?.resize(); });
+  window.addEventListener("resize", () => {
+    audioRenderer?.resize();
+  });
 
   // ── Controller subscriptions ────────────────────────────────────────────────
 
@@ -140,20 +148,45 @@ async function begin(): Promise<void> {
   });
 
   for (const k of [
-    "harmony.root", "harmony.scale", "harmony.octave", "harmony.rootHue",
+    "harmony.root",
+    "harmony.scale",
+    "harmony.octave",
+    "harmony.rootHue",
   ] as const) {
     store.subscribeKey(k, () => {
       key = new Key({
-        root: CONFIG.root, mode: CONFIG.mode,
-        octave: CONFIG.octave, rootHue: CONFIG.rootHue,
+        root: CONFIG.root,
+        mode: CONFIG.mode,
+        octave: CONFIG.octave,
+        rootHue: CONFIG.rootHue,
       });
       synth.key = key;
     });
   }
 
-  store.subscribeKey("audio.feedback", (v) => { audioRenderer?.setFeedback(v); });
-  store.subscribeKey("audio.noiseScale", (v) => { audioRenderer?.setNoiseScale(v); });
-  store.subscribeKey("source.playbackRate", (v) => { videoEl.playbackRate = v; });
+  store.subscribeKey("audio.feedback", (v) => {
+    audioRenderer?.setFeedback(v);
+  });
+  store.subscribeKey("audio.noiseScale", (v) => {
+    audioRenderer?.setNoiseScale(v);
+  });
+  store.subscribeKey("source.playbackRate", (v) => {
+    videoEl.playbackRate = v;
+  });
+
+  const _restartSource = async () => {
+    if (!videoSource) return;
+    videoSource.stop();
+    try {
+      await videoSource.start();
+      _sourceLabel = videoSource.label;
+    } catch (e: any) {
+      console.error("Source restart failed:", e.message);
+    }
+  };
+  for (const k of ["source.kind", "source.file", "source.url"] as const) {
+    store.subscribeKey(k, _restartSource);
+  }
 
   const _applyCassette = () =>
     synth.setCassetteParams({
@@ -171,10 +204,17 @@ async function begin(): Promise<void> {
     });
 
   for (const k of [
-    "cassette.midBoostDb", "cassette.masterLPHz", "cassette.satAmount",
-    "cassette.satWet", "cassette.tapeDelayMs", "cassette.tapeDelayFb",
-    "cassette.tapeDelayWet", "cassette.reverbWet", "cassette.noiseGain",
-    "cassette.wowDepthCents", "cassette.flutterDepthCents",
+    "cassette.midBoostDb",
+    "cassette.masterLPHz",
+    "cassette.satAmount",
+    "cassette.satWet",
+    "cassette.tapeDelayMs",
+    "cassette.tapeDelayFb",
+    "cassette.tapeDelayWet",
+    "cassette.reverbWet",
+    "cassette.noiseGain",
+    "cassette.wowDepthCents",
+    "cassette.flutterDepthCents",
   ] as const) {
     store.subscribeKey(k, _applyCassette);
   }
@@ -183,9 +223,19 @@ async function begin(): Promise<void> {
   videoEl.classList.toggle("mirror", store.get("view.mirror"));
   heat.classList.toggle("mirror", store.get("view.mirror"));
   vidAnalyzer.heatOn = store.get("view.heatOn");
-  heat.style.setProperty("--heat-opacity", store.get("view.heatOn") ? "0.55" : "0");
+  heat.style.setProperty(
+    "--heat-opacity",
+    store.get("view.heatOn") ? "0.55" : "0",
+  );
 
-  (window as any)._avva = { synth, vidAnalyzer, audioAnalyzer, audioRenderer, videoSource, store };
+  (window as any)._avva = {
+    synth,
+    vidAnalyzer,
+    audioAnalyzer,
+    audioRenderer,
+    videoSource,
+    store,
+  };
 
   state.lastT = performance.now();
   requestAnimationFrame(tick);
@@ -193,7 +243,11 @@ async function begin(): Promise<void> {
 
 function maybeTapSynth(): void {
   if (audioAnalyzer || !synth.running || !synth._actx || !synth._master) return;
-  audioAnalyzer = new AudioAnalyzer({ audioContext: synth._actx, key, palette });
+  audioAnalyzer = new AudioAnalyzer({
+    audioContext: synth._actx,
+    key,
+    palette,
+  });
   synth._master.connect(audioAnalyzer.analyser);
 }
 
@@ -216,8 +270,14 @@ function tick(t: number): void {
 
     // Update accent CSS vars — audio visualizer shader reads these from :root
     const root = document.documentElement;
-    root.style.setProperty("--accent-l", (0.55 + frame.out.bri * 0.2).toFixed(3));
-    root.style.setProperty("--accent-c", (0.04 + frame.out.sat * 0.18).toFixed(3));
+    root.style.setProperty(
+      "--accent-l",
+      (0.55 + frame.out.bri * 0.2).toFixed(3),
+    );
+    root.style.setProperty(
+      "--accent-c",
+      (0.04 + frame.out.sat * 0.18).toFixed(3),
+    );
     root.style.setProperty("--accent-h", frame.out.hue.toFixed(1));
 
     if (frame.heatImageData && heatCtx) {

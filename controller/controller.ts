@@ -10,23 +10,34 @@
  */
 
 import { store } from "../src/store/store.js";
-import { SCHEMA, type SchemaKey, type Field } from "../src/store/schema.js";
+import {
+  SCHEMA,
+  type SchemaKey,
+  type Field,
+  type SourceKind,
+} from "../src/store/schema.js";
 import { startBroadcastSync, startWebSocketSync } from "../src/store/sync.js";
 import { TelemetryReceiver } from "../src/store/telemetry.js";
 import { mountVideoMonitor, mountAudioMonitor } from "./monitors.js";
 
-// ── Group order ───────────────────────────────────────────────────────────────
+// ── Asset file list (populated from Vite glob at build time) ──────────────────
 
-const GROUP_ORDER = [
-  "view",
-  "source",
-  "calibration",
-  "harmony",
-  "synth",
-  "cassette",
-  "audio",
-  "analysis",
-] as const;
+const ASSET_FILES = Object.keys(
+  import.meta.glob("/assets/*", { eager: false }),
+).map((p) => p.replace(/^\/assets\//, ""));
+
+// ── Section layout ────────────────────────────────────────────────────────────
+// source is built as a custom section; the rest auto-generate from schema groups.
+
+const SECTIONS: Array<{ label: string | null; groups: string[] }> = [
+  { label: null, groups: ["view"] },
+  { label: "GLOBAL — HARMONY", groups: ["harmony"] },
+  {
+    label: "VISUAL → AUDIO",
+    groups: ["calibration", "analysis", "synth", "cassette"],
+  },
+  { label: "AUDIO → VISUAL", groups: ["audio"] },
+];
 
 // ── Boot BroadcastChannel sync ────────────────────────────────────────────────
 
@@ -141,42 +152,150 @@ document.getElementById("copy-url-btn")?.addEventListener("click", () => {
 
 const controlsEl = document.getElementById("controls")!;
 
-for (const group of GROUP_ORDER) {
-  const keys = (Object.keys(SCHEMA) as SchemaKey[]).filter(
-    (k) => SCHEMA[k].group === group,
-  );
-  if (!keys.length) continue;
+// Source section (custom — conditional rows + asset dropdown)
+buildSourceGroup(controlsEl);
 
+// Auto-generated sections from schema
+for (const { label, groups } of SECTIONS) {
+  if (label) {
+    const hdr = document.createElement("div");
+    hdr.className = "section-hdr";
+    hdr.textContent = label;
+    controlsEl.appendChild(hdr);
+  }
+  for (const group of groups) {
+    const keys = (Object.keys(SCHEMA) as SchemaKey[]).filter(
+      (k) => SCHEMA[k].group === group,
+    );
+    if (!keys.length) continue;
+
+    const section = document.createElement("section");
+    section.className = "group";
+    section.dataset.group = group;
+
+    const header = document.createElement("div");
+    header.className = "group__header";
+    const h2 = document.createElement("h2");
+    h2.textContent = group.toUpperCase();
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "btn-reset";
+    resetBtn.textContent = "reset";
+    resetBtn.addEventListener("click", () => store.resetGroup(group));
+    header.append(h2, resetBtn);
+    section.appendChild(header);
+
+    for (const key of keys) {
+      const field = SCHEMA[key];
+      if ((field.kind as string) === "json") continue;
+      section.appendChild(buildRow(key));
+    }
+
+    controlsEl.appendChild(section);
+  }
+}
+
+// ── Custom source group ───────────────────────────────────────────────────────
+
+function buildSourceGroup(container: HTMLElement): void {
   const section = document.createElement("section");
   section.className = "group";
-  section.dataset.group = group;
+  section.dataset.group = "source";
 
-  // Group header
   const header = document.createElement("div");
   header.className = "group__header";
-
   const h2 = document.createElement("h2");
-  h2.textContent = group.toUpperCase();
-
+  h2.textContent = "SOURCE";
   const resetBtn = document.createElement("button");
   resetBtn.className = "btn-reset";
   resetBtn.textContent = "reset";
-  resetBtn.addEventListener("click", () => store.resetGroup(group));
-
-  header.appendChild(h2);
-  header.appendChild(resetBtn);
+  resetBtn.addEventListener("click", () => store.resetGroup("source"));
+  header.append(h2, resetBtn);
   section.appendChild(header);
 
-  // Rows
-  for (const key of keys) {
-    const field = SCHEMA[key];
-    if (field.kind === "json") continue; // not useful in runtime controller
+  // ─ Kind selector ─────────────────────────────────────────────────────────
+  const UI_KINDS = ["camera", "file", "screen", "url"] as const;
+  const getUiKind = () => store.get("source.kind") as (typeof UI_KINDS)[number];
 
-    const row = buildRow(key);
-    section.appendChild(row);
+  const kindRow = document.createElement("div");
+  kindRow.className = "row";
+  const kindLabel = document.createElement("label");
+  kindLabel.className = "row__label";
+  kindLabel.textContent = "Source";
+  const kindCtrl = document.createElement("div");
+  kindCtrl.className = "ctrl ctrl--enum";
+  for (const kind of UI_KINDS) {
+    const btn = document.createElement("button");
+    btn.className = "seg-btn" + (getUiKind() === kind ? " active" : "");
+    btn.textContent = kind;
+    btn.addEventListener("click", () =>
+      store.set("source.kind", kind as SourceKind),
+    );
+    kindCtrl.appendChild(btn);
   }
+  kindRow.append(kindLabel, kindCtrl);
+  section.appendChild(kindRow);
 
-  controlsEl.appendChild(section);
+  // ─ URL input (shown only for url) ────────────────────────────────────────
+  const urlRow = buildRow("source.url");
+  section.appendChild(urlRow);
+
+  // ─ File dropdown (shown only for file) ───────────────────────────────────
+  const fileRow = document.createElement("div");
+  fileRow.className = "row";
+  const fileLabel = document.createElement("label");
+  fileLabel.className = "row__label";
+  fileLabel.textContent = "Video file";
+  const fileCtrl = document.createElement("div");
+  fileCtrl.className = "ctrl ctrl--select";
+  const fileSelect = document.createElement("select");
+  const emptyOpt = document.createElement("option");
+  emptyOpt.value = "";
+  emptyOpt.textContent = "— select —";
+  fileSelect.appendChild(emptyOpt);
+  for (const f of ASSET_FILES) {
+    const opt = document.createElement("option");
+    opt.value = `/assets/${f}`;
+    opt.textContent = f;
+    fileSelect.appendChild(opt);
+  }
+  const curFile = store.get("source.file");
+  if (curFile) fileSelect.value = String(curFile);
+  fileSelect.addEventListener("change", () => {
+    store.set("source.kind", "file" as SourceKind);
+    store.set("source.file", fileSelect.value);
+  });
+  store.subscribeKey("source.file", (v) => {
+    fileSelect.value = String(v);
+  });
+  fileCtrl.appendChild(fileSelect);
+  fileRow.append(fileLabel, fileCtrl);
+  section.appendChild(fileRow);
+
+  // ─ Camera facing (shown only for camera) ─────────────────────────────────
+  const cameraRow = buildRow("source.preferCamera");
+  section.appendChild(cameraRow);
+
+  // ─ Playback rate (shown for file/url) ────────────────────────────────────
+  const rateRow = buildRow("source.playbackRate");
+  section.appendChild(rateRow);
+
+  // ─ Visibility logic ───────────────────────────────────────────────────────
+  const updateVisibility = () => {
+    const kind = getUiKind();
+    for (const btn of kindCtrl.querySelectorAll<HTMLButtonElement>(
+      ".seg-btn",
+    )) {
+      btn.classList.toggle("active", btn.textContent === kind);
+    }
+    urlRow.style.display = kind === "url" ? "" : "none";
+    fileRow.style.display = kind === "file" ? "" : "none";
+    cameraRow.style.display = kind === "camera" ? "" : "none";
+    rateRow.style.display = kind !== "camera" ? "" : "none";
+  };
+  updateVisibility();
+  store.subscribeKey("source.kind", updateVisibility);
+
+  container.appendChild(section);
 }
 
 // ── Row / control builders ────────────────────────────────────────────────────
