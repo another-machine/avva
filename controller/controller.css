@@ -31,8 +31,10 @@ body {
     -apple-system,
     sans-serif;
   font-size: 14px;
-  min-height: 100dvh;
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* ── Header ───────────────────────────────────────────────────────────────── */
@@ -41,6 +43,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 10;
+  flex-shrink: 0;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -90,6 +93,7 @@ body {
 
 .ws-form {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
@@ -133,15 +137,49 @@ body {
   color: #fff;
 }
 
+/* ── Two-column body ──────────────────────────────────────────────────────── */
+
+.ctrl-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  align-items: start;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ctrl-monitors {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-right: 1px solid var(--border);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.ctrl-monitors .monitor {
+  padding: 10px;
+}
+.ctrl-monitors .monitor:last-child {
+  border-bottom: none;
+}
+
 /* ── Controls layout ──────────────────────────────────────────────────────── */
 
 #controls {
-  max-width: 680px;
-  margin: 0 auto;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 /* ── Group section ────────────────────────────────────────────────────────── */
@@ -150,7 +188,6 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
 }
 
 .group__header {

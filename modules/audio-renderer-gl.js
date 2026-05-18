@@ -478,7 +478,7 @@ export class AudioRendererGL {
   /**
    * (Re-)compute _degreeRGBBuf from hues.
    * Called once at construction and every frame via render().
-   * Uses oklch(0.65, 0.22, H) — matching va.css --spectrum-l / --spectrum-c.
+   * Uses oklch(0.65, 0.22, H) — matching --spectrum-l / --spectrum-c.
    */
   _fillDegreeRGB(hues) {
     const buf = this._degreeRGBBuf;

@@ -152,8 +152,7 @@ avva/
   va.html             Program 1 shell
   loop.html           dev harness — both programs side-by-side, audio bus direct
   loop.js             loop harness logic
-  loop.css            loop harness styles (extends va.css)
-  va.css              shared CSS; @property typed custom properties
+  loop.css            loop view styles
   main.js             Program 1 RAF loop; window._avva debug global
   MEMORY.md
   modules/

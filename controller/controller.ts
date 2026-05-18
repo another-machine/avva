@@ -10,7 +10,7 @@
  */
 
 import { store } from "../src/store/store.js";
-import { SCHEMA, type SchemaKey } from "../src/store/schema.js";
+import { SCHEMA, type SchemaKey, type Field } from "../src/store/schema.js";
 import { startBroadcastSync, startWebSocketSync } from "../src/store/sync.js";
 import { TelemetryReceiver } from "../src/store/telemetry.js";
 import { mountVideoMonitor, mountAudioMonitor } from "./monitors.js";
@@ -34,21 +34,17 @@ startBroadcastSync();
 
 // ── Telemetry monitors ────────────────────────────────────────────────────────
 
-const videoMonitor = mountVideoMonitor(document.getElementById("video-monitor")!);
-const audioMonitor = mountAudioMonitor(document.getElementById("audio-monitor")!);
+const videoMonitor = mountVideoMonitor(
+  document.getElementById("video-monitor")!,
+);
+const audioMonitor = mountAudioMonitor(
+  document.getElementById("audio-monitor")!,
+);
 
 new TelemetryReceiver((msg) => {
   if (msg.video) videoMonitor.onMsg(msg);
   if (msg.audio || msg.synth) audioMonitor.onMsg(msg);
 });
-
-// Repurpose view.hud toggle: show/hide monitor sections in controller
-const applyHudVisibility = (v: boolean) => {
-  document.getElementById("video-monitor")?.classList.toggle("is-hidden", !v);
-  document.getElementById("audio-monitor")?.classList.toggle("is-hidden", !v);
-};
-store.subscribeKey("view.hud", applyHudVisibility);
-applyHudVisibility(store.get("view.hud"));
 
 // ── Optional WS relay from URL param ─────────────────────────────────────────
 
@@ -217,7 +213,7 @@ function buildRow(key: SchemaKey): HTMLElement {
 }
 
 function buildControl(key: SchemaKey): HTMLElement {
-  const field = SCHEMA[key];
+  const field = SCHEMA[key] as Field;
   const value = store.get(key);
 
   // ── number slider ──────────────────────────────────────────────────────────
@@ -233,11 +229,12 @@ function buildControl(key: SchemaKey): HTMLElement {
     input.value = String(value);
 
     const out = document.createElement("output");
-    out.textContent = fmtNum(value as number, field.step);
+    const unitStr = field.unit ? ` ${field.unit}` : "";
+    out.textContent = fmtNum(value as number, field.step) + unitStr;
 
     input.addEventListener("input", () => {
       const v = Number(input.value);
-      out.textContent = fmtNum(v, field.step);
+      out.textContent = fmtNum(v, field.step) + unitStr;
       store.set(key, v as never);
     });
 
@@ -295,13 +292,14 @@ function buildControl(key: SchemaKey): HTMLElement {
 // ── Sync incoming store updates back to the DOM ───────────────────────────────
 
 function syncControl(ctrl: HTMLElement, key: SchemaKey, value: unknown): void {
-  const field = SCHEMA[key];
+  const field = SCHEMA[key] as Field;
 
   if (field.kind === "number") {
     const input = ctrl.querySelector<HTMLInputElement>("input");
     const out = ctrl.querySelector<HTMLOutputElement>("output");
+    const unitStr = field.unit ? ` ${field.unit}` : "";
     if (input) input.value = String(value);
-    if (out) out.textContent = fmtNum(value as number, field.step);
+    if (out) out.textContent = fmtNum(value as number, field.step) + unitStr;
     return;
   }
 

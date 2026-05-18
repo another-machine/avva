@@ -18,7 +18,7 @@
  *
  * Canvas backs into the body and is rendered at devicePixelRatio.
  * All colors are oklch strings; canvas supports them in evergreen
- * browsers (same as va.css's gradients).
+ * browsers (oklch gradients).
  */
 
 export class AudioRenderer {
@@ -67,8 +67,10 @@ export class AudioRenderer {
   render(frame) {
     const { chroma, bands, hue, bri, act, chord, spread } = frame;
     const ctx = this.ctx;
-    const w = this._w, h = this._h;
-    const cx = w / 2, cy = h / 2;
+    const w = this._w,
+      h = this._h;
+    const cx = w / 2,
+      cy = h / 2;
     const maxR = Math.hypot(w, h) / 2;
     const t = ++this._t;
 
