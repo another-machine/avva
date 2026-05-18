@@ -12,6 +12,8 @@
 import { store } from "../src/store/store.js";
 import { SCHEMA, type SchemaKey } from "../src/store/schema.js";
 import { startBroadcastSync, startWebSocketSync } from "../src/store/sync.js";
+import { TelemetryReceiver } from "../src/store/telemetry.js";
+import { mountVideoMonitor, mountAudioMonitor } from "./monitors.js";
 
 // ── Group order ───────────────────────────────────────────────────────────────
 
@@ -29,6 +31,24 @@ const GROUP_ORDER = [
 // ── Boot BroadcastChannel sync ────────────────────────────────────────────────
 
 startBroadcastSync();
+
+// ── Telemetry monitors ────────────────────────────────────────────────────────
+
+const videoMonitor = mountVideoMonitor(document.getElementById("video-monitor")!);
+const audioMonitor = mountAudioMonitor(document.getElementById("audio-monitor")!);
+
+new TelemetryReceiver((msg) => {
+  if (msg.video) videoMonitor.onMsg(msg);
+  if (msg.audio || msg.synth) audioMonitor.onMsg(msg);
+});
+
+// Repurpose view.hud toggle: show/hide monitor sections in controller
+const applyHudVisibility = (v: boolean) => {
+  document.getElementById("video-monitor")?.classList.toggle("is-hidden", !v);
+  document.getElementById("audio-monitor")?.classList.toggle("is-hidden", !v);
+};
+store.subscribeKey("view.hud", applyHudVisibility);
+applyHudVisibility(store.get("view.hud"));
 
 // ── Optional WS relay from URL param ─────────────────────────────────────────
 
