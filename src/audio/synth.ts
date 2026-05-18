@@ -73,6 +73,43 @@ interface Tremolo {
   depth: GainNode;
 }
 
+interface CassetteChain {
+  preLP: BiquadFilterNode;
+  midBoost: BiquadFilterNode;
+  tapeSat: WaveShaperNode;
+  satDry: GainNode;
+  satWet: GainNode;
+  satOut: GainNode;
+  tapeDelay: DelayNode;
+  tapeDelayFb: GainNode;
+  tapeDelayDamp: BiquadFilterNode;
+  tapeDelayWet: GainNode;
+  reverb: ConvolverNode;
+  reverbWet: GainNode;
+  noise: AudioBufferSourceNode;
+  noiseLP: BiquadFilterNode;
+  noiseGain: GainNode;
+  masterLP: BiquadFilterNode;
+  wowLfo: OscillatorNode;
+  wowDepth: GainNode;
+  flutterLfo: OscillatorNode;
+  flutterDepth: GainNode;
+}
+
+export interface CassetteParams {
+  midBoostDb?: number;
+  masterLPHz?: number;
+  satAmount?: number;
+  satWet?: number;
+  tapeDelayMs?: number;
+  tapeDelayFb?: number;
+  tapeDelayWet?: number;
+  reverbWet?: number;
+  noiseGain?: number;
+  wowDepthCents?: number;
+  flutterDepthCents?: number;
+}
+
 /** A note-like proxy that works for both Key and Palette mode. */
 interface NoteProxy {
   degree: number;
@@ -118,6 +155,7 @@ export class Synth {
   private _tremolo: Tremolo | null;
   private _masterPanner: StereoPannerNode | null;
   private _limiter: WaveShaperNode | null;
+  _cassette: CassetteChain | null;
 
   key: Key | null;
   palette: Palette | null;
@@ -135,6 +173,7 @@ export class Synth {
     this._tremolo = null;
     this._masterPanner = null;
     this._limiter = null;
+    this._cassette = null;
     this.key = null;
     this.palette = null;
     this.running = false;
@@ -178,9 +217,13 @@ export class Synth {
     }
     limiter.curve = curve;
     limiter.oversample = "4x";
-    masterPanner.connect(limiter);
-    limiter.connect(this._actx.destination);
     this._limiter = limiter;
+
+    // Cassette chain sits between masterPanner and limiter
+    const cassette = this._buildCassetteChain(this._actx, masterPanner);
+    cassette.masterLP.connect(limiter);
+    limiter.connect(this._actx.destination);
+    this._cassette = cassette;
 
     // Sub-bass
     const subOsc = this._actx.createOscillator();
@@ -271,6 +314,14 @@ export class Synth {
         });
       }
       this._tiers.push({ octaveShift, voices });
+    }
+
+    // Connect wow/flutter LFOs to all tier carrier detuners
+    for (const { voices } of this._tiers) {
+      for (const { osc } of voices) {
+        this._cassette!.wowDepth.connect(osc.detune);
+        this._cassette!.flutterDepth.connect(osc.detune);
+      }
     }
 
     this.running = true;
@@ -686,6 +737,193 @@ export class Synth {
     const max = this._cfg.glideMax ?? 3.0;
     const a = clamp01(act);
     return max * Math.pow(min / max, a);
+  }
+
+  // ── Cassette effects ────────────────────────────────────────
+
+  private static _makeTapeSat(actx: AudioContext, amount: number): WaveShaperNode {
+    const ws = actx.createWaveShaper();
+    const n = 4096;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      curve[i] = Math.tanh(x * Math.max(0.01, amount));
+    }
+    ws.curve = curve;
+    ws.oversample = "4x";
+    return ws;
+  }
+
+  private _buildCassetteChain(
+    actx: AudioContext,
+    input: AudioNode,
+  ): CassetteChain {
+    // Pre-LP: shave extreme highs before the saturation stage
+    const preLP = actx.createBiquadFilter();
+    preLP.type = "lowpass";
+    preLP.frequency.value = 10000;
+    preLP.Q.value = 0.7;
+
+    // Mid-presence boost: adds cassette body/crunch around 1.2 kHz
+    const midBoost = actx.createBiquadFilter();
+    midBoost.type = "peaking";
+    midBoost.frequency.value = 1200;
+    midBoost.gain.value = 3;
+    midBoost.Q.value = 0.9;
+
+    // Parallel tape saturation (dry/wet blend so clean transients survive)
+    const tapeSat = Synth._makeTapeSat(actx, 8);
+    const satDry = actx.createGain();
+    const satWet = actx.createGain();
+    const satOut = actx.createGain();
+    satDry.gain.value = 0.6;
+    satWet.gain.value = 0.4;
+    midBoost.connect(satDry);
+    midBoost.connect(tapeSat);
+    tapeSat.connect(satWet);
+    satDry.connect(satOut);
+    satWet.connect(satOut);
+
+    // Short tape delay: 120 ms slapback echo with a damped feedback loop
+    const tapeDelay = actx.createDelay(1.0);
+    tapeDelay.delayTime.value = 0.12;
+    const tapeDelayFb = actx.createGain();
+    tapeDelayFb.gain.value = 0.22;
+    const tapeDelayDamp = actx.createBiquadFilter();
+    tapeDelayDamp.type = "lowpass";
+    tapeDelayDamp.frequency.value = 6000;
+    const tapeDelayWet = actx.createGain();
+    tapeDelayWet.gain.value = 0.18;
+    satOut.connect(tapeDelay);
+    tapeDelay.connect(tapeDelayDamp);
+    tapeDelayDamp.connect(tapeDelayFb);
+    tapeDelayFb.connect(tapeDelay); // feedback loop
+    tapeDelayDamp.connect(tapeDelayWet);
+
+    // Pre-reverb mix (dry + delayed signal)
+    const preReverbMix = actx.createGain();
+    satOut.connect(preReverbMix);
+    tapeDelayWet.connect(preReverbMix);
+
+    // Small warm reverb via generated exponential-decay IR
+    const reverb = actx.createConvolver();
+    const irLen = Math.floor(actx.sampleRate * 0.9);
+    const irBuf = actx.createBuffer(2, irLen, actx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = irBuf.getChannelData(ch);
+      for (let i = 0; i < irLen; i++) {
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 3) * 0.25;
+      }
+    }
+    reverb.buffer = irBuf;
+    const reverbWet = actx.createGain();
+    reverbWet.gain.value = 0.1;
+    preReverbMix.connect(reverb);
+    reverb.connect(reverbWet);
+
+    // Final dry+reverb mix
+    const finalMix = actx.createGain();
+    preReverbMix.connect(finalMix);
+    reverbWet.connect(finalMix);
+
+    // Cassette hiss: bandlimited noise looped from a 2-second buffer
+    const hissBuf = actx.createBuffer(1, 2 * actx.sampleRate, actx.sampleRate);
+    const hissData = hissBuf.getChannelData(0);
+    for (let i = 0; i < hissData.length; i++) {
+      hissData[i] = (Math.random() * 2 - 1) * 0.5;
+    }
+    const noise = actx.createBufferSource();
+    noise.buffer = hissBuf;
+    noise.loop = true;
+    const noiseLP = actx.createBiquadFilter();
+    noiseLP.type = "lowpass";
+    noiseLP.frequency.value = 7000;
+    const noiseGain = actx.createGain();
+    noiseGain.gain.value = 0.015;
+    noise.connect(noiseLP);
+    noiseLP.connect(noiseGain);
+    noiseGain.connect(finalMix);
+    noise.start();
+
+    // Master LP: final cassette bandwidth roll-off
+    const masterLP = actx.createBiquadFilter();
+    masterLP.type = "lowpass";
+    masterLP.frequency.value = 12000;
+    finalMix.connect(masterLP);
+
+    // Wow LFO: slow pitch drift (±6 cents, 0.35 Hz)
+    const wowLfo = actx.createOscillator();
+    const wowDepth = actx.createGain();
+    wowLfo.type = "sine";
+    wowLfo.frequency.value = 0.35;
+    wowDepth.gain.value = 6;
+    wowLfo.connect(wowDepth);
+    wowLfo.start();
+
+    // Flutter LFO: fast pitch instability (±1.5 cents, 4.5 Hz)
+    const flutterLfo = actx.createOscillator();
+    const flutterDepth = actx.createGain();
+    flutterLfo.type = "sine";
+    flutterLfo.frequency.value = 4.5;
+    flutterDepth.gain.value = 1.5;
+    flutterLfo.connect(flutterDepth);
+    flutterLfo.start();
+
+    // Wire input through the chain
+    input.connect(preLP);
+    preLP.connect(midBoost);
+    // midBoost continues through satDry/satWet paths defined above
+
+    return {
+      preLP,
+      midBoost,
+      tapeSat,
+      satDry,
+      satWet,
+      satOut,
+      tapeDelay,
+      tapeDelayFb,
+      tapeDelayDamp,
+      tapeDelayWet,
+      reverb,
+      reverbWet,
+      noise,
+      noiseLP,
+      noiseGain,
+      masterLP,
+      wowLfo,
+      wowDepth,
+      flutterLfo,
+      flutterDepth,
+    };
+  }
+
+  /** Live-update cassette parameters. `satAmount` recreates the waveshaper curve. */
+  setCassetteParams(p: CassetteParams): void {
+    const c = this._cassette;
+    if (!c || !this._actx) return;
+    if (p.midBoostDb !== undefined) c.midBoost.gain.value = p.midBoostDb;
+    if (p.masterLPHz !== undefined) c.masterLP.frequency.value = p.masterLPHz;
+    if (p.satWet !== undefined) {
+      c.satWet.gain.value = Math.max(0, Math.min(1, p.satWet));
+      c.satDry.gain.value = Math.max(0, Math.min(1, 1 - p.satWet));
+    }
+    if (p.satAmount !== undefined) {
+      const newSat = Synth._makeTapeSat(this._actx, p.satAmount);
+      try { c.tapeSat.disconnect(); } catch { /* no-op */ }
+      c.midBoost.connect(newSat);
+      newSat.connect(c.satWet);
+      (c as { tapeSat: WaveShaperNode }).tapeSat = newSat;
+    }
+    if (p.tapeDelayMs !== undefined)
+      c.tapeDelay.delayTime.value = p.tapeDelayMs / 1000;
+    if (p.tapeDelayFb !== undefined) c.tapeDelayFb.gain.value = p.tapeDelayFb;
+    if (p.tapeDelayWet !== undefined) c.tapeDelayWet.gain.value = p.tapeDelayWet;
+    if (p.reverbWet !== undefined) c.reverbWet.gain.value = p.reverbWet;
+    if (p.noiseGain !== undefined) c.noiseGain.gain.value = p.noiseGain;
+    if (p.wowDepthCents !== undefined) c.wowDepth.gain.value = p.wowDepthCents;
+    if (p.flutterDepthCents !== undefined)
+      c.flutterDepth.gain.value = p.flutterDepthCents;
   }
 }
 

@@ -32,38 +32,104 @@
 
       <!-- Identity panel (top-left) -->
       <div id="p-id" class="panel" aria-label="Program identity">
-        <div class="p-id__name">CAM→AUDIO</div>
-        <div class="p-id__desc">ANALYSIS LAYER · v0.2</div>
+        <div class="p-id__name">AVVA</div>
+        <div class="p-id__desc">CAM → AUDIO · v0.3</div>
       </div>
 
-      <!-- Video calibration panel (top-right) — toggled with V key -->
-      <div
-        id="calibrate"
-        class="panel"
-        aria-label="Video calibration"
-        aria-live="polite"
-      >
-        <div class="cal__header">Video Calibration</div>
+      <!-- Signal panel (right side) -->
+      <div id="p-signals" class="panel" aria-label="Analysis signals">
 
-        <div class="cal__row" id="cal-row-brightness">
-          <span class="cal__name">Brightness</span>
-          <span class="cal__value" id="cal-val-brightness">1.00</span>
+        <!-- Synth readout -->
+        <div class="sig__hdr">SYNTH</div>
+        <div class="sig__key-row">
+          <span class="sig__dot" id="sig-dot"></span>
+          <span id="sig-key-lbl">—</span>
         </div>
-        <div class="cal__row" id="cal-row-contrast">
-          <span class="cal__name">Contrast</span>
-          <span class="cal__value" id="cal-val-contrast">1.00</span>
+        <div class="sig__note-row">
+          <span class="sig__numeral" id="sig-numeral">—</span>
+          <span class="sig__sep">·</span>
+          <span class="sig__notename" id="sig-notename">—</span>
         </div>
-        <div class="cal__row" id="cal-row-saturation">
-          <span class="cal__name">Saturation</span>
-          <span class="cal__value" id="cal-val-saturation">1.00</span>
-        </div>
-        <div class="cal__row" id="cal-row-hueRotate">
-          <span class="cal__name">Hue Rotate</span>
-          <span class="cal__value" id="cal-val-hueRotate">0°</span>
+        <div class="sig__quality" id="sig-quality"></div>
+
+        <div class="sig__divider"></div>
+
+        <!-- Sparklines -->
+        <div class="sig__sparks">
+          <canvas class="spark" id="ss-act"></canvas>
+          <canvas class="spark" id="ss-actbg"></canvas>
+          <canvas class="spark" id="ss-bri"></canvas>
+          <canvas class="spark" id="ss-contrast"></canvas>
+          <canvas class="spark" id="ss-vy"></canvas>
         </div>
 
-        <div class="cal__hint">↑↓ adjust · TAB next · 0 reset · V close</div>
-        <div class="cal__url" id="cal-url"></div>
+        <div class="sig__divider"></div>
+
+        <!-- Scene meters -->
+        <div class="sig__hdr">SCENE</div>
+
+        <div class="sig__row">
+          <span class="sig__lbl">BRI</span>
+          <div class="meter"><div class="meter__fill" id="sb-bri"></div></div>
+          <span class="sig__val" id="sv-bri">—</span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">ACT</span>
+          <div class="meter"><div class="meter__fill" id="sb-act"></div></div>
+          <span class="sig__val" id="sv-act">—</span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">BG</span>
+          <div class="meter"><div class="meter__fill" id="sb-actbg"></div></div>
+          <span class="sig__val" id="sv-actbg">—</span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">CTR</span>
+          <div class="meter"><div class="meter__fill" id="sb-contrast"></div></div>
+          <span class="sig__val" id="sv-contrast">—</span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">SPR</span>
+          <div class="meter"><div class="meter__fill" id="sb-spread"></div></div>
+          <span class="sig__val"></span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">SAT</span>
+          <div class="meter"><div class="meter__fill" id="sb-sat"></div></div>
+          <span class="sig__val"></span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">HI</span>
+          <div class="meter"><div class="meter__fill" id="sb-hi"></div></div>
+          <span class="sig__val"></span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">LO</span>
+          <div class="meter"><div class="meter__fill" id="sb-lo"></div></div>
+          <span class="sig__val"></span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">MSS</span>
+          <div class="meter"><div class="meter__fill" id="sb-mass"></div></div>
+          <span class="sig__val"></span>
+        </div>
+        <div class="sig__row">
+          <span class="sig__lbl">VMG</span>
+          <div class="meter"><div class="meter__fill" id="sb-vmag"></div></div>
+          <span class="sig__val"></span>
+        </div>
+
+        <!-- Spatial position markers -->
+        <div class="sig__row sig__row--pos">
+          <span class="sig__lbl">MX</span>
+          <div class="pos-track"><div class="pos-track__marker" id="sb-mx"></div></div>
+          <span class="sig__val" id="sv-mx">—</span>
+        </div>
+        <div class="sig__row sig__row--pos">
+          <span class="sig__lbl">VY</span>
+          <div class="pos-track"><div class="pos-track__marker" id="sb-vy"></div></div>
+          <span class="sig__val" id="sv-vy">—</span>
+        </div>
       </div>
 
       <!-- Hue panel (bottom-left) -->
@@ -79,62 +145,19 @@
         <div class="huehist" id="huehist" aria-hidden="true"></div>
       </div>
 
-      <!-- Analysis readout (right side) -->
-      <div id="p-signals" class="panel" aria-label="Analysis readout">
-        <div class="sig__hdr">SCENE</div>
-
-        <div class="sig__brow">
-          <span class="sig__blbl">BRI</span>
-          <b class="sig__bval" id="sv-bri">—</b>
-        </div>
-        <div class="sig__brow">
-          <span class="sig__blbl">ACT</span>
-          <b class="sig__bval" id="sv-act">—</b>
-        </div>
-        <div class="sig__brow">
-          <span class="sig__blbl">CTR</span>
-          <b class="sig__bval" id="sv-contrast">—</b>
-        </div>
-
-        <div class="sig__divider"></div>
-
-        <div class="sig__hdr">SYNTH</div>
-        <div class="sig__key-row">
-          <span class="sig__dot" id="sig-dot"></span>
-          <span id="sig-key-lbl">—</span>
-        </div>
-        <div class="sig__note-row">
-          <span class="sig__numeral" id="sig-numeral">—</span>
-          <span class="sig__sep">·</span>
-          <span class="sig__notename" id="sig-notename">—</span>
-        </div>
-        <div class="sig__quality" id="sig-quality"></div>
-      </div>
-
       <!-- Meta bar (bottom-left) -->
       <div id="p-meta" class="panel" aria-label="Signal metadata">
-        SIGNAL <b id="m-src">—</b><br />
-        SAMPLE <b id="m-res">—</b> · <b id="m-fps">—</b> FPS
+        <b id="m-src">—</b> · <b id="m-res">—</b> · <b id="m-fps">—</b> fps
       </div>
 
-      <!-- Key reference (bottom-right) -->
-      <div id="keys" class="panel" aria-label="Keyboard shortcuts">
-        <b>V</b> calibrate &nbsp; <b>H</b> hud<br />
-        <b>M</b> motion-map &nbsp; <b>R</b> mirror<br />
-        <b>F</b> fullscreen &nbsp; <b>C</b> cycle
-      </div>
     </div>
     <!-- /#stage -->
 
-    <!-- ── Gate (splash / permission screen) ── -->
-    <div id="gate">
-      <h1 class="gate__title">CAM&nbsp;→&nbsp;AUDIO</h1>
-      <p class="gate__sub">
-        Analysis layer. This instrument observes hue, brightness, and activity.
-        No sound is produced yet — this stage verifies the eyes.
-      </p>
-      <button class="gate__btn" id="go">Grant camera · begin</button>
+    <!-- ── Gate (error screen only — hidden on load) ── -->
+    <div id="gate" class="hide">
+      <h1 class="gate__title">AVVA</h1>
       <div class="gate__err" id="err" role="alert"></div>
+      <button class="gate__btn" id="go">Retry</button>
     </div>
   </body>
 </html>

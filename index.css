@@ -305,6 +305,8 @@ body {
   background: radial-gradient(circle at 50% 45%, #101010 0%, #040404 70%);
   text-align: center;
   transition: opacity var(--dur-long) var(--ease);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 #gate.hide {
@@ -487,9 +489,9 @@ body {
   bottom: var(--footer-bottom);
   left: var(--inset);
   color: var(--color-dim);
-  font-size: var(--text-xs);
+  font-size: var(--text-2xs);
   letter-spacing: var(--tracking-wide);
-  line-height: var(--lh-meta);
+  line-height: 1;
 }
 
 #p-meta b {
@@ -516,147 +518,46 @@ body {
   color: var(--color-ink);
 }
 
-/* ============================================================
-   Calibration panel (top-right)
-   Shown/hidden with .visible; keyboard-driven via CalibrationPanel.
-   ============================================================ */
-
-#calibrate {
-  position: absolute;
-  top: var(--inset);
-  right: var(--inset);
-  z-index: 5;
-  width: var(--cal-w);
-  padding: var(--cal-pad-y) var(--cal-pad-x) calc(var(--cal-pad-y) + 2px);
-  border: 1px solid var(--color-hair);
-  background: var(--cal-bg);
-  backdrop-filter: blur(var(--cal-blur));
-  -webkit-backdrop-filter: blur(var(--cal-blur));
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-medium) var(--ease);
-}
-
-#calibrate.visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.cal__header {
-  margin-bottom: 14px;
-  color: var(--color-dim);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--tracking-widest);
-}
-
-.cal__row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 5px 0 5px var(--cal-row-indent);
-  border-left: var(--cal-border-w) solid transparent;
-  color: var(--color-dim);
-  transition:
-    color var(--dur-short) var(--ease),
-    border-color var(--dur-short) var(--ease);
-}
-
-.cal__row.is-active {
-  color: var(--color-ink);
-  border-left-color: var(--color-accent);
-}
-
-.cal__name {
-  font-size: var(--text-xs);
-  letter-spacing: var(--tracking-base);
-}
-
-.cal__value {
-  font-family: var(--font-display);
-  font-size: var(--text-base);
-  font-weight: 700;
-  letter-spacing: var(--tracking-tight);
-  min-width: 5ch;
-  text-align: right;
-}
-
-.cal__hint {
-  margin-top: 14px;
-  color: var(--color-dim);
-  font-size: var(--text-2xs);
-  letter-spacing: 0.16em;
-  line-height: 1.9;
-  opacity: 0.65;
-}
-
-.cal__url {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-hair);
-  color: var(--color-dim);
-  font-size: var(--text-2xs);
-  letter-spacing: 0.1em;
-  word-break: break-all;
-  opacity: 0.55;
-}
 
 /* ============================================================
-   Panel — Analysis readout (right side)
+   Panel — Signal monitor (right side)
    ============================================================ */
 
 #p-signals {
   right: var(--inset);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 120px;
+  top: var(--inset);
+  bottom: 60px;
+  width: 196px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
+/* Section header */
 .sig__hdr {
   color: var(--color-dim);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-widest);
-  margin-bottom: 10px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--color-hair);
+  margin-bottom: 8px;
 }
 
-.sig__brow {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 11px;
-}
-
-.sig__blbl {
-  font-size: var(--text-xs);
-  letter-spacing: var(--tracking-wider);
-  color: var(--color-dim);
-}
-
-.sig__bval {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.02em;
-  color: var(--color-accent);
-}
-
+/* Divider */
 .sig__divider {
   height: 1px;
   background: var(--color-hair);
-  margin: 12px 0;
+  margin: 10px 0;
+  flex-shrink: 0;
 }
 
+/* Synth key row */
 .sig__key-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-wider);
   color: var(--color-ink);
-  margin-bottom: 6px;
+  margin-bottom: 5px;
 }
 
 .sig__dot {
@@ -679,12 +580,12 @@ body {
   display: flex;
   align-items: baseline;
   gap: 5px;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .sig__numeral {
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--color-ink);
@@ -698,7 +599,7 @@ body {
 
 .sig__notename {
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--color-accent);
@@ -708,6 +609,94 @@ body {
   font-size: var(--text-2xs);
   color: var(--color-dim);
   letter-spacing: var(--tracking-wider);
+  min-height: 1em;
+  margin-bottom: 2px;
+}
+
+/* Sparklines */
+.sig__sparks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 22px;
+}
+
+/* Meter rows */
+.sig__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  height: 10px;
+}
+
+.sig__lbl {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--color-dim);
+  width: 22px;
+  flex-shrink: 0;
+}
+
+.meter {
+  flex: 1;
+  height: 2px;
+  background: rgba(232, 230, 224, 0.1);
+  position: relative;
+  overflow: visible;
+}
+
+.meter__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0%;
+  background: var(--color-accent);
+  transition: width 0.08s linear;
+  box-shadow: 0 0 4px var(--color-accent);
+}
+
+.sig__val {
+  font-family: var(--font-display);
+  font-size: 8px;
+  letter-spacing: 0.02em;
+  color: var(--color-ink);
+  width: 20px;
+  text-align: right;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* Position track (MX / VY spatial markers) */
+.sig__row--pos .meter {
+  height: 1px;
+  background: var(--color-hair);
+}
+
+.pos-track {
+  flex: 1;
+  height: 1px;
+  background: var(--color-hair);
+  position: relative;
+}
+
+.pos-track__marker {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 1px;
+  height: 9px;
+  background: var(--color-accent);
+  box-shadow: 0 0 4px var(--color-accent);
+  transform: translateX(-50%);
+  transition: left 0.08s linear;
 }
 
 /* ============================================================
@@ -731,12 +720,19 @@ body {
    ============================================================ */
 
 @media (max-width: 760px) {
-  #p-signals,
-  #keys {
+  #p-signals {
+    width: 160px;
+  }
+
+  #p-signals .sig__sparks {
     display: none;
   }
 
   #p-hue {
     width: 180px;
+  }
+
+  #keys {
+    display: none;
   }
 }

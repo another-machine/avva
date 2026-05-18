@@ -13,7 +13,7 @@ import { VideoSource } from "../input/video-source.js";
 import { Analyzer } from "../analysis/analyzer.js";
 import { Renderer } from "../render/renderer.js";
 import { Controls } from "../controls/controls.js";
-import { Calibration, CalibrationPanel } from "../controls/calibration.js";
+import { Calibration } from "../controls/calibration.js";
 import { Key } from "../harmony/music.js";
 import { Synth } from "../audio/synth.js";
 
@@ -38,7 +38,7 @@ const state: RuntimeState = {
 };
 
 let videoSource: any, analyzer: any, renderer: any, controls: any;
-let calibration: any, calPanel: any, synth: any;
+let calibration: any, synth: any;
 
 async function begin(): Promise<void> {
   const videoEl = document.getElementById("vid") as HTMLVideoElement;
@@ -49,10 +49,7 @@ async function begin(): Promise<void> {
 
   calibration = new Calibration();
   videoEl.style.filter = calibration.filterString;
-
-  calibration.onChange((cal: any) => {
-    videoEl.style.filter = cal.filterString;
-  });
+  calibration.onChange((cal: any) => { videoEl.style.filter = cal.filterString; });
 
   videoSource = new VideoSource(videoEl, CONFIG);
   analyzer = new Analyzer(CONFIG, calibration);
@@ -82,24 +79,21 @@ async function begin(): Promise<void> {
     });
   }
 
-  calPanel = new CalibrationPanel(calibration, {
-    onChange(cal: any) {
-      videoEl.style.filter = cal.filterString;
-    },
-  });
-
   try {
     await videoSource.start();
   } catch (e: any) {
+    const gate = document.getElementById("gate");
+    gate?.classList.remove("hide");
     if (errEl) {
       const isCam = CONFIG.source === "camera";
       errEl.textContent =
-        (isCam ? "Camera unavailable: " : "Video file error: ") +
-        (e.message || e.name) +
-        (isCam
-          ? " — check browser permissions, or serve over https/localhost."
-          : "");
+        (isCam ? "Camera unavailable: " : "Video error: ") +
+        (e.message || e.name);
     }
+    document.getElementById("go")?.addEventListener("click", () => {
+      gate?.classList.add("hide");
+      void begin();
+    }, { once: true });
     return;
   }
 
@@ -110,12 +104,10 @@ async function begin(): Promise<void> {
   window.addEventListener("resize", () => renderer.resize());
 
   controls = new Controls({
-    calibrationPanel: calPanel,
     onHudToggle() {
       state.hudOn = !state.hudOn;
       store.set("view.hud", state.hudOn);
       document.body.style.setProperty("--hud-opacity", state.hudOn ? "1" : "0");
-      if (!state.hudOn) calPanel.hide();
     },
     onHeatToggle() {
       state.heatOn = !state.heatOn;
@@ -153,7 +145,6 @@ async function begin(): Promise<void> {
   store.subscribeKey("view.hud", (v) => {
     state.hudOn = v;
     document.body.style.setProperty("--hud-opacity", v ? "1" : "0");
-    if (!v) calPanel.hide?.();
   });
 
   store.subscribeKey("view.heatOn", (v) => {
@@ -171,9 +162,42 @@ async function begin(): Promise<void> {
     if (synth._master) synth._master.gain.value = v;
   });
 
+  const _applyCassette = () =>
+    synth.setCassetteParams({
+      midBoostDb: store.get("cassette.midBoostDb"),
+      masterLPHz: store.get("cassette.masterLPHz"),
+      satAmount: store.get("cassette.satAmount"),
+      satWet: store.get("cassette.satWet"),
+      tapeDelayMs: store.get("cassette.tapeDelayMs"),
+      tapeDelayFb: store.get("cassette.tapeDelayFb"),
+      tapeDelayWet: store.get("cassette.tapeDelayWet"),
+      reverbWet: store.get("cassette.reverbWet"),
+      noiseGain: store.get("cassette.noiseGain"),
+      wowDepthCents: store.get("cassette.wowDepthCents"),
+      flutterDepthCents: store.get("cassette.flutterDepthCents"),
+    });
+
+  for (const k of [
+    "cassette.midBoostDb",
+    "cassette.masterLPHz",
+    "cassette.satAmount",
+    "cassette.satWet",
+    "cassette.tapeDelayMs",
+    "cassette.tapeDelayFb",
+    "cassette.tapeDelayWet",
+    "cassette.reverbWet",
+    "cassette.noiseGain",
+    "cassette.wowDepthCents",
+    "cassette.flutterDepthCents",
+  ] as const) {
+    store.subscribeKey(k, _applyCassette);
+  }
+
   store.subscribeKey("source.playbackRate", (v) => {
     videoEl.playbackRate = v;
   });
+
+  document.getElementById("gate")?.classList.add("hide");
 
   document.getElementById("gate")?.classList.add("hide");
 
@@ -211,25 +235,5 @@ function tick(t: number): void {
 }
 
 export function mountAnalysisView(): void {
-  if (CONFIG.source !== "camera") {
-    const sources = Array.isArray(CONFIG.source)
-      ? CONFIG.source
-      : [CONFIG.source];
-    const subLabel =
-      sources.length > 1
-        ? `${sources.length} sources · C to cycle`
-        : ((sources[0] as string).split("/").pop() ?? "");
-
-    const titleEl = document.querySelector(".gate__title");
-    const subEl = document.querySelector(".gate__sub");
-    const btnEl = document.querySelector(".gate__btn");
-    if (titleEl) titleEl.textContent = "AVVA · FILE MODE";
-    if (subEl) subEl.textContent = subLabel;
-    if (btnEl) btnEl.textContent = "Begin";
-    void begin();
-  } else {
-    document
-      .getElementById("go")
-      ?.addEventListener("click", () => void begin());
-  }
+  void begin();
 }

@@ -21,6 +21,7 @@ const GROUP_ORDER = [
   "calibration",
   "harmony",
   "synth",
+  "cassette",
   "audio",
   "analysis",
 ] as const;

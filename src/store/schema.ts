@@ -55,20 +55,12 @@ export type SourceKind = "camera" | "file" | "files" | "screen" | "url";
 export const SOURCE_KINDS = ["camera", "file", "files", "screen", "url"] as const;
 
 export type HarmonyMode = "scale" | "palette";
-export type ViewMode = "analysis" | "loop";
 export type FacingMode = "environment" | "user";
 
 // ── Schema ──────────────────────────────────────────────────────
 
 export const SCHEMA = {
   // ── view / app ─────────────────────────────────────────────
-  "view.mode": {
-    kind: "enum",
-    default: "analysis" as ViewMode,
-    options: ["analysis", "loop"] as const,
-    label: "View",
-    group: "view",
-  },
   "view.hud": { kind: "boolean", default: true, label: "HUD visible", group: "view" },
   "view.mirror": { kind: "boolean", default: false, label: "Mirror video", group: "view" },
   "view.heatOn": { kind: "boolean", default: false, label: "Motion heatmap", group: "view" },
@@ -150,6 +142,19 @@ export const SCHEMA = {
   "synth.fmStereoWidth": { kind: "number", default: 0.75, min: 0, max: 1, step: 0.05, label: "FM stereo width", group: "synth" },
   "synth.fmPluckRatio": { kind: "number", default: 2, min: 1, max: 12, step: 1, label: "FM pluck ratio", group: "synth" },
 
+  // ── cassette effects ───────────────────────────────────────
+  "cassette.midBoostDb": { kind: "number", default: 3, min: 0, max: 12, step: 0.5, label: "Mid boost dB", group: "cassette" },
+  "cassette.masterLPHz": { kind: "number", default: 12000, min: 3000, max: 20000, step: 100, label: "Master LP Hz", group: "cassette" },
+  "cassette.satAmount": { kind: "number", default: 8, min: 0, max: 20, step: 0.5, label: "Saturation", group: "cassette" },
+  "cassette.satWet": { kind: "number", default: 0.4, min: 0, max: 1, step: 0.02, label: "Sat wet", group: "cassette" },
+  "cassette.tapeDelayMs": { kind: "number", default: 120, min: 20, max: 400, step: 5, label: "Tape delay ms", group: "cassette" },
+  "cassette.tapeDelayFb": { kind: "number", default: 0.22, min: 0, max: 0.9, step: 0.01, label: "Delay feedback", group: "cassette" },
+  "cassette.tapeDelayWet": { kind: "number", default: 0.18, min: 0, max: 1, step: 0.01, label: "Delay wet", group: "cassette" },
+  "cassette.reverbWet": { kind: "number", default: 0.1, min: 0, max: 0.5, step: 0.01, label: "Reverb wet", group: "cassette" },
+  "cassette.noiseGain": { kind: "number", default: 0.015, min: 0, max: 0.1, step: 0.001, label: "Hiss level", group: "cassette" },
+  "cassette.wowDepthCents": { kind: "number", default: 6, min: 0, max: 20, step: 0.5, label: "Wow depth ¢", group: "cassette" },
+  "cassette.flutterDepthCents": { kind: "number", default: 1.5, min: 0, max: 8, step: 0.1, label: "Flutter depth ¢", group: "cassette" },
+
   // ── audio renderer (loop view) ─────────────────────────────
   "audio.feedback": { kind: "number", default: 0.92, min: 0, max: 1, step: 0.01, label: "Feedback decay", group: "audio" },
   "audio.noiseScale": { kind: "number", default: 2.5, min: 0.1, max: 10, step: 0.1, label: "Noise scale", group: "audio" },
@@ -164,7 +169,7 @@ type Widen<T> = T extends number
   : T extends boolean
     ? boolean
     : T extends string
-      ? T extends ViewMode | SourceKind | HarmonyMode | FacingMode
+      ? T extends SourceKind | HarmonyMode | FacingMode
         ? T
         : string
       : T;
