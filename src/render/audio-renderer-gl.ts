@@ -99,10 +99,15 @@ void main() {
   vec3  blendColor  = vec3(0.0);
   float blendWeight = 0.0;
 
+  // Activity-scaled noise scroll speed — faster/more chaotic with movement
+  float nSpeed = 0.12 + uAct * 0.45;
+
   for (int i = 0; i < N_HUES; i++) {
-    vec2  noiseUV  = uv * uNoiseScale
-                   + vec2(float(i) * 17.3,
-                          uTime * (0.04 + float(i) * 0.007));
+    float fi = float(i);
+    // Each degree scrolls in a unique direction; speed scales with activity
+    vec2  noiseUV = uv * uNoiseScale
+                  + vec2(fi * 17.3 + uTime * (nSpeed * 0.55 + fi * 0.013),
+                         fi * 31.7 + uTime * (nSpeed         + fi * 0.009));
     float n        = snoiseN(noiseUV);
     float presence = uDegrees[i] * n;
     if (presence > maxPresence) maxPresence = presence;
@@ -110,10 +115,12 @@ void main() {
     blendWeight += presence;
   }
 
+  // Feedback drift — also slightly activity-responsive
+  float driftAmt = 0.00125 + uAct * 0.002;
   vec2 driftUV = uv + vec2(
-    snoise(uv * 4.0 + vec2(uTime * 0.05,        0.0)),
-    snoise(uv * 4.0 + vec2(uTime * 0.05 + 100.0, 0.0))
-  ) * 0.00125;
+    snoise(uv * 4.0 + vec2(uTime * 0.07,        0.0)),
+    snoise(uv * 4.0 + vec2(uTime * 0.07 + 100.0, 0.0))
+  ) * driftAmt;
   driftUV = clamp(driftUV, 0.0, 1.0);
   vec4 prev = texture(uPrev, driftUV);
 
@@ -124,13 +131,23 @@ void main() {
   float bScale = uBri * 5.0;
   float bFloor = newAmount * 0.55;
   base *= clamp(max(bScale, bFloor), 0.0, 1.0);
-  base += vec3(max(0.0, bScale - 1.0) * 0.4);
+
+  // Brightness overflow: tint toward current chord color rather than pure white
+  float briOver   = max(0.0, bScale - 1.0);
+  vec3  briTint   = blendWeight > 0.001 ? blendColor / blendWeight : vec3(1.0);
+  base += mix(vec3(1.0), briTint, 0.45) * briOver * 0.4;
 
   float topBand    = smoothstep(0.0, 0.33, 1.0 - uv.y) * uBandHi * 0.6;
   float bottomBand = smoothstep(0.0, 0.33, uv.y)       * uBandLo * 0.6;
   base += vec3(topBand + bottomBand);
 
-  base += vec3(uPulse * 0.15);
+  // Fragment flash on chord change — scattered patches of the current chord
+  // color instead of a flat white overlay
+  vec3  flashColor = blendWeight > 0.001 ? blendColor / blendWeight : vec3(1.0);
+  float flashFrag  = snoiseN(uv * 9.0  + vec2(uTime * 20.0,  0.0))
+                   * snoiseN(uv * 3.5  + vec2(0.0, uTime * 13.0));
+  base += flashColor * uPulse * flashFrag * 0.65;
+  base += vec3(uPulse * 0.035); // faint residual white pop
 
   float grain    = snoise(uv * uRes / 2.5 + vec2(uTime * 8.0));
   float grainAmt = 0.04 + uAct * 0.06;

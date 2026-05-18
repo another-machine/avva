@@ -46,7 +46,6 @@ interface TierVoice {
 }
 
 interface Tier {
-  octaveShift: number;
   voices: TierVoice[];
 }
 
@@ -161,6 +160,7 @@ export class Synth {
   palette: Palette | null;
   running: boolean;
   private _prevRootFreq: number;
+  private _lastCarrierType: OscillatorType;
 
   constructor(config: LegacyConfig) {
     this._cfg = config;
@@ -178,6 +178,7 @@ export class Synth {
     this.palette = null;
     this.running = false;
     this._prevRootFreq = 0;
+    this._lastCarrierType = "sine";
   }
 
   // ── Lifecycle ──────────────────────────────────────────────
@@ -290,7 +291,6 @@ export class Synth {
     // Tier pad voices
     this._tiers = [];
     for (let ti = 0; ti < 3; ti++) {
-      const octaveShift = ti - 1;
       const ratioBase = TIER_RATIO[ti];
       const voices: TierVoice[] = [];
       for (let vi = 0; vi < 5; vi++) {
@@ -313,7 +313,7 @@ export class Synth {
           osc: fm.carrier,
         });
       }
-      this._tiers.push({ octaveShift, voices });
+      this._tiers.push({ voices });
     }
 
     // Connect wow/flutter LFOs to all tier carrier detuners
@@ -417,6 +417,25 @@ export class Synth {
     const tau = Math.max(0.001, this._glideTime(safeAct) / 3);
     const slowTau = Math.max(0.05, tau * 4);
 
+    // ── Per-tier octave offsets ──────────────────────────────────
+    const tierOctaveOffsets = [
+      this._cfg.octaveOffsetBass ?? -1,
+      this._cfg.octaveOffsetMid ?? 0,
+      this._cfg.octaveOffsetTreble ?? 1,
+    ] as const;
+
+    // ── Carrier waveform ─────────────────────────────────────────
+    const carrierType = (this._cfg.carrierType ?? "sine") as OscillatorType;
+    if (carrierType !== this._lastCarrierType) {
+      this._lastCarrierType = carrierType;
+      for (const { voices } of this._tiers)
+        for (const { fm } of voices) fm.carrier.type = carrierType;
+      for (const { fm } of this._plucks) fm.carrier.type = carrierType;
+    }
+
+    // ── Glide spread ─────────────────────────────────────────────
+    const glideSpread = this._cfg.glideSpread ?? 1.0;
+
     this._panTo(this._masterPanner!.pan, (safeMx - 0.5) * 1.4, slowTau, now);
 
     const vt = safeVy * 2;
@@ -444,7 +463,14 @@ export class Synth {
     const seventhW = clamp01((safeSat - 0.35) / 0.35);
     const ninthW = clamp01((safeSat - 0.65) / 0.3);
 
-    this._tiers.forEach(({ octaveShift, voices }, ti) => {
+    // Compute per-voice glide time with configurable spread
+    const _vGlide = (vi: number) => {
+      const base = VOICE_GLIDE_SPREAD[vi];
+      return tau * (1.0 + (base - 1.0) * glideSpread);
+    };
+
+    this._tiers.forEach(({ voices }, ti) => {
+      const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
       const tierBase = Math.max(0, tierSignals[ti] * 0.25);
 
@@ -495,7 +521,7 @@ export class Synth {
             }
           }
 
-          fm.glideTo(targetFreq, tau * VOICE_GLIDE_SPREAD[vi]);
+          fm.glideTo(targetFreq, _vGlide(vi));
           const triadGain = palette
             ? tierBase *
               voiceWeights[vi] *
@@ -521,7 +547,7 @@ export class Synth {
               const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
               if (si < secPCs.length) {
                 const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
-                fm.glideTo(sf, tau * VOICE_GLIDE_SPREAD[vi]);
+                fm.glideTo(sf, _vGlide(vi));
                 fm.setGain(
                   tierBase *
                     voiceWeights[[0, 2][ei]] *
@@ -538,7 +564,7 @@ export class Synth {
               const xi = 3 + ei;
               if (xi < pcs.length) {
                 const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
-                fm.glideTo(ef, tau * VOICE_GLIDE_SPREAD[vi]);
+                fm.glideTo(ef, _vGlide(vi));
                 fm.setGain(
                   tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
                   tau,
@@ -557,7 +583,7 @@ export class Synth {
                 (secDegree as DegreeInfo & { triad: { freq: number }[] })
                   .triad?.[secTriad[ei]]?.freq * freqScale;
               if (Number.isFinite(secFreq) && secFreq > 0 && secFreq < 8000) {
-                fm.glideTo(secFreq, tau * VOICE_GLIDE_SPREAD[vi]);
+                fm.glideTo(secFreq, _vGlide(vi));
                 fm.setGain(tierBase * voiceWeights[secTriad[ei]] * bf2, tau);
                 fm.setIndex(tierIndex[ti] * 0.65, slowTau);
                 fm.setRatio(ratioBase, slowTau);
@@ -565,7 +591,7 @@ export class Synth {
                 fm.setGain(0, tau);
               }
             } else if (extOk[ei]) {
-              fm.glideTo(extFreqs[ei], tau * VOICE_GLIDE_SPREAD[vi]);
+              fm.glideTo(extFreqs[ei], _vGlide(vi));
               fm.setGain(
                 tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
                 tau,
@@ -741,7 +767,10 @@ export class Synth {
 
   // ── Cassette effects ────────────────────────────────────────
 
-  private static _makeTapeSat(actx: AudioContext, amount: number): WaveShaperNode {
+  private static _makeTapeSat(
+    actx: AudioContext,
+    amount: number,
+  ): WaveShaperNode {
     const ws = actx.createWaveShaper();
     const n = 4096;
     const curve = new Float32Array(n);
@@ -910,7 +939,11 @@ export class Synth {
     }
     if (p.satAmount !== undefined) {
       const newSat = Synth._makeTapeSat(this._actx, p.satAmount);
-      try { c.tapeSat.disconnect(); } catch { /* no-op */ }
+      try {
+        c.tapeSat.disconnect();
+      } catch {
+        /* no-op */
+      }
       c.midBoost.connect(newSat);
       newSat.connect(c.satWet);
       (c as { tapeSat: WaveShaperNode }).tapeSat = newSat;
@@ -918,7 +951,8 @@ export class Synth {
     if (p.tapeDelayMs !== undefined)
       c.tapeDelay.delayTime.value = p.tapeDelayMs / 1000;
     if (p.tapeDelayFb !== undefined) c.tapeDelayFb.gain.value = p.tapeDelayFb;
-    if (p.tapeDelayWet !== undefined) c.tapeDelayWet.gain.value = p.tapeDelayWet;
+    if (p.tapeDelayWet !== undefined)
+      c.tapeDelayWet.gain.value = p.tapeDelayWet;
     if (p.reverbWet !== undefined) c.reverbWet.gain.value = p.reverbWet;
     if (p.noiseGain !== undefined) c.noiseGain.gain.value = p.noiseGain;
     if (p.wowDepthCents !== undefined) c.wowDepth.gain.value = p.wowDepthCents;

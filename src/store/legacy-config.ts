@@ -40,6 +40,12 @@ export interface LegacyConfig {
   fmStereoWidth: number;
   fmPluckRatio: number;
 
+  carrierType: OscillatorType;
+  glideSpread: number;
+  octaveOffsetBass: number;
+  octaveOffsetMid: number;
+  octaveOffsetTreble: number;
+
   feedback: number;
   noiseScale: number;
 
@@ -129,6 +135,22 @@ export const legacyConfig: LegacyConfig = {
   },
   get fmPluckRatio() {
     return store.get("synth.fmPluckRatio");
+  },
+
+  get carrierType() {
+    return store.get("synth.carrierType") as OscillatorType;
+  },
+  get glideSpread() {
+    return store.get("synth.glideSpread");
+  },
+  get octaveOffsetBass() {
+    return store.get("synth.octaveOffsetBass");
+  },
+  get octaveOffsetMid() {
+    return store.get("synth.octaveOffsetMid");
+  },
+  get octaveOffsetTreble() {
+    return store.get("synth.octaveOffsetTreble");
   },
 
   get feedback() {

@@ -225,7 +225,7 @@ function _buildVideoDOM(host: HTMLElement): VideoMonitorRefs {
   vyRow.appendChild(svVy);
 
   // Hue section
-  const hueLabel = mk("div", "panel__label", "Hue");
+  const hueLabel = mk("div", "panel__label", "SEEN CHROMA");
   const hueVal = mk("div", "panel__value");
   const hueV = mk("span", undefined, "—");
   const hueN = mk("span", "panel__unit");
@@ -239,7 +239,7 @@ function _buildVideoDOM(host: HTMLElement): VideoMonitorRefs {
   const hueBins = CONFIG.hueBins;
   for (let i = 0; i < hueBins; i++) {
     const bar = mk("span", "huehist__bar");
-    bar.style.background = `oklch(0.65 0.2 ${(i / hueBins) * 360})`;
+    bar.style.background = `hsl(${(i / hueBins) * 360}, 90%, 55%)`;
     huehist.appendChild(bar);
   }
 
@@ -517,7 +517,7 @@ export function mountAudioMonitor(host: HTMLElement): {
   const levelSprd = levelRow("SPRD");
 
   // ── Chroma bars ───────────────────────────────────────────────
-  const chromaHdr = mk("div", "sig__hdr", "CHROMA");
+  const chromaHdr = mk("div", "sig__hdr", "HEARD CHROMA");
   const chromaContainer = mk("div", "chroma");
 
   const div1 = mk("div", "sig__divider");
@@ -530,19 +530,19 @@ export function mountAudioMonitor(host: HTMLElement): {
     chordNoteRow,
     chordQualityEl,
     div1,
+    chromaHdr,
+    chromaContainer,
+    div2,
     bandsHdr,
     bandLo.row,
     bandMid.row,
     bandHi.row,
-    div2,
+    div3,
     levelsHdr,
     levelBri.row,
     levelAct.row,
     levelSat.row,
     levelSprd.row,
-    div3,
-    chromaHdr,
-    chromaContainer,
   );
 
   // ── Chroma bar DOM (rebuild on harmony changes) ───────────────

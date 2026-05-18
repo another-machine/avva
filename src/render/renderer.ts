@@ -203,7 +203,7 @@ export class Renderer {
     for (let i = 0; i < this._cfg.hueBins; i++) {
       const bar = document.createElement("span");
       bar.className = "huehist__bar";
-      bar.style.background = `oklch(0.65 0.2 ${(i / this._cfg.hueBins) * 360})`;
+      bar.style.background = `hsl(${(i / this._cfg.hueBins) * 360}, 90%, 55%)`;
       this._huehist.appendChild(bar);
     }
   }
