@@ -17,9 +17,15 @@ import type { TelemetryMsg } from "../src/store/telemetry.js";
 // ── Helpers (lifted from renderer.ts, adapted for per-element accent) ──────────
 
 function _setMonitorAccent(host: HTMLElement, out: AnalysisOut): void {
-  host.style.setProperty("--accent-l", (0.55 + out.bri * 0.2).toFixed(3));
-  host.style.setProperty("--accent-c", (0.04 + out.sat * 0.18).toFixed(3));
-  host.style.setProperty("--accent-h", out.hue.toFixed(1));
+  const l = (0.55 + out.bri * 0.2).toFixed(3);
+  const c = (0.04 + out.sat * 0.18).toFixed(3);
+  const h = out.hue.toFixed(1);
+  host.style.setProperty("--accent-l", l);
+  host.style.setProperty("--accent-c", c);
+  host.style.setProperty("--accent-h", h);
+  // Set --color-accent directly so meter fills don't depend on the browser
+  // re-evaluating the class-rule custom property when inline vars change.
+  host.style.setProperty("--color-accent", `oklch(${l} ${c} ${h})`);
 }
 
 function _accentColor(host: HTMLElement): string {

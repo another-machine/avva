@@ -155,7 +155,11 @@ void main() {
 
     float contrib = (fA + fB) * presence;
     totalField   += contrib;
-    totalColor   += uDegreeRGB[i] * contrib;
+    // Organic gradient across each slot's hue arc: blend between the arc's
+    // left-edge color (uDegreeRGB) and right-edge color (uDegreeRGB2) using
+    // slow noise so the gradient shifts organically rather than being flat.
+    float blend = snoise(uvW * 1.8 + vec2(fi * 7.31 + t * 0.02, fi * 2.17)) * 0.5 + 0.5;
+    totalColor   += mix(uDegreeRGB[i], uDegreeRGB2[i], blend) * contrib;
   }
 
   vec3  blobColor = totalField > 0.001 ? totalColor / totalField : vec3(0.0);
@@ -420,6 +424,7 @@ export class AudioRendererGL {
     chord: { change: boolean };
     slots: Float32Array;
     slotHues: Float32Array;
+    slotBoundaryHues?: Float32Array;
     bri: number;
     spread: number;
     act: number;
@@ -436,23 +441,35 @@ export class AudioRendererGL {
     const N = frame.slots.length;
     if (N !== this._activeN) this.setN(N);
 
-    // Find the winning slot (highest score) and smooth all weights toward a
-    // winner-only state — losers fade to 0, winner fades to its detection score.
-    let winner = 0;
-    let winnerScore = -1;
+    // Top-2 slots: winner always shows; runner-up shows only if it scores
+    // ≥65% of winner. This lets adjacent crossZone blending appear (both
+    // slots genuinely active when hue is at a boundary) while preventing
+    // acoustically similar but hue-distant slots from bleeding in.
+    let winner = 0,
+      runnerUp = -1;
+    let winnerScore = 0,
+      runnerScore = -1;
     for (let i = 0; i < N; i++) {
       if (frame.slots[i] > winnerScore) {
-        winnerScore = frame.slots[i];
+        runnerUp = winner;
+        runnerScore = winnerScore;
         winner = i;
+        winnerScore = frame.slots[i];
+      } else if (runnerUp < 0 || frame.slots[i] > runnerScore) {
+        runnerUp = i;
+        runnerScore = frame.slots[i];
       }
     }
+    const runnerThreshold = winnerScore * 0.65;
     for (let i = 0; i < N; i++) {
-      const target = i === winner ? winnerScore : 0;
+      let target = 0;
+      if (i === winner) target = winnerScore;
+      else if (i === runnerUp && runnerScore >= runnerThreshold)
+        target = runnerScore;
       this._slotWeights[i] += (target - this._slotWeights[i]) * 0.12;
     }
 
-    const hues = frame.slotHues;
-    this._fillDegreeRGB(hues);
+    this._fillDegreeRGB(frame.slotHues, frame.slotBoundaryHues);
 
     gl.useProgram(this._prog);
     gl.uniform1f(u.uTime, t);
@@ -606,16 +623,31 @@ export class AudioRendererGL {
     return { tex, fb };
   }
 
-  /** (Re-)compute _degreeRGBBuf from hues using oklch(0.65, 0.32, H). */
-  private _fillDegreeRGB(hues: Float32Array): void {
+  /**
+   * Fill uDegreeRGB (left-edge color) and uDegreeRGB2 (right-edge color) for
+   * each slot. When boundaryHues is supplied (N+1 values from Palette), uses the
+   * actual hue arc edges so each blob spans its true spectrum range.
+   */
+  private _fillDegreeRGB(
+    centerHues: Float32Array,
+    boundaryHues?: Float32Array,
+  ): void {
     const buf = this._degreeRGBBuf;
     const buf2 = this._degreeRGB2Buf;
     const n = this._activeN;
-    const step = 360 / n; // sector width — edge hue offset
+    const fallbackHalfStep = 180 / n;
     for (let i = 0; i < n; i++) {
-      const h = hues[i] ?? 0;
-      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, h);
-      const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, h + step * 0.55);
+      const hLeft = boundaryHues
+        ? boundaryHues[i] ?? centerHues[i] - fallbackHalfStep
+        : centerHues[i] - fallbackHalfStep;
+      const hRightRaw = boundaryHues
+        ? (boundaryHues[i + 1] ?? boundaryHues[0] + 360)
+        : centerHues[i] + fallbackHalfStep;
+      // If the right boundary wraps below the left (last slot touching 360→0),
+      // unwrap it so the gradient direction is always forward.
+      const hRight = hRightRaw < hLeft ? hRightRaw + 360 : hRightRaw;
+      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, hLeft);
+      const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, hRight);
       buf[i * 3] = r;
       buf[i * 3 + 1] = g;
       buf[i * 3 + 2] = b;

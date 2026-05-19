@@ -78,6 +78,7 @@ export interface AudioFrame {
   chroma: Float32Array;
   slots: Float32Array;
   slotHues: Float32Array;
+  slotBoundaryHues: Float32Array;
   bands: AudioBands;
   hue: number;
   spread: number;
@@ -194,6 +195,7 @@ export class AudioAnalyzer {
       chroma: this._chroma,
       slots: this._slotsOut,
       slotHues: palette.slotHues,
+      slotBoundaryHues: palette.slotBoundaryHues,
       bands: { lo: 0, mid: 0, hi: 0 },
       hue: 0,
       spread: 1,
@@ -222,6 +224,7 @@ export class AudioAnalyzer {
     this._slotsOut = new Float32Array(p.slots.length);
     this._out.slots = this._slotsOut;
     this._out.slotHues = p.slotHues;
+    this._out.slotBoundaryHues = p.slotBoundaryHues;
     this._paletteUnsubscribe = p.onChange(() => {
       const newN = p.slots.length;
       if (this._slotsOut.length !== newN) {
@@ -229,6 +232,7 @@ export class AudioAnalyzer {
         this._out.slots = this._slotsOut;
       }
       this._out.slotHues = p.slotHues;
+      this._out.slotBoundaryHues = p.slotBoundaryHues;
     });
   }
 
@@ -385,6 +389,7 @@ export class AudioAnalyzer {
     // ── Assemble output ───────────────────────────────────────────────────────
     this._out.slots = this._slotsOut;
     this._out.slotHues = this.palette.slotHues;
+    this._out.slotBoundaryHues = this.palette.slotBoundaryHues;
     this._out.bands.lo = lo;
     this._out.bands.mid = mid;
     this._out.bands.hi = hi;

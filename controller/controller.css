@@ -470,7 +470,12 @@ body {
   --color-ink: #e8e6e0;
   --color-dim: #6f6c64;
   --color-hair: rgba(232, 230, 224, 0.18);
-  --color-accent: oklch(var(--accent-l) var(--accent-c) var(--accent-h));
+  /* accent-l/c/h are set dynamically by JS; these defaults keep meter fills
+     visible before the first video frame arrives. */
+  --accent-l: 0.65;
+  --accent-c: 0.15;
+  --accent-h: 200;
+  --color-accent: oklch(var(--accent-l, 0.65) var(--accent-c, 0.15) var(--accent-h, 200));
   --color-white: #fff;
 
   --font-mono: "IBM Plex Mono", monospace;
