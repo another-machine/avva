@@ -9,7 +9,13 @@
  * trivial. Group is a UI-only hint.
  */
 
-export type FieldKind = "number" | "boolean" | "string" | "enum" | "json";
+export type FieldKind =
+  | "number"
+  | "boolean"
+  | "string"
+  | "enum"
+  | "json"
+  | "action";
 
 interface FieldBase<T> {
   default: T;
@@ -43,19 +49,27 @@ interface JsonField<T> extends FieldBase<T> {
   kind: "json";
 }
 
+export interface ActionField {
+  kind: "action";
+  default: null;
+  label: string;
+  group: string;
+  hint?: string;
+}
+
 export type Field =
   | NumberField
   | BooleanField
   | StringField
   | EnumField<string>
-  | JsonField<unknown>;
+  | JsonField<unknown>
+  | ActionField;
 
 // ── Source types ────────────────────────────────────────────────
 
 export type SourceKind = "camera" | "file" | "screen" | "url";
 export const SOURCE_KINDS = ["camera", "file", "screen", "url"] as const;
 
-export type HarmonyMode = "scale" | "palette";
 export type FacingMode = "environment" | "user";
 
 // ── Schema ──────────────────────────────────────────────────────
@@ -255,14 +269,6 @@ export const SCHEMA = {
   },
 
   // ── harmony ────────────────────────────────────────────────
-  "harmony.mode": {
-    kind: "enum",
-    default: "scale" as HarmonyMode,
-    options: ["scale", "palette"] as const,
-    label: "Harmony mode",
-    group: "harmony",
-    hint: "Scale: maps hue angles to diatonic degrees. Palette: custom chord list — each chord owns a hue range",
-  },
   "harmony.root": {
     kind: "string",
     default: "A",
@@ -270,8 +276,17 @@ export const SCHEMA = {
     group: "harmony",
   },
   "harmony.scale": {
-    kind: "string",
-    default: "locrian",
+    kind: "enum",
+    default: "major",
+    options: [
+      "major",
+      "minor",
+      "dorian",
+      "phrygian",
+      "lydian",
+      "mixolydian",
+      "locrian",
+    ] as const,
     label: "Scale",
     group: "harmony",
   },
@@ -296,11 +311,18 @@ export const SCHEMA = {
   },
   "harmony.palette": {
     kind: "string",
-    default: "",
+    default: "CEG, FAC, GBD",
     label: "Palette",
     group: "harmony",
-    hint: "Comma-separated chord names e.g. Am,C,G,Em — each chord is assigned a hue arc",
+    hint: "Comma-separated note letters e.g. CEG, FAC, GBD — each chord owns a hue arc. Use # and b for accidentals (e.g. ACEb).",
   },
+  "harmony.fillTriads": {
+    kind: "action",
+    default: null,
+    label: "Fill palette with triads",
+    group: "harmony",
+    hint: "Fills the palette with 7 diatonic triads from the current Root + Scale",
+  } as ActionField,
   "harmony.crossZone": {
     kind: "number",
     default: 0.15,
@@ -764,7 +786,7 @@ type Widen<T> = T extends number
   : T extends boolean
     ? boolean
     : T extends string
-      ? T extends SourceKind | HarmonyMode | FacingMode
+      ? T extends SourceKind | FacingMode
         ? T
         : string
       : T;

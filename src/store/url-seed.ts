@@ -26,7 +26,6 @@ const ALIAS: Record<string, SchemaKey> = {
   saturation: "calibration.saturation",
   hueRotate: "calibration.hueRotate",
   root: "harmony.root",
-  mode: "harmony.scale",
   octave: "harmony.octave",
   rootHue: "harmony.rootHue",
   crossZone: "harmony.crossZone",
@@ -59,7 +58,6 @@ export function seedFromQuery(): void {
   }
 
   if (params.has("palette")) {
-    store.set("harmony.mode", "palette", "url");
     store.set(
       "harmony.palette",
       decodeURIComponent(params.get("palette")!),

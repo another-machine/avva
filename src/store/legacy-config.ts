@@ -27,7 +27,6 @@ export interface LegacyConfig {
   mirror: boolean;
 
   root: string;
-  mode: string;
   octave: number;
   rootHue: number;
   glideMin: number;
@@ -109,9 +108,6 @@ export const legacyConfig: LegacyConfig = {
   get root() {
     return store.get("harmony.root");
   },
-  get mode() {
-    return store.get("harmony.scale");
-  },
   get octave() {
     return store.get("harmony.octave");
   },
@@ -187,8 +183,7 @@ export const legacyConfig: LegacyConfig = {
   },
 
   get palette() {
-    const mode = store.get("harmony.mode");
-    return mode === "palette" ? store.get("harmony.palette") : null;
+    return store.get("harmony.palette") || null;
   },
   get crossZone() {
     return store.get("harmony.crossZone");

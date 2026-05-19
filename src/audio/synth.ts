@@ -10,7 +10,6 @@
  */
 
 import { FMVoice } from "./fm-voice.js";
-import type { Key, DegreeInfo, HueToNoteResult } from "../harmony/music.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 
@@ -109,12 +108,10 @@ export interface CassetteParams {
   flutterDepthCents?: number;
 }
 
-/** A note-like proxy that works for both Key and Palette mode. */
+/** A palette note proxy. */
 interface NoteProxy {
-  degree: number;
   triad: { freq: number; name: string }[];
-  _palettePrimary?: PaletteSlot;
-  _paletteBf2?: number;
+  _palettePrimary: PaletteSlot;
 }
 
 export interface AnalysisSnapshot {
@@ -156,7 +153,6 @@ export class Synth {
   private _limiter: WaveShaperNode | null;
   _cassette: CassetteChain | null;
 
-  key: Key | null;
   palette: Palette | null;
   running: boolean;
   private _prevRootFreq: number;
@@ -179,7 +175,6 @@ export class Synth {
     this._masterPanner = null;
     this._limiter = null;
     this._cassette = null;
-    this.key = null;
     this.palette = null;
     this.running = false;
     this._prevRootFreq = 0;
@@ -374,9 +369,8 @@ export class Synth {
     sy = 0.5,
     mass = 0,
   }: AnalysisSnapshot): void {
-    const key = this.key;
     const palette = this.palette;
-    if (!this.running || (!key && !palette)) return;
+    if (!this.running || !palette) return;
 
     const safeHue = Number.isFinite(hue) ? hue : 0;
     const safeBri = Number.isFinite(bri) ? Math.max(0, bri) : 0;
@@ -394,34 +388,18 @@ export class Synth {
     const vMag = clamp01(Math.sqrt(vmx * vmx + vmy * vmy) * 20);
     const compactness = clamp01(1 - (sx + sy) * 3);
 
-    // ── Source: Key or Palette chord data ───────────────────
-    let note: NoteProxy;
-    let note2: NoteProxy | PaletteSlot | DegreeInfo | null;
-    let bf2: number;
+    // ── Palette chord data ───────────────────────────────────
     const baseOctave = this._cfg.octave ?? 4;
-
-    if (palette) {
-      const blend = palette.hueToBlend(safeHue);
-      const primarySlot = blend[0].slot;
-      const secEntry = blend.length > 1 ? blend[1] : null;
-      bf2 = secEntry ? secEntry.weight * 2 : 0;
-      note2 = secEntry ? secEntry.slot : null;
-      const pcs = primarySlot.chord.pitchClasses;
-      note = {
-        degree: 0,
-        _palettePrimary: primarySlot,
-        _paletteBf2: bf2,
-        triad: pcs.slice(0, 3).map((pc) => ({
-          freq: _pcToFreq(pc, baseOctave),
-          name: "",
-        })),
-      };
-    } else {
-      note = key!.hueToNote(safeHue) as NoteProxy;
-      const { blendDegree, blendFactor } = key!.hueToBlend(safeHue, 0.25);
-      note2 = blendFactor > 0.02 ? key!.degrees[blendDegree] : null;
-      bf2 = blendFactor * 2;
-    }
+    const blend = palette.hueToBlend(safeHue);
+    const primarySlot = blend[0].slot;
+    const secEntry = blend.length > 1 ? blend[1] : null;
+    const bf2 = secEntry ? secEntry.weight * 2 : 0;
+    const note2: PaletteSlot | null = secEntry ? secEntry.slot : null;
+    const pcs = primarySlot.chord.pitchClasses;
+    const note: NoteProxy = {
+      _palettePrimary: primarySlot,
+      triad: pcs.map((pc) => ({ freq: _pcToFreq(pc, baseOctave), name: "" })),
+    };
 
     const now = this._actx!.currentTime;
     const tau = Math.max(0.001, this._glideTime(safeAct) / 3);
@@ -497,9 +475,7 @@ export class Synth {
     const dt = this._lastUpdateTime > 0 ? now - this._lastUpdateTime : 0;
     this._lastUpdateTime = now;
 
-    const noteKey = palette
-      ? String(note._palettePrimary!.index)
-      : String(note.degree);
+    const noteKey = String(note._palettePrimary.index);
     const chordChanged = noteKey !== this._prevNoteKey;
     this._prevNoteKey = noteKey;
 
@@ -530,36 +506,12 @@ export class Synth {
         artEnv *
         this._waveGainComp(tierCarrierTypes[ti]);
 
-      let extFreqs: [number, number] = [0, 0];
-      let extOk: [boolean, boolean] = [false, false];
-      if (!palette) {
-        const d = note.degree;
-        const f5ref = note.triad[2].freq * freqScale;
-        let f7 = key!.degrees[(d + 6) % 7].freq * freqScale;
-        let f9 = key!.degrees[(d + 1) % 7].freq * freqScale;
-        while (f7 < f5ref && f7 > 0) f7 *= 2;
-        while (f9 <= f7 && f9 > 0) f9 *= 2;
-        extFreqs = [f7, f9];
-        extOk = [
-          Number.isFinite(f7) && f7 < 6000,
-          Number.isFinite(f9) && f9 < 8000,
-        ];
-      }
-
       voices.forEach(({ fm, panner, ratioBase }, vi) => {
         if (vi < 3) {
-          // Triad voices: root (0), 3rd (1), 5th (2)
+          // Triad voices: root (0), 3rd (1), 5th (2) — fold with modulo on short chords
           let targetFreq: number;
-          if (palette) {
-            const pcs = note._palettePrimary!.chord.pitchClasses;
-            if (vi >= pcs.length) {
-              fm.setGain(0, tau);
-              return;
-            }
-            targetFreq = _pcToFreq(pcs[vi], baseOctave + octaveShift);
-          } else {
-            targetFreq = note.triad[vi].freq * freqScale;
-          }
+          const nPCs = note.triad.length;
+          targetFreq = note.triad[vi % nPCs].freq * freqScale;
           if (!Number.isFinite(targetFreq) || targetFreq <= 0) {
             fm.setGain(0, tau);
             return;
@@ -578,12 +530,11 @@ export class Synth {
           }
 
           fm.glideTo(targetFreq, _vGlide(vi));
-          const triadGain = palette
-            ? tierBase *
-              voiceWeights[vi] *
-              (1 - bf2) *
-              (note._palettePrimary!.gain ?? 1)
-            : tierBase * voiceWeights[vi] * (1 - bf2);
+          const triadGain =
+            tierBase *
+            voiceWeights[vi] *
+            (1 - bf2) *
+            (note._palettePrimary.gain ?? 1);
           fm.setGain(triadGain, tau);
           fm.setIndex(tierIndex[ti], slowTau);
           const bassExtraDrift = ti === 0 ? 0.02 : 0;
@@ -595,9 +546,9 @@ export class Synth {
         } else {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
-          if (palette) {
-            const pcs = note._palettePrimary!.chord.pitchClasses;
-            const secSlot = note2 as PaletteSlot | null;
+          {
+            const pcs = note._palettePrimary.chord.pitchClasses;
+            const secSlot = note2;
             let handled = false;
 
             if (secSlot && bf2 > 0.04) {
@@ -633,32 +584,6 @@ export class Synth {
               }
             }
             if (!handled) fm.setGain(0, tau);
-          } else {
-            const secDegree = note2 as DegreeInfo | null;
-            if (secDegree && bf2 > 0.04) {
-              const secTriad = [0, 2] as const;
-              const secFreq =
-                (secDegree as DegreeInfo & { triad: { freq: number }[] })
-                  .triad?.[secTriad[ei]]?.freq * freqScale;
-              if (Number.isFinite(secFreq) && secFreq > 0 && secFreq < 8000) {
-                fm.glideTo(secFreq, _vGlide(vi));
-                fm.setGain(tierBase * voiceWeights[secTriad[ei]] * bf2, tau);
-                fm.setIndex(tierIndex[ti] * 0.65, slowTau);
-                fm.setRatio(ratioBase, slowTau);
-              } else {
-                fm.setGain(0, tau);
-              }
-            } else if (extOk[ei]) {
-              fm.glideTo(extFreqs[ei], _vGlide(vi));
-              fm.setGain(
-                tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
-                tau,
-              );
-              fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), slowTau);
-              fm.setRatio(ratioBase, slowTau);
-            } else {
-              fm.setGain(0, tau);
-            }
           }
           const extPan = TIER_BASE_PAN_EXT[ti][ei] * widthScale;
           this._panTo(panner.pan, extPan, slowTau, now);
@@ -666,9 +591,10 @@ export class Synth {
       });
     });
 
-    this._prevRootFreq = palette
-      ? _pcToFreq(note._palettePrimary!.chord.pitchClasses[0], baseOctave)
-      : note.triad[0].freq;
+    this._prevRootFreq = _pcToFreq(
+      note._palettePrimary.chord.pitchClasses[0],
+      baseOctave,
+    );
 
     this._maybePluck(
       note,
@@ -695,15 +621,16 @@ export class Synth {
     );
     this._tremolo!.lfo.frequency.setTargetAtTime(5 + rawAct * 4, now, slowTau);
 
-    const subFreq = palette
-      ? _pcToFreq(note._palettePrimary!.chord.pitchClasses[0], baseOctave - 2)
-      : key!.degrees[note.degree].freq / 4;
+    const subFreq = _pcToFreq(
+      note._palettePrimary.chord.pitchClasses[0],
+      baseOctave - 2,
+    );
     if (Number.isFinite(subFreq) && subFreq > 0) {
       this._cancelParam(this._sub!.osc.frequency, now);
       this._sub!.osc.frequency.setTargetAtTime(subFreq, now, tau);
     }
     this._cancelParam(this._sub!.gain.gain, now);
-    this._sub!.gain.gain.setTargetAtTime(safeLo * 0.4, now, tau);
+    this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tau);
   }
 
   // ── Private — pluck ─────────────────────────────────────────
@@ -756,7 +683,7 @@ export class Synth {
     const pluckOctaveOffset = this._cfg.octaveOffsetPluck ?? 1;
 
     if (this.palette) {
-      const pcs = note._palettePrimary!.chord.pitchClasses;
+      const pcs = note._palettePrimary.chord.pitchClasses;
       const nUnlocked = Math.max(1, Math.round(1 + spread * (pcs.length - 1)));
       const chosenIdx = Math.floor(Math.random() * nUnlocked);
       const octShift = Math.round(1 - slowness * 2) + pluckOctaveOffset;
@@ -766,16 +693,7 @@ export class Synth {
         (pcFrac - 0.5) * 2 * widthScale * (0.35 + spacious * 1.1) +
         (mx - 0.5) * 0.8;
     } else {
-      const d = note.degree;
-      const CONSONANCE_STEPS = [0, 4, 2, 6, 5, 3, 1];
-      const orderedDegrees = CONSONANCE_STEPS.map((s) => (d + s) % 7);
-      const nUnlocked = Math.round(1 + spread * 6);
-      const chosen = orderedDegrees[Math.floor(Math.random() * nUnlocked)];
-      const octShift = Math.round(1 - slowness * 2) + pluckOctaveOffset;
-      fc = this.key!.degrees[chosen].freq * Math.pow(2, octShift);
-      const degPan = (chosen / 6 - 0.5) * 2;
-      pluckPan =
-        degPan * widthScale * (0.35 + spacious * 1.1) + (mx - 0.5) * 0.8;
+      return;
     }
 
     if (!Number.isFinite(fc) || fc <= 0) return;

@@ -9,7 +9,6 @@
 import { store } from "../src/store/store.js";
 import { legacyConfig as CONFIG } from "../src/store/legacy-config.js";
 import { Palette } from "../src/harmony/palette.js";
-import { Key } from "../src/harmony/music.js";
 import { hueName } from "../src/analysis/color.js";
 import type { AnalysisOut } from "../src/analysis/analyzer.js";
 import type { TelemetryMsg } from "../src/store/telemetry.js";
@@ -468,22 +467,11 @@ export function mountAudioMonitor(host: HTMLElement): {
 
   // ── Chord bar DOM (rebuild on harmony changes) ────────────────
   let chromaBars: HTMLElement[] = [];
-  let currentKey = _buildKey();
   let currentPalette = _buildPalette();
 
-  function _buildKey(): Key {
-    return new Key({
-      root: store.get("harmony.root"),
-      mode: store.get("harmony.scale"),
-      octave: store.get("harmony.octave"),
-      rootHue: store.get("harmony.rootHue"),
-    });
-  }
-
   function _buildPalette(): Palette | null {
-    const mode = store.get("harmony.mode");
     const paletteStr = store.get("harmony.palette");
-    if (mode !== "palette" || !paletteStr) return null;
+    if (!paletteStr) return null;
     try {
       return Palette.fromURLParam(paletteStr as string, {
         rootHue: store.get("harmony.rootHue") ?? 0,
@@ -531,47 +519,17 @@ export function mountAudioMonitor(host: HTMLElement): {
         chromaContainer.appendChild(cell);
         chromaBars[slotIdx] = bar;
       }
-    } else {
-      // Scale mode — 7 equal-width bars
-      chromaBars = new Array(7);
-      const sorted = Array.from({ length: 7 }, (_, i) => ({
-        degree: i,
-        h0: currentKey.degreeToHue(i, 0),
-        h1: currentKey.degreeToHue(i, 1),
-        numeral: currentKey.degrees[i].numeral,
-      })).sort((a, b) => a.h0 - b.h0);
-
-      for (const { degree, h0, h1, numeral } of sorted) {
-        const cell = document.createElement("div");
-        cell.className = "chroma__cell";
-        cell.style.flex = "1";
-        const bar = document.createElement("div");
-        bar.className = "chroma__bar";
-        bar.style.background = _arcGradient(h0, h1);
-        cell.appendChild(bar);
-        const lbl = document.createElement("div");
-        lbl.className = "chroma__lbl";
-        lbl.textContent = numeral;
-        cell.appendChild(lbl);
-        chromaContainer.appendChild(cell);
-        chromaBars[degree] = bar;
-      }
     }
   }
 
   rebuildChromaDOM();
 
   for (const k of [
-    "harmony.root",
-    "harmony.scale",
-    "harmony.octave",
     "harmony.rootHue",
-    "harmony.mode",
     "harmony.palette",
     "harmony.crossZone",
   ] as const) {
     store.subscribeKey(k, () => {
-      currentKey = _buildKey();
       currentPalette = _buildPalette();
       rebuildChromaDOM();
     });
@@ -593,27 +551,15 @@ export function mountAudioMonitor(host: HTMLElement): {
 
     // Chord label
     if (audio.chord.label) {
-      const rootMatch = audio.chord.label.match(/^([A-G][#b]?)/);
-      const rootName = rootMatch ? rootMatch[1] : null;
-      const qualitySuffix = rootName
-        ? audio.chord.label.slice(rootName.length)
-        : audio.chord.label;
-      const deg = rootName
-        ? currentKey.degrees.find(
-            (d) => d.name.replace(/\d+$/, "") === rootName,
-          )
-        : null;
-      chordNumeral.textContent = deg?.numeral ?? "\u2014";
-      chordRoot.textContent = rootName
-        ? ` ${rootName}${qualitySuffix ? qualitySuffix.toLowerCase() : ""}`
-        : "\u2014";
+      chordNumeral.textContent = "—";
+      chordRoot.textContent = audio.chord.label;
     } else {
-      chordNumeral.textContent = "\u2014";
-      chordRoot.textContent = "\u2014";
+      chordNumeral.textContent = "—";
+      chordRoot.textContent = "—";
     }
 
     // Chord-region bar heights
-    const weights = (audio.slots ?? audio.degrees) as Float32Array;
+    const weights = audio.slots as Float32Array;
     for (let i = 0; i < weights.length; i++) {
       const bar = chromaBars[i];
       if (bar) bar.style.height = `${((weights[i] ?? 0) * 100).toFixed(1)}%`;

@@ -1,12 +1,16 @@
 /**
  * src/harmony/chord-parser.ts
  *
- * Pure chord-name parser.  No DOM, no Web Audio, no external dependencies.
+ * Letter-notation chord parser. No DOM, no Web Audio, no external dependencies.
+ *
+ * Notation: concatenated note letters with optional accidentals.
+ *   "CEG"  → [0,4,7]   "ACBb" → [9,0,10]   "C" → [0]   "CG" → [0,7]
  *
  * Exports:
- *   QUALITIES            — map of quality string → semitone offset array
- *   parseChord(name)     — "Cmaj7" → ParsedChord
- *   parseChordList(str)  — "Cmaj7:2,F:1" → ChordSlotInput[]
+ *   Chord              — { pitchClasses, label }
+ *   ChordSlotInput     — { chord, bias, gain }
+ *   parseChord(str)    — letter sequence → Chord  (throws on non-letter chars)
+ *   parseChordList(str) — "CEG:2,FAC:1" → ChordSlotInput[]
  */
 
 // ── Note name tables ──────────────────────────────────────────────────────────
@@ -49,46 +53,11 @@ const _ROOT_MAP: Record<string, number> = {
   Bb: 10,
 };
 
-// ── Quality table ─────────────────────────────────────────────────────────────
-export const QUALITIES: Record<string, readonly number[]> = {
-  // Triads
-  "": [0, 4, 7],
-  maj: [0, 4, 7],
-  m: [0, 3, 7],
-  min: [0, 3, 7],
-  dim: [0, 3, 6],
-  aug: [0, 4, 8],
-  sus2: [0, 2, 7],
-  sus4: [0, 5, 7],
-  // Sevenths
-  "7": [0, 4, 7, 10],
-  maj7: [0, 4, 7, 11],
-  M7: [0, 4, 7, 11],
-  m7: [0, 3, 7, 10],
-  min7: [0, 3, 7, 10],
-  dim7: [0, 3, 6, 9],
-  m7b5: [0, 3, 6, 10],
-  ø: [0, 3, 6, 10],
-  // Sixths
-  "6": [0, 4, 7, 9],
-  m6: [0, 3, 7, 9],
-  // Extensions
-  "9": [0, 4, 7, 10, 2],
-  maj9: [0, 4, 7, 11, 2],
-  m9: [0, 3, 7, 10, 2],
-  add9: [0, 4, 7, 2],
-  "11": [0, 4, 7, 10, 2, 5],
-  "13": [0, 4, 7, 10, 2, 9],
-};
-
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface ParsedChord {
-  root: number;
-  rootName: string;
-  quality: string;
-  pitchClasses: number[];
-  label: string;
+export interface Chord {
+  pitchClasses: number[]; // deduped, sorted ascending, values 0–11
+  label: string; // original input, trimmed
 }
 
 export interface ChordSlotInput {
@@ -99,41 +68,59 @@ export interface ChordSlotInput {
 
 // ── parseChord ────────────────────────────────────────────────────────────────
 
-export function parseChord(name: string): ParsedChord {
-  const trimmed = name.trim();
-  const m = trimmed.match(/^([A-G])([#b]?)(.*)$/);
-  if (!m) throw new Error(`Cannot parse chord name: "${name}"`);
-
-  const rootName = m[1] + m[2];
-  const quality = m[3];
-
-  const root = _ROOT_MAP[rootName];
-  if (root === undefined)
-    throw new Error(`Unknown root note: "${rootName}" in "${name}"`);
-
-  const offsets = QUALITIES[quality];
-  if (!offsets)
-    throw new Error(`Unknown chord quality: "${quality}" in "${name}"`);
+/**
+ * Parse a letter-notation chord string into pitch classes.
+ * Each note is one letter [A-G] followed by an optional accidental [#b].
+ * Throws on any non-letter, non-accidental character (e.g. "m", "7", digits).
+ */
+export function parseChord(letters: string): Chord {
+  const trimmed = letters.trim();
+  if (!trimmed) throw new Error(`Empty chord: "${letters}"`);
 
   const seen = new Set<number>();
   const pitchClasses: number[] = [];
-  for (const off of offsets) {
-    const pc = (root + off) % 12;
+  let pos = 0;
+
+  while (pos < trimmed.length) {
+    const ch = trimmed[pos];
+    if (!/[A-G]/.test(ch))
+      throw new Error(
+        `Unexpected character "${ch}" in chord "${letters}" (position ${pos}). Use letters A–G with optional # or b.`,
+      );
+
+    let noteName = ch;
+    pos++;
+    if (
+      pos < trimmed.length &&
+      (trimmed[pos] === "#" || trimmed[pos] === "b")
+    ) {
+      noteName += trimmed[pos];
+      pos++;
+    }
+
+    const pc = _ROOT_MAP[noteName];
+    if (pc === undefined)
+      throw new Error(`Unknown note "${noteName}" in chord "${letters}"`);
+
     if (!seen.has(pc)) {
       seen.add(pc);
       pitchClasses.push(pc);
     }
   }
+
+  if (pitchClasses.length === 0)
+    throw new Error(`No notes in chord: "${letters}"`);
+
   pitchClasses.sort((a, b) => a - b);
 
-  return { root, rootName, quality, pitchClasses, label: rootName + quality };
+  return { pitchClasses, label: trimmed };
 }
 
 // ── parseChordList ────────────────────────────────────────────────────────────
 
 /**
  * Parse a comma- or pipe-separated list of `chord[:bias[:gain]]` entries.
- * e.g. "Cmaj7:2,F:1,Am7:1"
+ * e.g. "CEG:2,FAC:1,GBD"
  */
 export function parseChordList(str: string): ChordSlotInput[] {
   return str

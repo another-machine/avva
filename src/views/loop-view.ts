@@ -3,7 +3,6 @@ import { legacyConfig as CONFIG } from "../store/legacy-config.js";
 import { VideoSource } from "../input/video-source.js";
 import { Analyzer } from "../analysis/analyzer.js";
 import { Calibration } from "../controls/calibration.js";
-import { Key } from "../harmony/music.js";
 import { Synth } from "../audio/synth.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
@@ -36,7 +35,7 @@ const state = { fps: 0, frames: 0, fpsT: 0, lastT: 0 };
 let videoEl: HTMLVideoElement;
 let audioCanvas: HTMLCanvasElement;
 let videoSource: any, vidAnalyzer: any, calibration: any;
-let synth: any, key: Key;
+let synth: any;
 let heatCtx: CanvasRenderingContext2D | null = null;
 let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
@@ -57,28 +56,15 @@ async function begin(): Promise<void> {
     videoEl.style.filter = cal.filterString;
   });
 
-  key = new Key({
-    root: CONFIG.root,
-    mode: CONFIG.mode,
-    octave: CONFIG.octave,
-    rootHue: CONFIG.rootHue,
+  const defaultPaletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
+  palette = Palette.fromURLParam(defaultPaletteStr, {
+    rootHue: CONFIG.rootHue ?? 0,
+    crossZone: CONFIG.crossZone,
   });
-
-  if (CONFIG.palette) {
-    try {
-      palette = Palette.fromURLParam(CONFIG.palette, {
-        rootHue: CONFIG.rootHue ?? 0,
-        crossZone: CONFIG.crossZone,
-      });
-    } catch (e: any) {
-      console.error("Palette parse error:", e.message);
-    }
-  }
 
   videoSource = new VideoSource(videoEl, CONFIG);
   vidAnalyzer = new Analyzer(CONFIG, calibration);
   synth = new Synth(CONFIG);
-  synth.key = key;
   synth.palette = palette;
 
   try {
@@ -110,17 +96,11 @@ async function begin(): Promise<void> {
 
   telemetry = new TelemetrySender();
 
-  audioRenderer = new AudioRendererGL(audioCanvas, key.degreeHues, {
+  audioRenderer = new AudioRendererGL(audioCanvas, palette.slotHues, {
     feedback: CONFIG.feedback,
     noiseScale: CONFIG.blobWarp,
   });
-  if (palette) audioRenderer.setN(palette.slots.length);
-
-  if (palette) {
-    palette.onChange(() => {
-      if (audioRenderer) audioRenderer.setN(palette!.slots.length);
-    });
-  }
+  audioRenderer.setN(palette.slots.length);
 
   document.getElementById("gate")?.classList.add("hide");
 
@@ -149,60 +129,24 @@ async function begin(): Promise<void> {
     heat.classList.toggle("mirror", v);
   });
 
-  for (const k of [
-    "harmony.root",
-    "harmony.scale",
-    "harmony.octave",
-    "harmony.rootHue",
-  ] as const) {
-    store.subscribeKey(k, () => {
-      key = new Key({
-        root: CONFIG.root,
-        mode: CONFIG.mode,
-        octave: CONFIG.octave,
-        rootHue: CONFIG.rootHue,
-      });
-      synth.key = key;
-      palette?.setRootHue(toPerceptual(CONFIG.rootHue));
-      audioAnalyzer?.setKey(key);
-      if (audioRenderer) audioRenderer._staticDegreeHues = key.degreeHues;
-    });
-  }
-
-  store.subscribeKey("harmony.mode", () => {
-    const paletteStr = store.get("harmony.palette");
-    if (store.get("harmony.mode") === "palette" && paletteStr) {
-      try {
-        palette = Palette.fromURLParam(paletteStr as string, {
-          rootHue: CONFIG.rootHue ?? 0,
-          crossZone: CONFIG.crossZone,
-        });
-      } catch {
-        palette = null;
-      }
-    } else {
-      palette = null;
-    }
-    synth.setPalette(palette);
-    audioAnalyzer?.setPalette(palette);
-    if (audioRenderer && palette) audioRenderer.setN(palette.slots.length);
-    else if (audioRenderer) audioRenderer.setN(7);
+  store.subscribeKey("harmony.rootHue", (v) => {
+    palette?.setRootHue(toPerceptual(v));
   });
 
   store.subscribeKey("harmony.palette", () => {
-    const paletteStr = store.get("harmony.palette");
-    if (store.get("harmony.mode") === "palette" && paletteStr) {
-      try {
-        palette = Palette.fromURLParam(paletteStr as string, {
-          rootHue: CONFIG.rootHue ?? 0,
-          crossZone: CONFIG.crossZone,
-        });
-      } catch {
-        palette = null;
-      }
-      synth.setPalette(palette);
+    const paletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
+    try {
+      palette = Palette.fromURLParam(paletteStr as string, {
+        rootHue: CONFIG.rootHue ?? 0,
+        crossZone: CONFIG.crossZone,
+      });
+    } catch {
+      palette = null;
+    }
+    synth.setPalette(palette);
+    if (palette) {
       audioAnalyzer?.setPalette(palette);
-      if (audioRenderer && palette) audioRenderer.setN(palette.slots.length);
+      if (audioRenderer) audioRenderer.setN(palette.slots.length);
     }
   });
 
@@ -324,9 +268,9 @@ async function begin(): Promise<void> {
 
 function maybeTapSynth(): void {
   if (audioAnalyzer || !synth.running || !synth._actx || !synth._master) return;
+  if (!palette) return;
   audioAnalyzer = new AudioAnalyzer({
     audioContext: synth._actx,
-    key,
     palette,
   });
   synth._master.connect(audioAnalyzer.analyser);
@@ -367,8 +311,8 @@ function tick(t: number): void {
 
     const synthSnap = {
       running: synth.running,
-      keyLabel: synth.key ? synth.key.label.toUpperCase() : "—",
-      note: synth.key ? synth.key.hueToNote(frame.out.hue) : null,
+      keyLabel: "—",
+      note: null,
     };
 
     maybeTapSynth();

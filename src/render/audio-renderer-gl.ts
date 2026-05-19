@@ -240,7 +240,6 @@ type UniformMap = Record<string, WebGLUniformLocation | null>;
 export class AudioRendererGL {
   readonly canvas: HTMLCanvasElement;
 
-  _staticDegreeHues: Float32Array;
   private readonly _chromaticHues: Float32Array | null;
   private readonly _mode: string;
   private _feedbackVal: number;
@@ -272,11 +271,10 @@ export class AudioRendererGL {
 
   constructor(
     canvas: HTMLCanvasElement,
-    degreeHues: Float32Array,
+    degreeHues: Float32Array = new Float32Array(7),
     opts: AudioRendererGLOpts = {},
   ) {
     this.canvas = canvas;
-    this._staticDegreeHues = degreeHues;
     this._chromaticHues = opts.chromaticHues ?? null;
     this._mode = opts.mode ?? "diatonic";
     this._feedbackVal = opts.feedback ?? 0.92;
@@ -417,10 +415,8 @@ export class AudioRendererGL {
   /** Render one frame from an AudioAnalyzer.tick() output object. */
   render(frame: {
     chord: { change: boolean };
-    slots?: Float32Array;
-    degrees?: Float32Array;
-    slotHues?: Float32Array;
-    degreeHues?: Float32Array;
+    slots: Float32Array;
+    slotHues: Float32Array;
     bri: number;
     spread: number;
     act: number;
@@ -434,15 +430,15 @@ export class AudioRendererGL {
 
     const t = (performance.now() - this._startT) / 1000;
 
-    const N = frame.slots ? frame.slots.length : 7;
+    const N = frame.slots.length;
     if (N !== this._activeN) this.setN(N);
 
-    const hues = frame.slotHues ?? frame.degreeHues ?? this._staticDegreeHues;
+    const hues = frame.slotHues;
     this._fillDegreeRGB(hues);
 
     gl.useProgram(this._prog);
     gl.uniform1f(u.uTime, t);
-    const weights = frame.slots ?? frame.degrees!;
+    const weights = frame.slots;
     gl.uniform1fv(u.uDegrees, weights);
     gl.uniform3fv(u.uDegreeRGB, this._degreeRGBBuf);
     gl.uniform3fv(u.uDegreeRGB2, this._degreeRGB2Buf);

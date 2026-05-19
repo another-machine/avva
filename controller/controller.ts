@@ -19,6 +19,7 @@ import {
 import { startBroadcastSync, startWebSocketSync } from "../src/store/sync.js";
 import { TelemetryReceiver } from "../src/store/telemetry.js";
 import { mountVideoMonitor, mountAudioMonitor } from "./monitors.js";
+import { buildTriadsForMode, type ScaleMode } from "../src/harmony/music.js";
 
 // ── Asset file list (populated from Vite glob at build time) ──────────────────
 
@@ -466,7 +467,9 @@ function buildRow(key: SchemaKey): HTMLElement {
   }
 
   // Reflect external changes (BroadcastChannel / WebSocket) back into the control
-  store.subscribeKey(key, (value) => syncControl(ctrl, key, value));
+  if (field.kind !== "action") {
+    store.subscribeKey(key, (value) => syncControl(ctrl, key, value));
+  }
 
   return row;
 }
@@ -536,7 +539,17 @@ function buildControl(key: SchemaKey): HTMLElement {
     }
     return wrap;
   }
-
+  // ── action button ─────────────────────────────────────────────────────────────
+  if (field.kind === "action") {
+    const wrap = document.createElement("div");
+    wrap.className = "ctrl ctrl--action";
+    const btn = document.createElement("button");
+    btn.className = "action-btn";
+    btn.textContent = field.label;
+    btn.dataset.actionKey = key;
+    wrap.appendChild(btn);
+    return wrap;
+  }
   // ── string text input ──────────────────────────────────────────────────────
   const wrap = document.createElement("div");
   wrap.className = "ctrl ctrl--text";
@@ -591,3 +604,23 @@ function fmtNum(v: number, step: number): string {
   const dp = step < 1 ? Math.ceil(-Math.log10(step)) : 0;
   return v.toFixed(dp);
 }
+
+// ── Action handlers ───────────────────────────────────────────────────────────
+
+const ACTION_HANDLERS: Partial<Record<SchemaKey, () => void>> = {
+  "harmony.fillTriads": () => {
+    const root = store.get("harmony.root") as string;
+    const scale = store.get("harmony.scale") as ScaleMode;
+    const triads = buildTriadsForMode(root, scale);
+    store.set("harmony.palette", triads.join(", "));
+  },
+};
+
+document.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLElement>(
+    "[data-action-key]",
+  );
+  if (!btn) return;
+  const key = btn.dataset.actionKey as SchemaKey | undefined;
+  if (key && ACTION_HANDLERS[key]) ACTION_HANDLERS[key]!();
+});

@@ -13,7 +13,7 @@
 import {
   parseChord,
   parseChordList,
-  type ParsedChord,
+  type Chord,
   type ChordSlotInput,
 } from "./chord-parser.js";
 import { toPerceptual, fromPerceptual } from "./hue-perception.js";
@@ -39,7 +39,7 @@ const _SHARP_NAMES = [
 
 export interface PaletteSlot {
   index: number;
-  chord: ParsedChord;
+  chord: Chord;
   bias: number;
   gain: number;
 }
