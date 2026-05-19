@@ -10,7 +10,7 @@ import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
 import { toPerceptual } from "../harmony/hue-perception.js";
 import { TelemetrySender } from "../store/telemetry.js";
-import { PRESETS } from "../audio/presets.js";
+import { PRESETS, CASSETTE_PRESETS } from "../audio/presets.js";
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
@@ -238,6 +238,14 @@ async function begin(): Promise<void> {
   store.subscribeKey("synth.preset", (name) => {
     if (name === "custom") return;
     const preset = PRESETS[name as string];
+    if (!preset) return;
+    for (const [k, v] of Object.entries(preset)) {
+      store.set(k as any, v as any);
+    }
+  });
+  store.subscribeKey("cassette.preset", (name) => {
+    if (name === "custom") return;
+    const preset = CASSETTE_PRESETS[name as string];
     if (!preset) return;
     for (const [k, v] of Object.entries(preset)) {
       store.set(k as any, v as any);

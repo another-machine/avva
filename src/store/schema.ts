@@ -511,6 +511,21 @@ export const SCHEMA = {
   },
 
   // ── cassette effects ───────────────────────────────────────
+  "cassette.preset": {
+    kind: "enum",
+    default: "custom" as const,
+    options: [
+      "custom",
+      "clean",
+      "warm",
+      "lofi",
+      "vintage",
+      "live",
+    ] as const,
+    label: "Tape preset",
+    group: "cassette",
+    hint: "Snaps cassette effect params to a named tape-machine aesthetic.",
+  },
   "cassette.midBoostDb": {
     kind: "number",
     default: 3,
