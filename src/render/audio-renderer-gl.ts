@@ -77,6 +77,7 @@ uniform float uBlobDrive;
 uniform float uBlobSize;
 uniform float uBlobSharp;
 uniform float uShiftSpeed;
+uniform float uPulseReactivity;
 uniform vec3  uDegreeRGB2[N_HUES];
 uniform sampler2D uPrev;
 
@@ -177,9 +178,31 @@ void main() {
   float briOver = max(0.0, bScale - 1.0);
   base += mix(vec3(1.0), blobColor, 0.5) * briOver * 0.4;
 
-  // ── Band flashes ─────────────────────────────────────────────────────────
-  base += vec3(smoothstep(0.0, 0.33, 1.0 - uv.y) * uBandHi * 0.6
-             + smoothstep(0.0, 0.33, uv.y)       * uBandLo * 0.6);
+  // ── Band-driven pulse blobs ───────────────────────────────────────────────
+  // Soft Gaussian glows on independent Lissajous paths (distinct phase from
+  // the metaballs so they drift away from center and look randomly placed).
+  // exp(-d²/2σ²) gives a smooth, naturally-blurred profile — no threshold.
+  float pulseField = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi   = float(i);
+    float seed = fi * 2.399; // golden-angle offset — different from main blobs
+    // σ controls glow radius; larger → wider, softer bloom
+    float sigma = (0.13 + presence * 0.09) * aspect;
+    // Independent Lissajous path (different freqs + phase from main blobs)
+    vec2 cP = vec2(
+      0.5 * aspect + 0.32 * aspect * sin(t * (0.071 + fi * 0.027) + seed + 1.2)
+                   + 0.09 * aspect * sin(t * (0.19  + fi * 0.053) + seed + 3.7),
+      0.5           + 0.32           * sin(t * (0.094 + fi * 0.021) + seed + 4.6)
+                   + 0.09           * sin(t * (0.24  + fi * 0.043) + seed + 0.9)
+    );
+    vec2 dP = uvW - cP;
+    float g = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
+    pulseField += g * presence * (uBandLo + uBandHi) * uPulseReactivity;
+  }
+  // Clamp to [0,1]; Gaussian accumulation is naturally smooth — no threshold needed
+  base = mix(base, vec3(1.0, 0.96, 0.92), clamp(pulseField, 0.0, 1.0) * 0.7);
 
   // ── Chord-change pulse: fragmented color burst ───────────────────────────
   vec3  flashColor = totalField > 0.001 ? totalColor / totalField : vec3(1.0);
@@ -227,6 +250,7 @@ export class AudioRendererGL {
   private _blobSizeVal = 0.2;
   private _blobSharpVal = 0.4;
   private _shiftSpeedVal = 1.5;
+  private _pulseReactivityVal = 1.0;
   private readonly _gl: WebGL2RenderingContext;
   private readonly _progCache: Map<
     number,
@@ -289,6 +313,7 @@ export class AudioRendererGL {
     gl.uniform1f(this._u.uBlobSize, this._blobSizeVal);
     gl.uniform1f(this._u.uBlobSharp, this._blobSharpVal);
     gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
+    gl.uniform1f(this._u.uPulseReactivity, this._pulseReactivityVal);
 
     this._startT = performance.now();
     this.resize();
@@ -324,6 +349,9 @@ export class AudioRendererGL {
   }
   setShiftSpeed(v: number): void {
     this._setAll("uShiftSpeed", (this._shiftSpeedVal = v));
+  }
+  setPulseReactivity(v: number): void {
+    this._setAll("uPulseReactivity", (this._pulseReactivityVal = v));
   }
 
   private _setAll(name: string, v: number): void {
@@ -362,6 +390,7 @@ export class AudioRendererGL {
     gl.uniform1f(this._u.uBlobSize, this._blobSizeVal);
     gl.uniform1f(this._u.uBlobSharp, this._blobSharpVal);
     gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
+    gl.uniform1f(this._u.uPulseReactivity, this._pulseReactivityVal);
   }
 
   /** Resize canvas backing store to CSS px × min(2, dpr). Re-allocates textures. */
@@ -423,6 +452,7 @@ export class AudioRendererGL {
     gl.uniform1f(u.uBandLo, frame.bands.lo);
     gl.uniform1f(u.uBandHi, frame.bands.hi);
     gl.uniform1f(u.uPulse, this._pulse);
+    gl.uniform1f(u.uPulseReactivity, this._pulseReactivityVal);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._texA!.tex);
@@ -507,6 +537,7 @@ export class AudioRendererGL {
       "uBlobSize",
       "uBlobSharp",
       "uShiftSpeed",
+      "uPulseReactivity",
       "uDegreeRGB2",
       "uPrev",
     ];

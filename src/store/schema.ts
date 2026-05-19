@@ -331,7 +331,7 @@ export const SCHEMA = {
   "synth.glideMin": {
     kind: "number",
     default: 0.01,
-    min: 0,
+    min: 0.001,
     max: 1,
     step: 0.005,
     label: "Glide min",
@@ -342,7 +342,7 @@ export const SCHEMA = {
   "synth.glideMax": {
     kind: "number",
     default: 2.0,
-    min: 0,
+    min: 0.05,
     max: 5,
     step: 0.05,
     label: "Glide max",
@@ -471,6 +471,43 @@ export const SCHEMA = {
     label: "Treble tier octave",
     group: "synth",
     hint: "Octave offset for the high-tier pad voices, relative to harmony.octave",
+  },
+
+  "synth.articulation": {
+    kind: "number",
+    default: 0,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    label: "Articulation",
+    group: "synth",
+    hint: "0 = lush sustained pads, 1 = percussive plucks only. Mid values re-trigger pads as short envelopes synced to chord change.",
+  },
+  "synth.pulseRate": {
+    kind: "number",
+    default: 0,
+    min: 0,
+    max: 12,
+    step: 0.1,
+    label: "Pulse rate",
+    unit: "Hz",
+    group: "synth",
+    hint: "When > 0, pads re-trigger on a steady tempo regardless of motion. 0 disables pulsing.",
+  },
+  "synth.preset": {
+    kind: "enum",
+    default: "custom" as const,
+    options: [
+      "custom",
+      "lush",
+      "drone",
+      "staccato",
+      "percussive",
+      "bell",
+    ] as const,
+    label: "Preset",
+    group: "synth",
+    hint: "Snaps a bundle of synth + cassette params to a named aesthetic. 'custom' is the live-edited state.",
   },
 
   // ── cassette effects ───────────────────────────────────────
@@ -654,6 +691,16 @@ export const SCHEMA = {
     label: "Merge softness",
     group: "audio",
     hint: "Width of the blob isosurface — low = crisp hard edges, high = soft glowing merges",
+  },
+  "audio.pulseReactivity": {
+    kind: "number",
+    default: 1,
+    min: 0,
+    max: 4,
+    step: 0.05,
+    label: "Pulse reactivity",
+    group: "audio",
+    hint: "How strongly band energy bursts the bright pulse blobs riding on top of each chord blob.",
   },
 } as const satisfies Record<string, Field>;
 

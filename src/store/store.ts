@@ -69,7 +69,7 @@ function sanitize(obj: unknown): Partial<Settings> {
       (out as Record<string, unknown>)[k] = v;
     } else if (field.kind === "boolean" && typeof v === "boolean") {
       (out as Record<string, unknown>)[k] = v;
-    } else if (field.kind === "string" && typeof v === "string") {
+    } else if (field.kind === "string" && typeof v === "string" && v !== "") {
       (out as Record<string, unknown>)[k] = v;
     } else if (
       field.kind === "enum" &&

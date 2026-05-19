@@ -115,9 +115,6 @@ interface VideoMonitorRefs {
   huehist: HTMLElement;
   hueV: HTMLElement;
   hueN: HTMLElement;
-  mFps: HTMLElement;
-  mSrc: HTMLElement;
-  mRes: HTMLElement;
 }
 
 function _buildVideoDOM(host: HTMLElement): VideoMonitorRefs {
@@ -243,18 +240,10 @@ function _buildVideoDOM(host: HTMLElement): VideoMonitorRefs {
     huehist.appendChild(bar);
   }
 
-  // Meta
-  const metaDiv = mk("div", "v-meta");
-  const mSrc = mk("b", undefined, "—");
-  const mRes = mk("b", undefined, "—");
-  const mFps = mk("b", undefined, "—");
-  metaDiv.append(mSrc, " · ", mRes, " · ", mFps, " fps");
-
   // Assemble into host
   const div = mk("div", "sig__divider");
   const div2 = mk("div", "sig__divider");
   const div3 = mk("div", "sig__divider");
-  const div4 = mk("div", "sig__divider");
 
   host.append(
     synthHdr,
@@ -282,8 +271,6 @@ function _buildVideoDOM(host: HTMLElement): VideoMonitorRefs {
     hueVal,
     huebar,
     huehist,
-    div4,
-    metaDiv,
   );
 
   return {
@@ -319,9 +306,6 @@ function _buildVideoDOM(host: HTMLElement): VideoMonitorRefs {
     huehist,
     hueV,
     hueN,
-    mFps,
-    mSrc,
-    mRes,
   };
 }
 
@@ -404,9 +388,6 @@ export function mountVideoMonitor(host: HTMLElement): {
     // Hue readout
     refs.hueV.textContent = out.hue.toFixed(0).padStart(3, "0");
     refs.hueN.textContent = hueName(out.hue);
-    refs.mFps.textContent = fps.toFixed(0);
-    if (sourceLabel) refs.mSrc.textContent = sourceLabel;
-    if (resLabel) refs.mRes.textContent = resLabel;
     refs.huemark.style.setProperty(
       "--hue-marker-pos",
       `${(out.hue / 360) * 100}%`,
@@ -445,6 +426,15 @@ export function mountVideoMonitor(host: HTMLElement): {
 
 // ── Audio Monitor ─────────────────────────────────────────────────────────────
 
+// Helper: build multi-stop oklch gradient string for a hue arc [h0, h1]
+function _arcGradient(h0: number, h1: number): string {
+  const arc = h1 - h0;
+  const stops = [0, 0.25, 0.5, 0.75, 1]
+    .map((t) => `oklch(0.65 0.22 ${(h0 + arc * t).toFixed(1)})`)
+    .join(", ");
+  return `linear-gradient(to right in oklch, ${stops})`;
+}
+
 export function mountAudioMonitor(host: HTMLElement): {
   onMsg(msg: TelemetryMsg): void;
 } {
@@ -459,93 +449,24 @@ export function mountAudioMonitor(host: HTMLElement): {
     return el;
   };
 
-  // ── Chord section (mirrors video monitor SYNTH layout) ───────
-  const chordHdr = mk("div", "sig__hdr", "CHORD");
-  const chordKeyRow = mk("div", "sig__key-row");
-  const chordDot = mk("span", "sig__dot");
-  const chordKeyLbl = mk("span", undefined, "—");
-  chordKeyRow.append(chordDot, chordKeyLbl);
+  // ── Header + chord value line ─────────────────────────────────
+  const chromaHdr = mk("div", "panel__label", "HEARD CHROMA");
+  const chordVal = mk("div", "panel__value");
+  const chordNumeral = mk("span", undefined, "\u2014");
+  const chordRoot = mk("span", "panel__unit", "\u2014");
+  chordVal.append(chordNumeral, chordRoot);
 
-  const chordNoteRow = mk("div", "sig__note-row");
-  const chordNumeral = mk("span", "sig__numeral", "—");
-  const chordRoot = mk("span", "sig__notename", "—");
-  chordNoteRow.append(chordNumeral, mk("span", "sig__sep", "·"), chordRoot);
+  // ── Spectrum bar (mirrors SEEN CHROMA huebar) ─────────────────
+  const huebar = mk("div", "huebar");
+  const huemark = mk("div", "huebar__marker");
+  huebar.appendChild(huemark);
 
-  const chordQualityEl = mk("div", "sig__quality");
+  // ── Chord-region bars ─────────────────────────────────────────
+  const chromaContainer = mk("div", "chroma chroma--flex");
 
-  // ── Band meters ───────────────────────────────────────────────
-  const bandsHdr = mk("div", "sig__hdr", "BANDS");
+  host.append(chromaHdr, chordVal, huebar, chromaContainer);
 
-  const bandMeterRow = (
-    lbl: string,
-  ): { row: HTMLElement; fill: HTMLElement; val: HTMLElement } => {
-    const row = mk("div", "sig__row");
-    row.appendChild(mk("span", "sig__lbl", lbl));
-    const meter = mk("div", "meter");
-    const fill = mk("div", "meter__fill");
-    meter.appendChild(fill);
-    row.appendChild(meter);
-    const val = mk("span", "sig__val");
-    row.appendChild(val);
-    return { row, fill, val };
-  };
-
-  const bandLo = bandMeterRow("LO");
-  const bandMid = bandMeterRow("MID");
-  const bandHi = bandMeterRow("HI");
-
-  // ── Audio signal levels ───────────────────────────────────────
-  const levelsHdr = mk("div", "sig__hdr", "SIGNAL");
-
-  const levelRow = (
-    lbl: string,
-  ): { row: HTMLElement; fill: HTMLElement; val: HTMLElement } => {
-    const row = mk("div", "sig__row");
-    row.appendChild(mk("span", "sig__lbl", lbl));
-    const meter = mk("div", "meter");
-    const fill = mk("div", "meter__fill");
-    meter.appendChild(fill);
-    row.appendChild(meter);
-    const val = mk("span", "sig__val");
-    row.appendChild(val);
-    return { row, fill, val };
-  };
-
-  const levelBri = levelRow("BRI");
-  const levelAct = levelRow("ACT");
-  const levelSat = levelRow("SAT");
-  const levelSprd = levelRow("SPRD");
-
-  // ── Chroma bars ───────────────────────────────────────────────
-  const chromaHdr = mk("div", "sig__hdr", "HEARD CHROMA");
-  const chromaContainer = mk("div", "chroma");
-
-  const div1 = mk("div", "sig__divider");
-  const div2 = mk("div", "sig__divider");
-  const div3 = mk("div", "sig__divider");
-
-  host.append(
-    chordHdr,
-    chordKeyRow,
-    chordNoteRow,
-    chordQualityEl,
-    div1,
-    chromaHdr,
-    chromaContainer,
-    div2,
-    bandsHdr,
-    bandLo.row,
-    bandMid.row,
-    bandHi.row,
-    div3,
-    levelsHdr,
-    levelBri.row,
-    levelAct.row,
-    levelSat.row,
-    levelSprd.row,
-  );
-
-  // ── Chroma bar DOM (rebuild on harmony changes) ───────────────
+  // ── Chord bar DOM (rebuild on harmony changes) ────────────────
   let chromaBars: HTMLElement[] = [];
   let currentKey = _buildKey();
   let currentPalette = _buildPalette();
@@ -579,7 +500,6 @@ export function mountAudioMonitor(host: HTMLElement): {
 
     if (currentPalette) {
       const N = currentPalette.slots.length;
-      chromaContainer.style.gridTemplateColumns = `repeat(${N}, 1fr)`;
       chromaBars = new Array(N);
 
       const sorted = currentPalette.slots
@@ -589,16 +509,20 @@ export function mountAudioMonitor(host: HTMLElement): {
             currentPalette!.slotBoundaryHues[i + 1] ??
             currentPalette!.slotBoundaryHues[0];
           if (h1 <= h0) h1 += 360;
-          return { slotIdx: i, h0, h1, label: slot.chord.label };
+          const arc = h1 - h0;
+          return { slotIdx: i, h0, h1, arc, label: slot.chord.label };
         })
         .sort((a, b) => a.h0 - b.h0);
 
-      for (const { slotIdx, h0, h1, label } of sorted) {
+      const totalArc = sorted.reduce((s, e) => s + e.arc, 0) || 360;
+
+      for (const { slotIdx, h0, h1, arc, label } of sorted) {
         const cell = document.createElement("div");
         cell.className = "chroma__cell";
+        cell.style.flex = String((arc / totalArc) * N);
         const bar = document.createElement("div");
         bar.className = "chroma__bar";
-        bar.style.background = `linear-gradient(to right in oklch, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
+        bar.style.background = _arcGradient(h0, h1);
         cell.appendChild(bar);
         const lbl = document.createElement("div");
         lbl.className = "chroma__lbl";
@@ -608,7 +532,8 @@ export function mountAudioMonitor(host: HTMLElement): {
         chromaBars[slotIdx] = bar;
       }
     } else {
-      chromaContainer.style.gridTemplateColumns = "repeat(7, 1fr)";
+      // Scale mode — 7 equal-width bars
+      chromaBars = new Array(7);
       const sorted = Array.from({ length: 7 }, (_, i) => ({
         degree: i,
         h0: currentKey.degreeToHue(i, 0),
@@ -616,13 +541,13 @@ export function mountAudioMonitor(host: HTMLElement): {
         numeral: currentKey.degrees[i].numeral,
       })).sort((a, b) => a.h0 - b.h0);
 
-      chromaBars = new Array(7);
       for (const { degree, h0, h1, numeral } of sorted) {
         const cell = document.createElement("div");
         cell.className = "chroma__cell";
+        cell.style.flex = "1";
         const bar = document.createElement("div");
         bar.className = "chroma__bar";
-        bar.style.background = `linear-gradient(to right in oklch, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
+        bar.style.background = _arcGradient(h0, h1);
         cell.appendChild(bar);
         const lbl = document.createElement("div");
         lbl.className = "chroma__lbl";
@@ -660,29 +585,13 @@ export function mountAudioMonitor(host: HTMLElement): {
     if (!latestMsg?.audio) return;
     const audio = latestMsg.audio;
 
-    const pct = (v: number, scale = 1) =>
-      `${Math.min(100, v * scale * 100).toFixed(1)}%`;
-    const fmt = (v: number) => (v * 100).toFixed(0);
+    // Heard hue indicator on spectrum bar
+    huemark.style.setProperty(
+      "--hue-marker-pos",
+      `${((audio.hue ?? 0) / 360) * 100}%`,
+    );
 
-    // Bands
-    bandLo.fill.style.width = pct(audio.bands.lo);
-    bandLo.val.textContent = fmt(audio.bands.lo);
-    bandMid.fill.style.width = pct(audio.bands.mid);
-    bandMid.val.textContent = fmt(audio.bands.mid);
-    bandHi.fill.style.width = pct(audio.bands.hi);
-    bandHi.val.textContent = fmt(audio.bands.hi);
-
-    // Signal levels
-    levelBri.fill.style.width = pct(audio.bri);
-    levelBri.val.textContent = fmt(audio.bri);
-    levelAct.fill.style.width = pct(audio.act);
-    levelAct.val.textContent = fmt(audio.act);
-    levelSat.fill.style.width = pct(audio.sat);
-    levelSat.val.textContent = fmt(audio.sat);
-    levelSprd.fill.style.width = pct(audio.spread);
-    levelSprd.val.textContent = fmt(audio.spread);
-
-    // Chord — derive numeral from current key
+    // Chord label
     if (audio.chord.label) {
       const rootMatch = audio.chord.label.match(/^([A-G][#b]?)/);
       const rootName = rootMatch ? rootMatch[1] : null;
@@ -694,22 +603,16 @@ export function mountAudioMonitor(host: HTMLElement): {
             (d) => d.name.replace(/\d+$/, "") === rootName,
           )
         : null;
-      chordKeyLbl.textContent = audio.chord.label;
-      chordNumeral.textContent = deg?.numeral ?? "—";
-      chordRoot.textContent = rootName ?? "—";
-      chordQualityEl.textContent = qualitySuffix
-        ? qualitySuffix.toUpperCase()
-        : "";
-      chordDot.classList.toggle("is-on", audio.chord.change);
+      chordNumeral.textContent = deg?.numeral ?? "\u2014";
+      chordRoot.textContent = rootName
+        ? ` ${rootName}${qualitySuffix ? qualitySuffix.toLowerCase() : ""}`
+        : "\u2014";
     } else {
-      chordKeyLbl.textContent = "—";
-      chordNumeral.textContent = "—";
-      chordRoot.textContent = "—";
-      chordQualityEl.textContent = "";
-      chordDot.classList.remove("is-on");
+      chordNumeral.textContent = "\u2014";
+      chordRoot.textContent = "\u2014";
     }
 
-    // Chroma bars
+    // Chord-region bar heights
     const weights = (audio.slots ?? audio.degrees) as Float32Array;
     for (let i = 0; i < weights.length; i++) {
       const bar = chromaBars[i];

@@ -161,6 +161,10 @@ export class Synth {
   running: boolean;
   private _prevRootFreq: number;
   private _lastCarrierTypes: OscillatorType[];
+  private _articulationEnvs: number[];
+  private _pulseCounter: number;
+  private _prevNoteKey: string;
+  private _lastUpdateTime: number;
 
   constructor(config: LegacyConfig) {
     this._cfg = config;
@@ -179,6 +183,10 @@ export class Synth {
     this.running = false;
     this._prevRootFreq = 0;
     this._lastCarrierTypes = ["sine", "sine", "sine", "sine"];
+    this._articulationEnvs = [1.0, 1.0, 1.0];
+    this._pulseCounter = 0;
+    this._prevNoteKey = "";
+    this._lastUpdateTime = 0;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────
@@ -480,10 +488,41 @@ export class Synth {
       return tau * (1.0 + (base - 1.0) * glideSpread);
     };
 
+    // ── Articulation envelope ──────────────────────────────────
+    const articulation = clamp01(this._cfg.articulation ?? 0);
+    const pulseRate = Math.max(0, this._cfg.pulseRate ?? 0);
+    const dt = this._lastUpdateTime > 0 ? now - this._lastUpdateTime : 0;
+    this._lastUpdateTime = now;
+
+    const noteKey = palette
+      ? String(note._palettePrimary!.index)
+      : String(note.degree);
+    const chordChanged = noteKey !== this._prevNoteKey;
+    this._prevNoteKey = noteKey;
+
+    let pulseFire = false;
+    if (pulseRate > 0 && dt > 0 && dt < 0.5) {
+      const prevCount = this._pulseCounter;
+      this._pulseCounter += dt * pulseRate;
+      pulseFire = Math.floor(this._pulseCounter) > Math.floor(prevCount);
+    }
+
+    const retrigger = chordChanged || pulseFire;
+    const decayTau = articulation > 0 ? 2.0 + (0.05 - 2.0) * articulation : 2.0;
+
+    for (let ti = 0; ti < 3; ti++) {
+      if (retrigger) {
+        this._articulationEnvs[ti] = 1.0;
+      } else if (dt > 0 && dt < 0.5 && articulation > 0) {
+        this._articulationEnvs[ti] *= Math.exp(-dt / decayTau);
+      }
+    }
+
     this._tiers.forEach(({ voices }, ti) => {
       const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
-      const tierBase = Math.max(0, tierSignals[ti] * 0.25);
+      const artEnv = articulation > 0 ? this._articulationEnvs[ti] : 1.0;
+      const tierBase = Math.max(0, tierSignals[ti] * 0.25) * artEnv;
 
       let extFreqs: [number, number] = [0, 0];
       let extOk: [boolean, boolean] = [false, false];
@@ -679,7 +718,11 @@ export class Synth {
     );
     if (now < pluck.nextAllowed) return;
 
-    const trigProb = Math.max(quickness * 0.4, slowness * 0.2, vMag * 0.5);
+    const articulationBoost = 1.0 + clamp01(this._cfg.articulation ?? 0) * 4;
+    const trigProb = Math.min(
+      1,
+      Math.max(quickness * 0.4, slowness * 0.2, vMag * 0.5) * articulationBoost,
+    );
     if (Math.random() > trigProb) return;
 
     const spacious = 1 - quickness;
@@ -739,7 +782,10 @@ export class Synth {
       now,
     );
 
-    pluck.nextAllowed = now + 0.06 + spacious * 0.5 + slowness * 0.25;
+    pluck.nextAllowed =
+      now +
+      (0.06 + spacious * 0.5 + slowness * 0.25) /
+        Math.max(1, articulationBoost * 0.5);
   }
 
   // ── Helpers ─────────────────────────────────────────────────

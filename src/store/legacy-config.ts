@@ -49,6 +49,9 @@ export interface LegacyConfig {
   octaveOffsetMid: number;
   octaveOffsetTreble: number;
 
+  articulation: number;
+  pulseRate: number;
+
   feedback: number;
   blobWarp: number;
 
@@ -163,6 +166,13 @@ export const legacyConfig: LegacyConfig = {
   },
   get octaveOffsetTreble() {
     return store.get("synth.octaveOffsetTreble");
+  },
+
+  get articulation() {
+    return store.get("synth.articulation");
+  },
+  get pulseRate() {
+    return store.get("synth.pulseRate");
   },
 
   get feedback() {

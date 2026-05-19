@@ -8,7 +8,9 @@ import { Synth } from "../audio/synth.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
+import { toPerceptual } from "../harmony/hue-perception.js";
 import { TelemetrySender } from "../store/telemetry.js";
+import { PRESETS } from "../audio/presets.js";
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
@@ -161,8 +163,52 @@ async function begin(): Promise<void> {
         rootHue: CONFIG.rootHue,
       });
       synth.key = key;
+      palette?.setRootHue(toPerceptual(CONFIG.rootHue));
+      audioAnalyzer?.setKey(key);
+      if (audioRenderer) audioRenderer._staticDegreeHues = key.degreeHues;
     });
   }
+
+  store.subscribeKey("harmony.mode", () => {
+    const paletteStr = store.get("harmony.palette");
+    if (store.get("harmony.mode") === "palette" && paletteStr) {
+      try {
+        palette = Palette.fromURLParam(paletteStr as string, {
+          rootHue: CONFIG.rootHue ?? 0,
+          crossZone: CONFIG.crossZone,
+        });
+      } catch {
+        palette = null;
+      }
+    } else {
+      palette = null;
+    }
+    synth.setPalette(palette);
+    audioAnalyzer?.setPalette(palette);
+    if (audioRenderer && palette) audioRenderer.setN(palette.slots.length);
+    else if (audioRenderer) audioRenderer.setN(7);
+  });
+
+  store.subscribeKey("harmony.palette", () => {
+    const paletteStr = store.get("harmony.palette");
+    if (store.get("harmony.mode") === "palette" && paletteStr) {
+      try {
+        palette = Palette.fromURLParam(paletteStr as string, {
+          rootHue: CONFIG.rootHue ?? 0,
+          crossZone: CONFIG.crossZone,
+        });
+      } catch {
+        palette = null;
+      }
+      synth.setPalette(palette);
+      audioAnalyzer?.setPalette(palette);
+      if (audioRenderer && palette) audioRenderer.setN(palette.slots.length);
+    }
+  });
+
+  store.subscribeKey("harmony.crossZone", (v) => {
+    palette?.setCrossZone(v);
+  });
 
   store.subscribeKey("audio.feedback", (v) => {
     audioRenderer?.setFeedback(v);
@@ -184,6 +230,18 @@ async function begin(): Promise<void> {
   });
   store.subscribeKey("audio.blobSharp", (v) => {
     audioRenderer?.setBlobSharp(v);
+  });
+  store.subscribeKey("audio.pulseReactivity", (v) => {
+    audioRenderer?.setPulseReactivity(v);
+  });
+
+  store.subscribeKey("synth.preset", (name) => {
+    if (name === "custom") return;
+    const preset = PRESETS[name as string];
+    if (!preset) return;
+    for (const [k, v] of Object.entries(preset)) {
+      store.set(k as any, v as any);
+    }
   });
   store.subscribeKey("source.playbackRate", (v) => {
     videoEl.playbackRate = v;
@@ -330,11 +388,6 @@ function tick(t: number): void {
 // ── Mount ─────────────────────────────────────────────────────────────────────
 
 export function mountLoopView(): void {
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = "/loop.css";
-  document.head.appendChild(link);
-
   document.body.className = "loop";
   document.body.innerHTML = LOOP_HTML;
 
