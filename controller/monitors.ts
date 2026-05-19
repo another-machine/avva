@@ -598,7 +598,7 @@ export function mountAudioMonitor(host: HTMLElement): {
         cell.className = "chroma__cell";
         const bar = document.createElement("div");
         bar.className = "chroma__bar";
-        bar.style.background = `linear-gradient(to right, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
+        bar.style.background = `linear-gradient(to right in oklch, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
         cell.appendChild(bar);
         const lbl = document.createElement("div");
         lbl.className = "chroma__lbl";
@@ -622,7 +622,7 @@ export function mountAudioMonitor(host: HTMLElement): {
         cell.className = "chroma__cell";
         const bar = document.createElement("div");
         bar.className = "chroma__bar";
-        bar.style.background = `linear-gradient(to right, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
+        bar.style.background = `linear-gradient(to right in oklch, oklch(0.65 0.22 ${h0.toFixed(1)}), oklch(0.65 0.22 ${h1.toFixed(1)}))`;
         cell.appendChild(bar);
         const lbl = document.createElement("div");
         lbl.className = "chroma__lbl";
