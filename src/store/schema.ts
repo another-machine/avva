@@ -217,6 +217,17 @@ export const SCHEMA = {
     group: "analysis",
     hint: "Histogram buckets around the hue wheel — more = finer resolution",
   },
+  "analysis.hueOffset": {
+    kind: "number",
+    default: 0,
+    min: -180,
+    max: 180,
+    step: 5,
+    label: "Hue offset",
+    unit: "°",
+    group: "analysis",
+    hint: "Rotates the hue wheel before bucketing — e.g. +15 puts pure red at the centre of bucket 1 instead of its left edge",
+  },
   "analysis.sparkLen": {
     kind: "number",
     default: 160,
@@ -694,7 +705,69 @@ export const SCHEMA = {
     hint: "Fast motor-flutter pitch depth — higher = more degraded/worn feel",
   },
 
-  // ── audio renderer (loop view) ─────────────────────────────
+  // ── audio analyzer (stage 3) ───────────────────────────────
+  "audioAnalysis.gateExp": {
+    kind: "number",
+    default: 50,
+    min: 5,
+    max: 200,
+    step: 1,
+    label: "Gate exponent",
+    group: "audioAnalysis",
+    hint: "Steepness of the prominence gate — higher = only near-peak bins register",
+  },
+  "audioAnalysis.attackTau": {
+    kind: "number",
+    default: 0.25,
+    min: 0.01,
+    max: 1,
+    step: 0.01,
+    label: "Attack",
+    group: "audioAnalysis",
+    hint: "Per-note EMA factor when note energy is rising (higher = snappier attack)",
+  },
+  "audioAnalysis.releaseTau": {
+    kind: "number",
+    default: 0.06,
+    min: 0.01,
+    max: 0.5,
+    step: 0.005,
+    label: "Release",
+    group: "audioAnalysis",
+    hint: "Per-note EMA factor when note energy is falling (lower = longer sustain)",
+  },
+  "audioAnalysis.octL": {
+    kind: "number",
+    default: 2,
+    min: 1,
+    max: 4,
+    step: 1,
+    label: "Octave low",
+    group: "audioAnalysis",
+    hint: "Lowest octave scanned for note detection (C2 = 65 Hz)",
+  },
+  "audioAnalysis.octH": {
+    kind: "number",
+    default: 6,
+    min: 4,
+    max: 8,
+    step: 1,
+    label: "Octave high",
+    group: "audioAnalysis",
+    hint: "Highest octave scanned for note detection (C6 = 1047 Hz)",
+  },
+  "audioAnalysis.stickyRatio": {
+    kind: "number",
+    default: 0.9,
+    min: 0.5,
+    max: 1.0,
+    step: 0.01,
+    label: "Sticky ratio",
+    group: "audioAnalysis",
+    hint: "Previous chord wins if it scores ≥ this fraction of the new best — prevents rapid flickering",
+  },
+
+  // ── visual synthesis (stage 4 — blob renderer) ─────────────
   "audio.feedback": {
     kind: "number",
     default: 0.92,
@@ -702,7 +775,7 @@ export const SCHEMA = {
     max: 1,
     step: 0.01,
     label: "Feedback decay",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "How much of the previous frame persists — higher = longer glowing trails",
   },
   "audio.blobWarp": {
@@ -712,7 +785,7 @@ export const SCHEMA = {
     max: 0.12,
     step: 0.002,
     label: "Edge warp",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "Noise displacement on blob edges — higher = more organic, wobbly outlines",
   },
   "audio.blobSpeed": {
@@ -722,7 +795,7 @@ export const SCHEMA = {
     max: 4,
     step: 0.05,
     label: "Blob speed",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "Base drift speed of all blobs",
   },
   "audio.blobDrive": {
@@ -732,7 +805,7 @@ export const SCHEMA = {
     max: 5,
     step: 0.1,
     label: "Activity drive",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "How much video motion accelerates blob movement",
   },
   "audio.shiftSpeed": {
@@ -742,7 +815,7 @@ export const SCHEMA = {
     max: 6,
     step: 0.1,
     label: "Shift burst",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "Velocity burst added to blobs on each chord change — decays with the pulse",
   },
   "audio.blobSize": {
@@ -752,7 +825,7 @@ export const SCHEMA = {
     max: 0.6,
     step: 0.01,
     label: "Blob size",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "Base radius of each blob — larger = fewer, rounder shapes",
   },
   "audio.blobSharp": {
@@ -762,7 +835,7 @@ export const SCHEMA = {
     max: 1.5,
     step: 0.05,
     label: "Merge softness",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "Width of the blob isosurface — low = crisp hard edges, high = soft glowing merges",
   },
   "audio.pulseReactivity": {
@@ -772,7 +845,7 @@ export const SCHEMA = {
     max: 4,
     step: 0.05,
     label: "Pulse reactivity",
-    group: "audio",
+    group: "visualSynthesis",
     hint: "How strongly band energy bursts the bright pulse blobs riding on top of each chord blob.",
   },
 } as const satisfies Record<string, Field>;

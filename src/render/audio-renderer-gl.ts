@@ -225,6 +225,19 @@ void main() {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+import type { AudioFrame } from "../analysis/audio-analyzer.js";
+
+/** Observable snapshot of what the GL renderer sent to the shader this frame. */
+export interface VisualUniforms {
+  slotWeights: Float32Array;
+  pulse: number;
+  bri: number;
+  spread: number;
+  act: number;
+  bandLo: number;
+  bandHi: number;
+}
+
 export interface AudioRendererGLOpts {
   feedback?: number;
   noiseScale?: number;
@@ -420,16 +433,7 @@ export class AudioRendererGL {
   }
 
   /** Render one frame from an AudioAnalyzer.tick() output object. */
-  render(frame: {
-    chord: { change: boolean };
-    slots: Float32Array;
-    slotHues: Float32Array;
-    slotBoundaryHues?: Float32Array;
-    bri: number;
-    spread: number;
-    act: number;
-    bands: { lo: number; hi: number };
-  }): void {
+  render(frame: AudioFrame): VisualUniforms {
     const gl = this._gl;
     const u = this._u;
 
@@ -512,6 +516,16 @@ export class AudioRendererGL {
     const tmp = this._texA!;
     this._texA = this._texB;
     this._texB = tmp;
+
+    return {
+      slotWeights: new Float32Array(this._slotWeights),
+      pulse: this._pulse,
+      bri: frame.bri,
+      spread: frame.spread,
+      act: frame.act,
+      bandLo: frame.bands.lo,
+      bandHi: frame.bands.hi,
+    };
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────

@@ -152,7 +152,9 @@ export class Analyzer {
 
       if (s > this._cfg.satFloor && v > this._cfg.valFloor) {
         const w = s * v;
-        const rad = (h * Math.PI) / 180;
+        const hOff = (this._cfg.hueOffset ?? 0);
+        const hShifted = ((h + hOff) % 360 + 360) % 360;
+        const rad = (hShifted * Math.PI) / 180;
         sumX += Math.cos(rad) * w;
         sumY += Math.sin(rad) * w;
         sumW += w;
@@ -161,7 +163,7 @@ export class Analyzer {
 
         const bin = Math.min(
           this._cfg.hueBins - 1,
-          ((h / 360) * this._cfg.hueBins) | 0,
+          ((hShifted / 360) * this._cfg.hueBins) | 0,
         );
         this._histBins[bin] += w;
       }

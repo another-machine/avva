@@ -10,6 +10,7 @@ import { Palette } from "../harmony/palette.js";
 import { toPerceptual } from "../harmony/hue-perception.js";
 import { TelemetrySender } from "../store/telemetry.js";
 import { PRESETS, CASSETTE_PRESETS } from "../audio/presets.js";
+import { Pipeline } from "../pipeline/pipeline.js";
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
 let palette: Palette | null = null;
 let telemetry: TelemetrySender | null = null;
+let pipeline: Pipeline | null = null;
 let _sourceLabel = "—";
 let _resLabel = "—";
 
@@ -95,6 +97,33 @@ async function begin(): Promise<void> {
   heatCtx.imageSmoothingEnabled = false;
 
   telemetry = new TelemetrySender();
+
+  pipeline = new Pipeline({
+    runVideo: () => {
+      if (videoEl.readyState < 2) return null;
+      return vidAnalyzer.analyze(videoEl);
+    },
+    runSynth: (videoOut) => {
+      if (!videoOut) return null;
+      const f = videoOut as ReturnType<typeof vidAnalyzer.analyze>;
+      const root = document.documentElement;
+      root.style.setProperty("--accent-l", (0.55 + f.out.bri * 0.2).toFixed(3));
+      root.style.setProperty("--accent-c", (0.04 + f.out.sat * 0.18).toFixed(3));
+      root.style.setProperty("--accent-h", f.out.hue.toFixed(1));
+      if (f.heatImageData && heatCtx) heatCtx.putImageData(f.heatImageData, 0, 0);
+      synth.update(f.out);
+      return synth.lastControls;
+    },
+    runAudio: () => {
+      maybeTapSynth();
+      if (!audioAnalyzer) return null;
+      return audioAnalyzer.tick();
+    },
+    runVisual: (audioOut) => {
+      if (!audioOut || !audioRenderer) return null;
+      return audioRenderer.render(audioOut as ReturnType<AudioAnalyzer["tick"]>);
+    },
+  });
 
   audioRenderer = new AudioRendererGL(audioCanvas, palette.slotHues, {
     feedback: CONFIG.feedback,
@@ -291,47 +320,23 @@ function tick(t: number): void {
     state.fpsT = 0;
   }
 
-  if (videoEl.readyState >= 2) {
-    const frame = vidAnalyzer.analyze(videoEl);
-    synth.update({ ...frame.out, histBins: frame.histBins });
-
-    // Update accent CSS vars — audio visualizer shader reads these from :root
-    const root = document.documentElement;
-    root.style.setProperty(
-      "--accent-l",
-      (0.55 + frame.out.bri * 0.2).toFixed(3),
-    );
-    root.style.setProperty(
-      "--accent-c",
-      (0.04 + frame.out.sat * 0.18).toFixed(3),
-    );
-    root.style.setProperty("--accent-h", frame.out.hue.toFixed(1));
-
-    if (frame.heatImageData && heatCtx) {
-      heatCtx.putImageData(frame.heatImageData, 0, 0);
-    }
-
-    const synthSnap = {
-      running: synth.running,
-      note: synth.lastNote ?? null,
-    };
-
-    maybeTapSynth();
-    let audioFrame: ReturnType<AudioAnalyzer["tick"]> | undefined;
-    if (audioAnalyzer && audioRenderer) {
-      audioFrame = audioAnalyzer.tick();
-      audioRenderer.render(audioFrame);
-    }
+  if (pipeline) {
+    const { videoOut, audioOut, visualOut } = pipeline.tick();
+    const frame = videoOut as ReturnType<typeof vidAnalyzer.analyze> | null;
+    const audioFrame = audioOut as ReturnType<AudioAnalyzer["tick"]> | null | undefined;
+    const vis = visualOut as import("../render/audio-renderer-gl.js").VisualUniforms | null | undefined;
 
     telemetry?.send({
       t,
       fps: state.fps,
       sourceLabel: _sourceLabel,
       resLabel: _resLabel,
-      video: frame.out,
-      histBins: frame.histBins,
-      synth: synthSnap,
-      audio: audioFrame,
+      video: frame?.out,
+      histBins: frame?.histBins,
+      synth: { running: synth.running, note: synth.lastNote ?? null },
+      synthControls: synth.lastControls ?? undefined,
+      audio: audioFrame ?? undefined,
+      visualUniforms: vis ?? undefined,
     });
   }
 

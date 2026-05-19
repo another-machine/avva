@@ -42,24 +42,25 @@ wss.on("connection", (socket: WebSocket, req) => {
   log(`+ ${addr}  (${wss.clients.size} connected)`);
 
   socket.on("message", (data: RawData) => {
-    // Validate: only forward valid JSON patches to avoid relay amplifying garbage
+    // Forward store patches (have a `key` field) and telemetry frames (have a `t` field).
+    // Drop anything that doesn't match either shape to avoid amplifying garbage.
     const text = data.toString();
     try {
       const p = JSON.parse(text) as unknown;
-      if (!p || typeof p !== "object" || !("key" in (p as object))) return;
+      if (!p || typeof p !== "object") return;
+      const obj = p as Record<string, unknown>;
+      const isPatch = "key" in obj;
+      const isTelemetry = !isPatch && "t" in obj && typeof obj["t"] === "number";
+      if (!isPatch && !isTelemetry) return;
     } catch {
       return; // drop non-JSON
     }
 
-    let forwarded = 0;
     for (const client of wss.clients) {
       if (client !== socket && client.readyState === WebSocket.OPEN) {
         client.send(text);
-        forwarded++;
       }
     }
-    // Uncomment for verbose patch logging:
-    // log(`→ ${(p as {key:string}).key}  (forwarded to ${forwarded})`);
   });
 
   socket.on("close", () => {

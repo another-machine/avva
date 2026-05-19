@@ -12,6 +12,7 @@
 import { FMVoice } from "./fm-voice.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
+import type { AnalysisOut } from "../analysis/analyzer.js";
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -114,26 +115,27 @@ interface NoteProxy {
   _palettePrimary: PaletteSlot;
 }
 
-export interface AnalysisSnapshot {
-  hue: number;
-  bri: number;
-  act: number;
-  actBg?: number;
-  actEdge?: number;
-  vy?: number;
-  spread?: number;
-  sat?: number;
-  contrast?: number;
-  dContrast?: number;
-  lo?: number;
-  histBins?: Float32Array | null;
-  mx?: number;
-  my?: number;
-  vmx?: number;
-  vmy?: number;
-  sx?: number;
-  sy?: number;
-  mass?: number;
+/** Observable snapshot of what the synth computed this frame — broadcast to controller. */
+export interface SynthControls {
+  slotLabel: string;
+  slotIndex: number;
+  // Voice gate weights (0..1)
+  thirdW: number;
+  fifthW: number;
+  seventhW: number;
+  ninthW: number;
+  // Tier amplitude contributions (0..1)
+  bassW: number;
+  midW: number;
+  trebleW: number;
+  // FM modulation index per tier
+  fmIndexBass: number;
+  fmIndexMid: number;
+  fmIndexTreble: number;
+  // Timing
+  glideTau: number;
+  masterPan: number;
+  pluckFired: boolean;
 }
 
 // ── Synth ─────────────────────────────────────────────────────
@@ -156,6 +158,7 @@ export class Synth {
   palette: Palette | null;
   running: boolean;
   lastNote: { label: string; slotIndex: number; pitchClasses: number[] } | null;
+  private _lastControls: SynthControls | null;
   private _prevRootFreq: number;
   private _lastCarrierTypes: string[];
   private _periodicWaves: Map<string, PeriodicWave>;
@@ -179,6 +182,7 @@ export class Synth {
     this.palette = null;
     this.running = false;
     this.lastNote = null;
+    this._lastControls = null;
     this._prevRootFreq = 0;
     this._lastCarrierTypes = ["sine", "sine", "sine", "sine"];
     this._periodicWaves = new Map();
@@ -350,28 +354,30 @@ export class Synth {
     else this.start();
   }
 
+  get lastControls(): SynthControls | null {
+    return this._lastControls;
+  }
+
   // ── Per-frame update ────────────────────────────────────────
 
   update({
     hue,
     bri,
     act,
-    actBg = 0,
-    actEdge = 0,
-    vy = 0.5,
-    spread = 0,
-    sat = 0,
-    contrast = 0,
-    dContrast = 0,
-    lo = 0,
-    mx = 0.5,
-    my = 0.5,
-    vmx = 0,
-    vmy = 0,
-    sx = 0.5,
-    sy = 0.5,
-    mass = 0,
-  }: AnalysisSnapshot): void {
+    actBg,
+    actEdge,
+    vy,
+    spread,
+    sat,
+    contrast,
+    dContrast,
+    lo,
+    mx,
+    vmx,
+    vmy,
+    sx,
+    sy,
+  }: AnalysisOut): void {
     const palette = this.palette;
     if (!this.running || !palette) return;
 
@@ -643,6 +649,24 @@ export class Synth {
     }
     this._cancelParam(this._sub!.gain.gain, now);
     this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tau);
+
+    this._lastControls = {
+      slotLabel: primarySlot.chord.label,
+      slotIndex: primarySlot.index,
+      thirdW,
+      fifthW,
+      seventhW,
+      ninthW,
+      bassW,
+      midW,
+      trebleW,
+      fmIndexBass: tierIndex[0],
+      fmIndexMid: tierIndex[1],
+      fmIndexTreble: tierIndex[2],
+      glideTau: tau,
+      masterPan: (safeMx - 0.5) * 1.4,
+      pluckFired: false,
+    };
   }
 
   // ── Private — pluck ─────────────────────────────────────────

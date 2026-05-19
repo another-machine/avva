@@ -22,6 +22,7 @@ export interface LegacyConfig {
   activityGain: number;
   activityNoise: number;
   hueBins: number;
+  hueOffset: number;
   sparkLen: number;
 
   mirror: boolean;
@@ -96,6 +97,9 @@ export const legacyConfig: LegacyConfig = {
   },
   get hueBins() {
     return store.get("analysis.hueBins");
+  },
+  get hueOffset() {
+    return store.get("analysis.hueOffset") as number ?? 0;
   },
   get sparkLen() {
     return store.get("analysis.sparkLen");

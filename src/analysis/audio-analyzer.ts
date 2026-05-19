@@ -74,6 +74,12 @@ export interface AudioChord {
   change: boolean;
 }
 
+export interface ChordCandidate {
+  slotIdx: number;
+  score: number;
+  label: string;
+}
+
 export interface AudioFrame {
   chroma: Float32Array;
   slots: Float32Array;
@@ -89,6 +95,12 @@ export interface AudioFrame {
   sat: number;
   chord: AudioChord;
   notes: Float32Array;
+  /** Top-3 chord template matches by raw dot-product score. */
+  candidates: ChordCandidate[];
+  /** True when the 90%-sticky rule overrode the highest-scoring template. */
+  stickyApplied: boolean;
+  /** Per-(octave, class) note metadata — same indexing as notes[]. */
+  noteInfo: NoteInfo[];
 }
 
 export interface NoteInfo {
@@ -206,6 +218,9 @@ export class AudioAnalyzer {
       sat: 0,
       chord: { label: "—", key: "", change: false },
       notes: new Float32Array(this._N),
+      candidates: [],
+      stickyApplied: false,
+      noteInfo: this.noteInfo,
     };
   }
 
@@ -354,6 +369,9 @@ export class AudioAnalyzer {
     let best: ChordTemplate;
     let bestScore = -1;
 
+    // Track top-3 candidates by score for the monitor
+    const candidateHeap: { slotIdx: number; score: number; label: string }[] = [];
+
     {
       const slotsOut = this._slotsOut;
       const templates = this.palette.chordTemplates;
@@ -368,19 +386,26 @@ export class AudioAnalyzer {
           bestScore = s;
           best = t;
         }
+        candidateHeap.push({ slotIdx: i, score: Math.max(0, s), label: t.label });
       }
     }
+    candidateHeap.sort((a, b) => b.score - a.score);
+    const topCandidates = candidateHeap.slice(0, 3);
 
     // Sticky: prefer the previous chord when it scores ≥ 90% of best
     const searchBank = this.palette.chordTemplates;
     let pick = best;
+    let stickyApplied = false;
     if (this._prevChordKey) {
       const prev = searchBank.find((t) => t.key === this._prevChordKey);
       if (prev) {
         let s = 0;
         for (let c = 0; c < 12; c++) s += prev.vec[c] * chroma[c];
         s /= prev.norm;
-        if (s >= bestScore * 0.9) pick = prev;
+        if (s >= bestScore * 0.9) {
+          pick = prev;
+          stickyApplied = pick !== best;
+        }
       }
     }
     const change = pick.key !== this._prevChordKey;
@@ -403,8 +428,31 @@ export class AudioAnalyzer {
     this._out.chord.label = pick.label;
     this._out.chord.key = pick.key;
     this._out.chord.change = change;
+    this._out.candidates = topCandidates;
+    this._out.stickyApplied = stickyApplied;
+    this._out.noteInfo = this.noteInfo;
     for (let i = 0; i < N; i++) this._out.notes[i] = this._noteVals[i];
 
-    return this._out;
+    // Return a snapshot with deep-copied typed arrays so per-frame probes
+    // (telemetry, pipeline stages) hold immutable data after the next tick.
+    return {
+      chroma: new Float32Array(this._out.chroma),
+      slots: new Float32Array(this._out.slots),
+      slotHues: this._out.slotHues,
+      slotBoundaryHues: this._out.slotBoundaryHues,
+      bands: { ...this._out.bands },
+      hue: this._out.hue,
+      spread: this._out.spread,
+      bri: this._out.bri,
+      hi: this._out.hi,
+      lo: this._out.lo,
+      act: this._out.act,
+      sat: this._out.sat,
+      chord: { ...this._out.chord },
+      notes: new Float32Array(this._out.notes),
+      candidates: this._out.candidates,
+      stickyApplied: this._out.stickyApplied,
+      noteInfo: this._out.noteInfo,
+    };
   }
 }

@@ -18,7 +18,12 @@ import {
 } from "../src/store/schema.js";
 import { startBroadcastSync, startWebSocketSync } from "../src/store/sync.js";
 import { TelemetryReceiver } from "../src/store/telemetry.js";
-import { mountVideoMonitor, mountAudioMonitor } from "./monitors.js";
+import {
+  mountVideoAnalysisMonitor,
+  mountSoundSynthesisMonitor,
+  mountAudioAnalysisMonitor,
+  mountVisualSynthesisMonitor,
+} from "./monitors.js";
 import { buildTriadsForMode, type ScaleMode } from "../src/harmony/music.js";
 
 // ── Asset file list (populated from Vite glob at build time) ──────────────────
@@ -27,18 +32,14 @@ const ASSET_FILES = Object.keys(
   import.meta.glob("/assets/*", { eager: false }),
 ).map((p) => p.replace(/^\/assets\//, ""));
 
-// ── Section layout ────────────────────────────────────────────────────────────
-// source is built as a custom section; the rest auto-generate from schema groups.
+// ── Stage → schema group mapping ─────────────────────────────────────────────
 
-const SECTIONS: Array<{ label: string | null; groups: string[] }> = [
-  { label: null, groups: ["view"] },
-  { label: "GLOBAL — HARMONY", groups: ["harmony"] },
-  {
-    label: "VISUAL → AUDIO",
-    groups: ["calibration", "analysis", "synth", "cassette"],
-  },
-  { label: "AUDIO → VISUAL", groups: ["audio"] },
-];
+const STAGE_GROUPS: Record<string, string[]> = {
+  videoAnalysis:   ["calibration", "analysis"],
+  soundSynthesis:  ["synth", "cassette"],
+  audioAnalysis:   ["audioAnalysis"],
+  visualSynthesis: ["visualSynthesis"],
+};
 
 // ── Boot BroadcastChannel sync ────────────────────────────────────────────────
 
@@ -46,16 +47,16 @@ startBroadcastSync();
 
 // ── Telemetry monitors ────────────────────────────────────────────────────────
 
-const videoMonitor = mountVideoMonitor(
-  document.getElementById("video-monitor")!,
-);
-const audioMonitor = mountAudioMonitor(
-  document.getElementById("audio-monitor")!,
-);
+const videoMon  = mountVideoAnalysisMonitor(document.getElementById("mon-video")!);
+const synthMon  = mountSoundSynthesisMonitor(document.getElementById("mon-synth")!);
+const audioMon  = mountAudioAnalysisMonitor(document.getElementById("mon-audio")!);
+const visualMon = mountVisualSynthesisMonitor(document.getElementById("mon-visual")!);
 
 new TelemetryReceiver((msg) => {
-  if (msg.video) videoMonitor.onMsg(msg);
-  if (msg.audio || msg.synth) audioMonitor.onMsg(msg);
+  videoMon.onMsg(msg);
+  synthMon.onMsg(msg);
+  audioMon.onMsg(msg);
+  visualMon.onMsg(msg);
 });
 
 // ── Optional WS relay from URL param ─────────────────────────────────────────
@@ -151,10 +152,26 @@ document.getElementById("copy-url-btn")?.addEventListener("click", () => {
 
 // ── Build UI ──────────────────────────────────────────────────────────────────
 
-const controlsEl = document.getElementById("controls")!;
+buildSettingsPanel(document.getElementById("settings-body")!);
 
-// Source section (custom — conditional rows + asset dropdown)
-buildSourceGroup(controlsEl);
+// Panel 0 collapse toggle
+{
+  const panel = document.getElementById("settings-panel")!;
+  const btn   = document.getElementById("sp-toggle")!;
+  const LS_KEY = "avva.ctrl.settings.open";
+  const isOpen = () => !panel.classList.contains("collapsed");
+  const setOpen = (open: boolean) => {
+    panel.classList.toggle("collapsed", !open);
+    btn.textContent = open ? "◀" : "▶";
+    try { localStorage.setItem(LS_KEY, open ? "1" : "0"); } catch { /* */ }
+  };
+  btn.addEventListener("click", () => setOpen(!isOpen()));
+  // Restore from localStorage (default: open)
+  try {
+    const saved = localStorage.getItem(LS_KEY);
+    if (saved === "0") setOpen(false);
+  } catch { /* */ }
+}
 
 // ── Collapse animation helper ────────────────────────────────────────────────
 // grid-template-rows animation is unreliable; measure actual px height instead.
@@ -193,9 +210,8 @@ function setBodyHeight(
   }
 }
 
-// ── Collapsible section helpers ───────────────────────────────────────────────
+// ── Collapsible group helpers ─────────────────────────────────────────────────
 
-const LS_PREFIX = "avva.ctrl.section.";
 const LS_GROUP_PREFIX = "avva.ctrl.group.";
 
 function getGroupCollapsed(group: string): boolean {
@@ -262,65 +278,23 @@ function makeGroupCard(
   return section;
 }
 
-function getSectionCollapsed(label: string): boolean {
-  try {
-    return localStorage.getItem(LS_PREFIX + label) === "1";
-  } catch {
-    return false;
-  }
-}
 
-function setSectionCollapsed(label: string, collapsed: boolean): void {
-  try {
-    if (collapsed) {
-      localStorage.setItem(LS_PREFIX + label, "1");
-    } else {
-      localStorage.removeItem(LS_PREFIX + label);
-    }
-  } catch {
-    /* ignore */
-  }
-}
+// Auto-generated groups — each stage column gets its schema groups
+const CTL_IDS: Record<string, string> = {
+  videoAnalysis: "ctl-video",
+  soundSynthesis: "ctl-synth",
+  audioAnalysis: "ctl-audio",
+  visualSynthesis: "ctl-visual",
+};
 
-// Auto-generated sections from schema
-for (const { label, groups } of SECTIONS) {
-  let bodyEl: HTMLElement = controlsEl;
-
-  if (label) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "collapsible-section";
-
-    const hdr = document.createElement("div");
-    hdr.className = "section-hdr";
-
-    const titleSpan = document.createElement("span");
-    titleSpan.textContent = label;
-
-    const chevron = document.createElement("span");
-    chevron.className = "section-hdr__chevron";
-    chevron.setAttribute("aria-hidden", "true");
-
-    hdr.append(titleSpan, chevron);
-
-    const sectionBody = document.createElement("div");
-    sectionBody.className = "section-body";
-
-    const collapsed = getSectionCollapsed(label);
-    if (collapsed) wrapper.classList.add("collapsed");
-
-    hdr.addEventListener("click", () => {
-      const isNowCollapsed = wrapper.classList.toggle("collapsed");
-      setSectionCollapsed(label, isNowCollapsed);
-      setBodyHeight(sectionBody, isNowCollapsed, true);
-    });
-
-    wrapper.append(hdr, sectionBody);
-    controlsEl.appendChild(wrapper);
-    setBodyHeight(sectionBody, collapsed, false);
-    bodyEl = sectionBody;
-  }
+for (const [stageId, groups] of Object.entries(STAGE_GROUPS)) {
+  const targetEl = document.getElementById(CTL_IDS[stageId]!);
+  if (!targetEl) continue;
 
   for (const group of groups) {
+    // source group is handled by buildSourceGroup — skip auto-generation
+    if (group === "source") continue;
+
     const keys = (Object.keys(SCHEMA) as SchemaKey[]).filter(
       (k) => SCHEMA[k].group === group,
     );
@@ -337,11 +311,259 @@ for (const { label, groups } of SECTIONS) {
         }
       },
     );
-    bodyEl.appendChild(card);
+    targetEl.appendChild(card);
   }
 }
 
-// ── Custom source group ───────────────────────────────────────────────────────
+// ── Settings panel (panel 0) ─────────────────────────────────────────────────
+
+function _spSection(label: string): { section: HTMLElement; body: HTMLElement } {
+  const section = document.createElement("div");
+  section.className = "sp-section";
+  const hdr = document.createElement("div");
+  hdr.className = "sp-section__hdr";
+  hdr.textContent = label;
+  section.appendChild(hdr);
+  const body = document.createElement("div");
+  body.className = "sp-section__body";
+  section.appendChild(body);
+  return { section, body };
+}
+
+function _spRow(label: string, ctrl: HTMLElement): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "sp-row";
+  const lbl = document.createElement("span");
+  lbl.className = "sp-row__lbl";
+  lbl.textContent = label;
+  row.append(lbl, ctrl);
+  return row;
+}
+
+function buildSettingsPanel(container: HTMLElement): void {
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"] as const;
+
+  // ── SOURCE ────────────────────────────────────────────────────────────────
+  const { section: srcSec, body: srcBody } = _spSection("SOURCE");
+  const UI_KINDS = ["camera", "file", "screen", "url"] as const;
+  const getUiKind = () => store.get("source.kind") as (typeof UI_KINDS)[number];
+
+  const kindBtns = document.createElement("div");
+  kindBtns.className = "ctrl ctrl--enum";
+  for (const kind of UI_KINDS) {
+    const btn = document.createElement("button");
+    btn.className = "seg-btn" + (getUiKind() === kind ? " active" : "");
+    btn.textContent = kind;
+    btn.addEventListener("click", () => store.set("source.kind", kind as SourceKind));
+    kindBtns.appendChild(btn);
+  }
+  srcBody.appendChild(_spRow("Source", kindBtns));
+
+  const fileSelect = document.createElement("select");
+  fileSelect.className = "sp-select";
+  const emptyOpt = document.createElement("option");
+  emptyOpt.value = ""; emptyOpt.textContent = "— select file —";
+  fileSelect.appendChild(emptyOpt);
+  for (const f of ASSET_FILES) {
+    const opt = document.createElement("option");
+    opt.value = `/assets/${f}`; opt.textContent = f;
+    fileSelect.appendChild(opt);
+  }
+  const curFile = store.get("source.file");
+  if (curFile) fileSelect.value = String(curFile);
+  fileSelect.addEventListener("change", () => {
+    store.set("source.kind", "file" as SourceKind);
+    store.set("source.file", fileSelect.value);
+  });
+  store.subscribeKey("source.file", (v) => { fileSelect.value = String(v); });
+  const fileRow = _spRow("File", fileSelect);
+  srcBody.appendChild(fileRow);
+
+  const urlInput = document.createElement("input");
+  urlInput.type = "url";
+  urlInput.className = "sp-input";
+  urlInput.placeholder = "https://…";
+  urlInput.value = String(store.get("source.url") ?? "");
+  urlInput.addEventListener("change", () => store.set("source.url", urlInput.value as never));
+  store.subscribeKey("source.url", (v) => { if (document.activeElement !== urlInput) urlInput.value = String(v ?? ""); });
+  const urlRow = _spRow("URL", urlInput);
+  srcBody.appendChild(urlRow);
+
+  const rateField = SCHEMA["source.playbackRate"];
+  const rateWrap = document.createElement("div");
+  rateWrap.className = "sp-range-wrap";
+  const rateInput = document.createElement("input");
+  rateInput.type = "range";
+  rateInput.min = String(rateField.min); rateInput.max = String(rateField.max);
+  rateInput.step = String(rateField.step);
+  rateInput.value = String(store.get("source.playbackRate"));
+  const rateOut = document.createElement("output");
+  rateOut.textContent = fmtNum(store.get("source.playbackRate") as number, rateField.step) + "\u00d7";
+  rateInput.addEventListener("input", () => {
+    const v = Number(rateInput.value);
+    rateOut.textContent = fmtNum(v, rateField.step) + "\u00d7";
+    store.set("source.playbackRate", v);
+  });
+  store.subscribeKey("source.playbackRate", (v) => {
+    rateInput.value = String(v);
+    rateOut.textContent = fmtNum(v as number, rateField.step) + "\u00d7";
+  });
+  rateWrap.append(rateInput, rateOut);
+  const rateRow = _spRow("Speed", rateWrap);
+  srcBody.appendChild(rateRow);
+
+  const updateSourceVis = () => {
+    const kind = getUiKind();
+    for (const btn of kindBtns.querySelectorAll<HTMLButtonElement>(".seg-btn"))
+      btn.classList.toggle("active", btn.textContent === kind);
+    fileRow.style.display  = kind === "file"   ? "" : "none";
+    urlRow.style.display   = kind === "url"    ? "" : "none";
+    rateRow.style.display  = kind !== "camera" ? "" : "none";
+  };
+  updateSourceVis();
+  store.subscribeKey("source.kind", updateSourceVis);
+  container.appendChild(srcSec);
+
+  // ── VIEW ──────────────────────────────────────────────────────────────────
+  const { section: viewSec, body: viewBody } = _spSection("VIEW");
+  const viewBtns = document.createElement("div");
+  viewBtns.className = "ctrl ctrl--enum";
+  for (const [key, label] of [["view.mirror", "mirror"], ["view.heatOn", "heat"]] as const) {
+    const btn = document.createElement("button");
+    btn.className = "seg-btn" + (store.get(key) ? " active" : "");
+    btn.textContent = label;
+    btn.addEventListener("click", () => store.set(key, !store.get(key) as never));
+    store.subscribeKey(key, (v) => btn.classList.toggle("active", !!v));
+    viewBtns.appendChild(btn);
+  }
+  viewBody.appendChild(_spRow("Display", viewBtns));
+  container.appendChild(viewSec);
+
+  // ── SYNTH ─────────────────────────────────────────────────────────────────
+  const { section: synthSec, body: synthBody } = _spSection("SYNTH");
+  const synthBtn = document.createElement("button");
+  const synthOn = store.get("synth.enabled") as boolean;
+  synthBtn.className = "toggle" + (synthOn ? " on" : "");
+  synthBtn.textContent = synthOn ? "ON" : "OFF";
+  synthBtn.addEventListener("click", () => store.set("synth.enabled", !store.get("synth.enabled") as never));
+  store.subscribeKey("synth.enabled", (v) => {
+    synthBtn.classList.toggle("on", !!v);
+    synthBtn.textContent = v ? "ON" : "OFF";
+  });
+  const synthWrap = document.createElement("div");
+  synthWrap.className = "ctrl ctrl--bool";
+  synthWrap.appendChild(synthBtn);
+  synthBody.appendChild(_spRow("Enable", synthWrap));
+  container.appendChild(synthSec);
+
+  // ── HARMONY ───────────────────────────────────────────────────────────────
+  const { section: harmSec, body: harmBody } = _spSection("HARMONY");
+
+  const rootSelect = document.createElement("select");
+  rootSelect.className = "sp-select";
+  for (const n of NOTE_NAMES) {
+    const opt = document.createElement("option");
+    opt.value = n; opt.textContent = n;
+    rootSelect.appendChild(opt);
+  }
+  const getActiveNote = () => Math.round(((store.get("harmony.rootHue") as number) ?? 0) / 30) % 12;
+  rootSelect.value = NOTE_NAMES[getActiveNote()];
+  rootSelect.addEventListener("change", () => {
+    const i = NOTE_NAMES.indexOf(rootSelect.value as typeof NOTE_NAMES[number]);
+    if (i >= 0) {
+      store.set("harmony.rootHue", i * 30);
+      store.set("harmony.root", rootSelect.value as never);
+    }
+  });
+  store.subscribeKey("harmony.rootHue", (v) => {
+    const i = Math.round(((v as number) ?? 0) / 30) % 12;
+    rootSelect.value = NOTE_NAMES[i];
+  });
+  harmBody.appendChild(_spRow("Root", rootSelect));
+
+  const scaleSelect = document.createElement("select");
+  scaleSelect.className = "sp-select";
+  for (const opt of (SCHEMA["harmony.scale"] as { options: readonly string[] }).options) {
+    const o = document.createElement("option");
+    o.value = opt; o.textContent = opt;
+    scaleSelect.appendChild(o);
+  }
+  scaleSelect.value = String(store.get("harmony.scale") ?? "major");
+  scaleSelect.addEventListener("change", () => store.set("harmony.scale", scaleSelect.value as never));
+  store.subscribeKey("harmony.scale", (v) => { scaleSelect.value = String(v); });
+  harmBody.appendChild(_spRow("Scale", scaleSelect));
+
+  const octField = SCHEMA["harmony.octave"];
+  const octWrap = document.createElement("div");
+  octWrap.className = "sp-range-wrap";
+  const octInput = document.createElement("input");
+  octInput.type = "range";
+  octInput.min = String(octField.min); octInput.max = String(octField.max);
+  octInput.step = String(octField.step);
+  octInput.value = String(store.get("harmony.octave"));
+  const octOut = document.createElement("output");
+  octOut.textContent = String(store.get("harmony.octave"));
+  octInput.addEventListener("input", () => {
+    const v = Number(octInput.value);
+    octOut.textContent = String(v);
+    store.set("harmony.octave", v);
+  });
+  store.subscribeKey("harmony.octave", (v) => {
+    octInput.value = String(v);
+    octOut.textContent = String(v);
+  });
+  octWrap.append(octInput, octOut);
+  harmBody.appendChild(_spRow("Octave", octWrap));
+
+  const fillBtn = document.createElement("button");
+  fillBtn.className = "action-btn sp-fill-btn";
+  fillBtn.textContent = "Fill palette from key";
+  fillBtn.addEventListener("click", () => {
+    const root = store.get("harmony.root") as string;
+    const scale = store.get("harmony.scale") as ScaleMode;
+    const triads = buildTriadsForMode(root, scale);
+    store.set("harmony.palette", triads.join(", "));
+  });
+  harmBody.appendChild(fillBtn);
+
+  const paletteInput = document.createElement("input");
+  paletteInput.type = "text";
+  paletteInput.className = "sp-input";
+  paletteInput.spellcheck = false;
+  paletteInput.placeholder = "CG, FAC, GBD …";
+  paletteInput.value = String(store.get("harmony.palette") ?? "");
+  paletteInput.addEventListener("change", () => store.set("harmony.palette", paletteInput.value as never));
+  store.subscribeKey("harmony.palette", (v) => {
+    if (document.activeElement !== paletteInput) paletteInput.value = String(v ?? "");
+  });
+  harmBody.appendChild(_spRow("Slots", paletteInput));
+
+  const czField = SCHEMA["harmony.crossZone"];
+  const czWrap = document.createElement("div");
+  czWrap.className = "sp-range-wrap";
+  const czInput = document.createElement("input");
+  czInput.type = "range";
+  czInput.min = String(czField.min); czInput.max = String(czField.max);
+  czInput.step = String(czField.step);
+  czInput.value = String(store.get("harmony.crossZone"));
+  const czOut = document.createElement("output");
+  czOut.textContent = fmtNum(store.get("harmony.crossZone") as number, czField.step);
+  czInput.addEventListener("input", () => {
+    const v = Number(czInput.value);
+    czOut.textContent = fmtNum(v, czField.step);
+    store.set("harmony.crossZone", v);
+  });
+  store.subscribeKey("harmony.crossZone", (v) => {
+    czInput.value = String(v);
+    czOut.textContent = fmtNum(v as number, czField.step);
+  });
+  czWrap.append(czInput, czOut);
+  harmBody.appendChild(_spRow("X-zone", czWrap));
+
+  container.appendChild(harmSec);
+}
+
+// ── Custom source group (legacy — no longer used, kept for safety) ────────────
 
 function buildSourceGroup(container: HTMLElement): void {
   let sectionBody!: HTMLElement;
