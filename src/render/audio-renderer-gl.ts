@@ -262,6 +262,7 @@ export class AudioRendererGL {
   private _u: UniformMap;
   private _degreeRGBBuf: Float32Array;
   private _degreeRGB2Buf: Float32Array;
+  private _slotWeights: Float32Array;
   private _pulse = 0;
   private readonly _startT: number;
   private _w = 0;
@@ -298,6 +299,7 @@ export class AudioRendererGL {
 
     this._degreeRGBBuf = new Float32Array(7 * 3);
     this._degreeRGB2Buf = new Float32Array(7 * 3);
+    this._slotWeights = new Float32Array(7);
     this._fillDegreeRGB(degreeHues);
 
     this._vao = gl.createVertexArray()!;
@@ -378,6 +380,7 @@ export class AudioRendererGL {
     this._u = entry.u;
     this._degreeRGBBuf = new Float32Array(n * 3);
     this._degreeRGB2Buf = new Float32Array(n * 3);
+    this._slotWeights = new Float32Array(n);
     const gl = this._gl;
     gl.useProgram(this._prog);
     gl.uniform2f(this._u.uRes, this._w, this._h);
@@ -433,13 +436,27 @@ export class AudioRendererGL {
     const N = frame.slots.length;
     if (N !== this._activeN) this.setN(N);
 
+    // Find the winning slot (highest score) and smooth all weights toward a
+    // winner-only state — losers fade to 0, winner fades to its detection score.
+    let winner = 0;
+    let winnerScore = -1;
+    for (let i = 0; i < N; i++) {
+      if (frame.slots[i] > winnerScore) {
+        winnerScore = frame.slots[i];
+        winner = i;
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      const target = i === winner ? winnerScore : 0;
+      this._slotWeights[i] += (target - this._slotWeights[i]) * 0.12;
+    }
+
     const hues = frame.slotHues;
     this._fillDegreeRGB(hues);
 
     gl.useProgram(this._prog);
     gl.uniform1f(u.uTime, t);
-    const weights = frame.slots;
-    gl.uniform1fv(u.uDegrees, weights);
+    gl.uniform1fv(u.uDegrees, this._slotWeights);
     gl.uniform3fv(u.uDegreeRGB, this._degreeRGBBuf);
     gl.uniform3fv(u.uDegreeRGB2, this._degreeRGB2Buf);
     gl.uniform1f(u.uBri, frame.bri);

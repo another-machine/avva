@@ -202,7 +202,21 @@ export class Palette {
       this._chordTemplates = this._slots.map((s) => {
         const pcs = s.chord.pitchClasses;
         const vec = new Float32Array(12);
+        // Fundamentals first so they always win over harmonic entries below.
         for (const pc of pcs) vec[pc] = 1;
+        // Add expected harmonic energy: 3rd partial (+7 semitones, a perfect 5th)
+        // and 5th partial (+4 semitones, a major 3rd). These weights model typical
+        // overtone bleed from FM or any pitched source, so the template scores high
+        // on the actual spectrum of that grouping rather than just on its pitch classes.
+        // Math.max prevents weaker harmonic entries from overwriting fundamentals.
+        for (const pc of pcs) {
+          const h3 = (pc + 7) % 12;
+          const h5 = (pc + 4) % 12;
+          if (vec[h3] < 0.4) vec[h3] = 0.4;
+          if (vec[h5] < 0.15) vec[h5] = 0.15;
+        }
+        let normSq = 0;
+        for (let c = 0; c < 12; c++) normSq += vec[c] * vec[c];
         const keyStr = pcs
           .map((pc) => _SHARP_NAMES[pc])
           .sort()
@@ -211,7 +225,7 @@ export class Palette {
           label: s.chord.label,
           key: keyStr,
           vec,
-          norm: Math.sqrt(pcs.length),
+          norm: Math.sqrt(normSq),
         };
       });
     }

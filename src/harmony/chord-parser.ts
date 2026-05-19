@@ -56,7 +56,7 @@ const _ROOT_MAP: Record<string, number> = {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Chord {
-  pitchClasses: number[]; // deduped, sorted ascending, values 0–11
+  pitchClasses: number[]; // deduped, in user-written order, values 0–11
   label: string; // original input, trimmed
 }
 
@@ -110,8 +110,6 @@ export function parseChord(letters: string): Chord {
 
   if (pitchClasses.length === 0)
     throw new Error(`No notes in chord: "${letters}"`);
-
-  pitchClasses.sort((a, b) => a - b);
 
   return { pitchClasses, label: trimmed };
 }

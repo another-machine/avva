@@ -155,6 +155,7 @@ export class Synth {
 
   palette: Palette | null;
   running: boolean;
+  lastNote: { label: string; slotIndex: number; pitchClasses: number[] } | null;
   private _prevRootFreq: number;
   private _lastCarrierTypes: string[];
   private _periodicWaves: Map<string, PeriodicWave>;
@@ -177,6 +178,7 @@ export class Synth {
     this._cassette = null;
     this.palette = null;
     this.running = false;
+    this.lastNote = null;
     this._prevRootFreq = 0;
     this._lastCarrierTypes = ["sine", "sine", "sine", "sine"];
     this._periodicWaves = new Map();
@@ -336,6 +338,7 @@ export class Synth {
     if (!this._actx) return;
     this._actx.suspend();
     this.running = false;
+    this.lastNote = null;
   }
 
   setPalette(p: Palette | null): void {
@@ -398,7 +401,12 @@ export class Synth {
     const pcs = primarySlot.chord.pitchClasses;
     const note: NoteProxy = {
       _palettePrimary: primarySlot,
-      triad: pcs.map((pc) => ({ freq: _pcToFreq(pc, baseOctave), name: "" })),
+      triad: _pcsToVoicing(pcs, baseOctave).map((freq) => ({ freq, name: "" })),
+    };
+    this.lastNote = {
+      label: primarySlot.chord.label,
+      slotIndex: primarySlot.index,
+      pitchClasses: pcs,
     };
 
     const now = this._actx!.currentTime;
@@ -487,6 +495,10 @@ export class Synth {
     }
 
     const retrigger = chordChanged || pulseFire;
+    // When the slot actually changes, snap to the new pitches quickly regardless
+    // of video activity — without this, a static video (act≈0) would cause a 3-second
+    // glide that makes the synth sound like it's ignoring palette/rootHue changes.
+    const pitchTau = chordChanged ? 0.05 : tau;
     const decayTau = articulation > 0 ? 2.0 + (0.05 - 2.0) * articulation : 2.0;
 
     for (let ti = 0; ti < 3; ti++) {
@@ -529,7 +541,7 @@ export class Synth {
             }
           }
 
-          fm.glideTo(targetFreq, _vGlide(vi));
+          fm.glideTo(targetFreq, chordChanged ? pitchTau : _vGlide(vi));
           const triadGain =
             tierBase *
             voiceWeights[vi] *
@@ -556,7 +568,7 @@ export class Synth {
               const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
               if (si < secPCs.length) {
                 const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
-                fm.glideTo(sf, _vGlide(vi));
+                fm.glideTo(sf, chordChanged ? pitchTau : _vGlide(vi));
                 fm.setGain(
                   tierBase *
                     voiceWeights[[0, 2][ei]] *
@@ -573,7 +585,7 @@ export class Synth {
               const xi = 3 + ei;
               if (xi < pcs.length) {
                 const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
-                fm.glideTo(ef, _vGlide(vi));
+                fm.glideTo(ef, chordChanged ? pitchTau : _vGlide(vi));
                 fm.setGain(
                   tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
                   tau,
@@ -627,7 +639,7 @@ export class Synth {
     );
     if (Number.isFinite(subFreq) && subFreq > 0) {
       this._cancelParam(this._sub!.osc.frequency, now);
-      this._sub!.osc.frequency.setTargetAtTime(subFreq, now, tau);
+      this._sub!.osc.frequency.setTargetAtTime(subFreq, now, pitchTau);
     }
     this._cancelParam(this._sub!.gain.gain, now);
     this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tau);
@@ -1022,4 +1034,26 @@ function clamp01(x: number): number {
 
 function _pcToFreq(pc: number, octave: number): number {
   return 440 * Math.pow(2, (pc - 9 + (octave - 4) * 12) / 12);
+}
+
+// Build a close-voiced frequency array from pitch classes in user-defined order.
+// Each note is placed in the lowest octave that puts it strictly above the previous
+// note, so "GBD" → G4, B4, D5 (not D4, G4, B4 which the old ascending-sort produced).
+function _pcsToVoicing(pcs: number[], rootOctave: number): number[] {
+  const freqs: number[] = [];
+  for (let i = 0; i < pcs.length; i++) {
+    if (i === 0) {
+      freqs.push(_pcToFreq(pcs[i], rootOctave));
+    } else {
+      const prev = freqs[i - 1];
+      let oct = rootOctave - 1;
+      let f = _pcToFreq(pcs[i], oct);
+      while (f <= prev && oct < rootOctave + 5) {
+        oct++;
+        f = _pcToFreq(pcs[i], oct);
+      }
+      freqs.push(f);
+    }
+  }
+  return freqs;
 }

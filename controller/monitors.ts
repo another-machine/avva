@@ -10,6 +10,7 @@ import { store } from "../src/store/store.js";
 import { legacyConfig as CONFIG } from "../src/store/legacy-config.js";
 import { Palette } from "../src/harmony/palette.js";
 import { hueName } from "../src/analysis/color.js";
+import { toPerceptual } from "../src/harmony/hue-perception.js";
 import type { AnalysisOut } from "../src/analysis/analyzer.js";
 import type { TelemetryMsg } from "../src/store/telemetry.js";
 
@@ -345,16 +346,15 @@ function _paintVideoSignals(
 
   if (!synth?.note) {
     refs.sigKeyLbl.textContent = synth?.keyLabel ?? "—";
-    refs.sigNumeral.textContent = "—";
+    refs.sigNumeral.textContent = "";
     refs.sigNotename.textContent = "—";
     refs.sigQuality.textContent = "";
     return;
   }
-  const { numeral, name, quality } = synth.note;
-  refs.sigKeyLbl.textContent = synth.keyLabel ?? "";
-  refs.sigNumeral.textContent = numeral;
-  refs.sigNotename.textContent = name;
-  refs.sigQuality.textContent = quality.toUpperCase();
+  refs.sigKeyLbl.textContent = "";
+  refs.sigNumeral.textContent = "";
+  refs.sigNotename.textContent = synth.note.label;
+  refs.sigQuality.textContent = "";
 }
 
 export function mountVideoMonitor(host: HTMLElement): {
@@ -474,7 +474,7 @@ export function mountAudioMonitor(host: HTMLElement): {
     if (!paletteStr) return null;
     try {
       return Palette.fromURLParam(paletteStr as string, {
-        rootHue: store.get("harmony.rootHue") ?? 0,
+        rootHue: toPerceptual(store.get("harmony.rootHue") ?? 0),
         crossZone: store.get("harmony.crossZone"),
       });
     } catch {

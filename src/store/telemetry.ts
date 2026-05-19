@@ -12,7 +12,7 @@ export interface TelemetryMsg {
   synth?: {
     running: boolean;
     keyLabel?: string;
-    note?: { numeral: string; name: string; quality: string } | null;
+    note?: { label: string; slotIndex: number } | null;
   };
 }
 
@@ -20,9 +20,15 @@ const CHANNEL = "avva-telemetry";
 
 export class TelemetrySender {
   private _ch: BroadcastChannel;
-  constructor() { this._ch = new BroadcastChannel(CHANNEL); }
-  send(msg: TelemetryMsg): void { this._ch.postMessage(msg); }
-  close(): void { this._ch.close(); }
+  constructor() {
+    this._ch = new BroadcastChannel(CHANNEL);
+  }
+  send(msg: TelemetryMsg): void {
+    this._ch.postMessage(msg);
+  }
+  close(): void {
+    this._ch.close();
+  }
 }
 
 export class TelemetryReceiver {
@@ -31,5 +37,7 @@ export class TelemetryReceiver {
     this._ch = new BroadcastChannel(CHANNEL);
     this._ch.onmessage = (e) => onMsg(e.data as TelemetryMsg);
   }
-  close(): void { this._ch.close(); }
+  close(): void {
+    this._ch.close();
+  }
 }

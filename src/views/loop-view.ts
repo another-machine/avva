@@ -58,7 +58,7 @@ async function begin(): Promise<void> {
 
   const defaultPaletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
   palette = Palette.fromURLParam(defaultPaletteStr, {
-    rootHue: CONFIG.rootHue ?? 0,
+    rootHue: toPerceptual(store.get("harmony.rootHue") ?? CONFIG.rootHue ?? 0),
     crossZone: CONFIG.crossZone,
   });
 
@@ -137,7 +137,9 @@ async function begin(): Promise<void> {
     const paletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
     try {
       palette = Palette.fromURLParam(paletteStr as string, {
-        rootHue: CONFIG.rootHue ?? 0,
+        rootHue: toPerceptual(
+          store.get("harmony.rootHue") ?? CONFIG.rootHue ?? 0,
+        ),
         crossZone: CONFIG.crossZone,
       });
     } catch {
@@ -311,8 +313,7 @@ function tick(t: number): void {
 
     const synthSnap = {
       running: synth.running,
-      keyLabel: "—",
-      note: null,
+      note: synth.lastNote ?? null,
     };
 
     maybeTapSynth();
@@ -343,5 +344,6 @@ export function mountLoopView(): void {
   document.body.className = "loop";
   document.body.innerHTML = LOOP_HTML;
 
+  store.set("synth.enabled", false);
   void begin();
 }
