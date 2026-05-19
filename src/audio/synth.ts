@@ -19,13 +19,13 @@ import type { LegacyConfig } from "../store/legacy-config.js";
 const TIER_RATIO = [2, 1, 1] as const;
 
 const TIER_BASE_PAN = [
-  [-0.18, 0.0, +0.18],
+  [-0.45, 0.0, +0.45],
   [-0.42, 0.0, +0.42],
   [-0.7, 0.0, +0.7],
 ] as const;
 
 const TIER_BASE_PAN_EXT = [
-  [+0.12, -0.12],
+  [+0.32, -0.32],
   [+0.32, -0.32],
   [+0.55, -0.55],
 ] as const;
@@ -461,7 +461,9 @@ export class Synth {
     const vt = safeVy * 2;
     const trebleW = vt <= 1 ? (1 - vt) * safeBri : 0;
     const midW = (vt <= 1 ? vt : 2 - vt) * safeBri;
-    const bassW = vt >= 1 ? (vt - 1) * safeBri : 0;
+    // Bass uses bottom-third brightness directly — vy centroid stays near 0.5
+    // in typical scenes so the vy-derived signal barely fires.
+    const bassW = safeLo;
     const tierSignals = [bassW, midW, trebleW];
 
     const thirdW = clamp01((safeSpread - 0.15) / 0.25);
@@ -523,10 +525,8 @@ export class Synth {
       const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
       const artEnv = articulation > 0 ? this._articulationEnvs[ti] : 1.0;
-      const bassBoost = ti === 0 ? 1.5 : 1.0;
       const tierBase =
         Math.max(0, tierSignals[ti] * 0.25) *
-        bassBoost *
         artEnv *
         this._waveGainComp(tierCarrierTypes[ti]);
 
@@ -586,7 +586,9 @@ export class Synth {
             : tierBase * voiceWeights[vi] * (1 - bf2);
           fm.setGain(triadGain, tau);
           fm.setIndex(tierIndex[ti], slowTau);
-          const targetRatio = ratioBase + ratioDrift * VOICE_DRIFT_SIGN[vi];
+          const bassExtraDrift = ti === 0 ? 0.02 : 0;
+          const targetRatio =
+            ratioBase + (ratioDrift + bassExtraDrift) * VOICE_DRIFT_SIGN[vi];
           fm.setRatio(targetRatio, slowTau);
           const targetPan = TIER_BASE_PAN[ti][vi] * widthScale;
           this._panTo(panner.pan, targetPan, slowTau, now);
