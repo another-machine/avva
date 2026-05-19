@@ -40,14 +40,15 @@ export interface LegacyConfig {
   fmStereoWidth: number;
   fmPluckRatio: number;
 
-  carrierTypeBass: OscillatorType;
-  carrierTypeMid: OscillatorType;
-  carrierTypeTreble: OscillatorType;
-  carrierTypePluck: OscillatorType;
+  carrierTypeBass: string;
+  carrierTypeMid: string;
+  carrierTypeTreble: string;
+  carrierTypePluck: string;
   glideSpread: number;
   octaveOffsetBass: number;
   octaveOffsetMid: number;
   octaveOffsetTreble: number;
+  octaveOffsetPluck: number;
 
   articulation: number;
   pulseRate: number;
@@ -144,16 +145,16 @@ export const legacyConfig: LegacyConfig = {
   },
 
   get carrierTypeBass() {
-    return store.get("synth.carrierTypeBass") as OscillatorType;
+    return store.get("synth.carrierTypeBass") as string;
   },
   get carrierTypeMid() {
-    return store.get("synth.carrierTypeMid") as OscillatorType;
+    return store.get("synth.carrierTypeMid") as string;
   },
   get carrierTypeTreble() {
-    return store.get("synth.carrierTypeTreble") as OscillatorType;
+    return store.get("synth.carrierTypeTreble") as string;
   },
   get carrierTypePluck() {
-    return store.get("synth.carrierTypePluck") as OscillatorType;
+    return store.get("synth.carrierTypePluck") as string;
   },
   get glideSpread() {
     return store.get("synth.glideSpread");
@@ -166,6 +167,9 @@ export const legacyConfig: LegacyConfig = {
   },
   get octaveOffsetTreble() {
     return store.get("synth.octaveOffsetTreble");
+  },
+  get octaveOffsetPluck() {
+    return store.get("synth.octaveOffsetPluck");
   },
 
   get articulation() {

@@ -160,7 +160,8 @@ export class Synth {
   palette: Palette | null;
   running: boolean;
   private _prevRootFreq: number;
-  private _lastCarrierTypes: OscillatorType[];
+  private _lastCarrierTypes: string[];
+  private _periodicWaves: Map<string, PeriodicWave>;
   private _articulationEnvs: number[];
   private _pulseCounter: number;
   private _prevNoteKey: string;
@@ -183,6 +184,7 @@ export class Synth {
     this.running = false;
     this._prevRootFreq = 0;
     this._lastCarrierTypes = ["sine", "sine", "sine", "sine"];
+    this._periodicWaves = new Map();
     this._articulationEnvs = [1.0, 1.0, 1.0];
     this._pulseCounter = 0;
     this._prevNoteKey = "";
@@ -432,26 +434,25 @@ export class Synth {
       this._cfg.octaveOffsetTreble ?? 1,
     ] as const;
 
-    // ── Carrier waveforms (per-tier + pluck) ──────────────────────────
-    const tierCarrierTypes: OscillatorType[] = [
-      (this._cfg.carrierTypeBass ?? "sine") as OscillatorType,
-      (this._cfg.carrierTypeMid ?? "sine") as OscillatorType,
-      (this._cfg.carrierTypeTreble ?? "sine") as OscillatorType,
+    // ── Carrier waveforms (per-tier + pluck) ────────────────────────
+    const tierCarrierTypes: string[] = [
+      this._cfg.carrierTypeBass ?? "sine",
+      this._cfg.carrierTypeMid ?? "sine",
+      this._cfg.carrierTypeTreble ?? "sine",
     ];
-    const pluckCarrierType = (this._cfg.carrierTypePluck ??
-      "sine") as OscillatorType;
+    const pluckCarrierType = this._cfg.carrierTypePluck ?? "sine";
     this._tiers.forEach(({ voices }, ti) => {
       const ct = tierCarrierTypes[ti];
       if (ct !== this._lastCarrierTypes[ti]) {
         this._lastCarrierTypes[ti] = ct;
-        for (const { fm } of voices) fm.carrier.type = ct;
+        for (const { fm } of voices) this._applyCarrierType(fm.carrier, ct);
       }
     });
     if (pluckCarrierType !== this._lastCarrierTypes[3]) {
       this._lastCarrierTypes[3] = pluckCarrierType;
-      for (const { fm } of this._plucks) fm.carrier.type = pluckCarrierType;
+      for (const { fm } of this._plucks)
+        this._applyCarrierType(fm.carrier, pluckCarrierType);
     }
-
     // ── Glide spread ─────────────────────────────────────────────
     const glideSpread = this._cfg.glideSpread ?? 1.0;
 
@@ -522,7 +523,12 @@ export class Synth {
       const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
       const artEnv = articulation > 0 ? this._articulationEnvs[ti] : 1.0;
-      const tierBase = Math.max(0, tierSignals[ti] * 0.25) * artEnv;
+      const bassBoost = ti === 0 ? 1.5 : 1.0;
+      const tierBase =
+        Math.max(0, tierSignals[ti] * 0.25) *
+        bassBoost *
+        artEnv *
+        this._waveGainComp(tierCarrierTypes[ti]);
 
       let extFreqs: [number, number] = [0, 0];
       let extOk: [boolean, boolean] = [false, false];
@@ -695,7 +701,7 @@ export class Synth {
       this._sub!.osc.frequency.setTargetAtTime(subFreq, now, tau);
     }
     this._cancelParam(this._sub!.gain.gain, now);
-    this._sub!.gain.gain.setTargetAtTime(safeLo * 0.25, now, tau);
+    this._sub!.gain.gain.setTargetAtTime(safeLo * 0.4, now, tau);
   }
 
   // ── Private — pluck ─────────────────────────────────────────
@@ -719,6 +725,9 @@ export class Synth {
     if (now < pluck.nextAllowed) return;
 
     const articulationBoost = 1.0 + clamp01(this._cfg.articulation ?? 0) * 4;
+    const pluckGainComp = this._waveGainComp(
+      this._cfg.carrierTypePluck ?? "sine",
+    );
     const trigProb = Math.min(
       1,
       Math.max(quickness * 0.4, slowness * 0.2, vMag * 0.5) * articulationBoost,
@@ -726,7 +735,7 @@ export class Synth {
     if (Math.random() > trigProb) return;
 
     const spacious = 1 - quickness;
-    const peak = 0.04 + quickness * 0.13 + slowness * 0.03;
+    const peak = (0.04 + quickness * 0.13 + slowness * 0.03) * pluckGainComp;
     const attackTau = 0.014 - quickness * 0.011;
     const baseDecay = 0.06 + slowness * 0.4;
     const ampDecayTau =
@@ -742,12 +751,13 @@ export class Synth {
 
     let fc: number, pluckPan: number;
     const baseOctave = this._cfg.octave ?? 4;
+    const pluckOctaveOffset = this._cfg.octaveOffsetPluck ?? 1;
 
     if (this.palette) {
       const pcs = note._palettePrimary!.chord.pitchClasses;
       const nUnlocked = Math.max(1, Math.round(1 + spread * (pcs.length - 1)));
       const chosenIdx = Math.floor(Math.random() * nUnlocked);
-      const octShift = Math.round(1 - slowness * 2);
+      const octShift = Math.round(1 - slowness * 2) + pluckOctaveOffset;
       fc = _pcToFreq(pcs[chosenIdx], baseOctave + octShift);
       const pcFrac = pcs.length > 1 ? chosenIdx / (pcs.length - 1) : 0.5;
       pluckPan =
@@ -759,7 +769,7 @@ export class Synth {
       const orderedDegrees = CONSONANCE_STEPS.map((s) => (d + s) % 7);
       const nUnlocked = Math.round(1 + spread * 6);
       const chosen = orderedDegrees[Math.floor(Math.random() * nUnlocked)];
-      const octShift = Math.round(1 - slowness * 2);
+      const octShift = Math.round(1 - slowness * 2) + pluckOctaveOffset;
       fc = this.key!.degrees[chosen].freq * Math.pow(2, octShift);
       const degPan = (chosen / 6 - 0.5) * 2;
       pluckPan =
@@ -789,6 +799,72 @@ export class Synth {
   }
 
   // ── Helpers ─────────────────────────────────────────────────
+
+  // Gain compensation so all waveforms have similar perceived loudness.
+  private _waveGainComp(name: string): number {
+    switch (name) {
+      case "triangle":
+        return 0.92;
+      case "square":
+        return 0.56;
+      case "sawtooth":
+        return 0.65;
+      case "pwm":
+        return 0.62;
+      case "organ":
+        return 0.78;
+      case "softsaw":
+        return 0.7;
+      default:
+        return 1.0; // sine
+    }
+  }
+
+  // Build (and cache) a PeriodicWave for custom waveform types.
+  private _getOrBuildWave(name: string): PeriodicWave {
+    if (this._periodicWaves.has(name)) return this._periodicWaves.get(name)!;
+    const N = 32;
+    const real = new Float32Array(N);
+    const imag = new Float32Array(N);
+    if (name === "softsaw") {
+      // Sawtooth with 1/n² harmonic rolloff — warm, analogue-rounded
+      for (let n = 1; n < N; n++) {
+        imag[n] = ((2 / Math.PI) * (n % 2 === 0 ? -1 : 1)) / (n * n);
+      }
+    } else if (name === "pwm") {
+      // 25% duty-cycle pulse — nasal, hollow, cutting
+      const d = 0.25;
+      for (let n = 1; n < N; n++) {
+        real[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * d);
+      }
+    } else if (name === "organ") {
+      // Hammond-style drawbar blend: partials 1, 2, 3, 4, 6
+      imag[1] = 1.0;
+      imag[2] = 0.8;
+      imag[3] = 0.5;
+      imag[4] = 0.35;
+      imag[6] = 0.15;
+    }
+    const wave = this._actx!.createPeriodicWave(real, imag, {
+      disableNormalization: false,
+    });
+    this._periodicWaves.set(name, wave);
+    return wave;
+  }
+
+  // Apply a carrier wave by name — native OscillatorType or PeriodicWave.
+  private _applyCarrierType(osc: OscillatorNode, name: string): void {
+    if (
+      name === "sine" ||
+      name === "triangle" ||
+      name === "square" ||
+      name === "sawtooth"
+    ) {
+      osc.type = name as OscillatorType;
+    } else {
+      osc.setPeriodicWave(this._getOrBuildWave(name));
+    }
+  }
 
   private _panTo(
     param: AudioParam,
