@@ -427,7 +427,7 @@ function buildSettingsPanel(container: HTMLElement): void {
   const { section: viewSec, body: viewBody } = _spSection("VIEW");
   const viewBtns = document.createElement("div");
   viewBtns.className = "ctrl ctrl--enum";
-  for (const [key, label] of [["view.mirror", "mirror"], ["view.heatOn", "heat"]] as const) {
+  for (const [key, label] of [["view.mirror", "mirror"], ["view.heatOn", "heat"], ["view.tiltOn", "tilt"]] as const) {
     const btn = document.createElement("button");
     btn.className = "seg-btn" + (store.get(key) ? " active" : "");
     btn.textContent = label;

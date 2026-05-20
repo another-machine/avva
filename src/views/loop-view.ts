@@ -19,6 +19,7 @@ const LOOP_HTML = /* html */ `
     <div class="pane pane--cam">
       <video id="vid" playsinline muted></video>
       <canvas id="heat" class="canvas-layer"></canvas>
+      <canvas id="tilt" class="canvas-layer"></canvas>
     </div>
   </div>
   <div id="gate" class="hide">
@@ -37,6 +38,8 @@ let audioCanvas: HTMLCanvasElement;
 let videoSource: any, vidAnalyzer: any, calibration: any;
 let synth: any;
 let heatCtx: CanvasRenderingContext2D | null = null;
+let tiltCanvas: HTMLCanvasElement | null = null;
+let tiltOn = false;
 let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
 let palette: Palette | null = null;
@@ -44,6 +47,37 @@ let telemetry: TelemetrySender | null = null;
 let pipeline: Pipeline | null = null;
 let _sourceLabel = "—";
 let _resLabel = "—";
+
+// ── Tilt overlay ──────────────────────────────────────────────────────────────
+
+function _drawTiltOverlay(canvas: HTMLCanvasElement, tilt: number): void {
+  const r = canvas.getBoundingClientRect();
+  if (r.width === 0) return;
+  if (canvas.width !== Math.round(r.width) || canvas.height !== Math.round(r.height)) {
+    canvas.width = Math.round(r.width);
+    canvas.height = Math.round(r.height);
+  }
+  const ctx = canvas.getContext("2d")!;
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const y = tilt * h;
+  const bw = Math.round(h * 0.18); // gradient band ± ~18% of height
+
+  const grad = ctx.createLinearGradient(0, y - bw, 0, y + bw);
+  grad.addColorStop(0,   "rgba(100, 220, 190, 0)");
+  grad.addColorStop(0.5, "rgba(100, 220, 190, 0.15)");
+  grad.addColorStop(1,   "rgba(100, 220, 190, 0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, Math.max(0, y - bw), w, bw * 2);
+
+  ctx.strokeStyle = "rgba(130, 240, 210, 0.9)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(w, y);
+  ctx.stroke();
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -95,6 +129,9 @@ async function begin(): Promise<void> {
   heatCtx = heat.getContext("2d")!;
   heatCtx.imageSmoothingEnabled = false;
 
+  tiltCanvas = document.getElementById("tilt") as HTMLCanvasElement;
+  tiltOn = !!store.get("view.tiltOn");
+
   telemetry = new TelemetrySender();
 
   pipeline = new Pipeline({
@@ -110,6 +147,7 @@ async function begin(): Promise<void> {
       root.style.setProperty("--accent-c", (0.04 + f.out.sat * 0.18).toFixed(3));
       root.style.setProperty("--accent-h", f.out.hue.toFixed(1));
       if (f.heatImageData && heatCtx) heatCtx.putImageData(f.heatImageData, 0, 0);
+      if (tiltOn && tiltCanvas) _drawTiltOverlay(tiltCanvas, f.out.tilt);
       synth.update(f.out);
       return synth.lastControls;
     },
@@ -152,9 +190,19 @@ async function begin(): Promise<void> {
     heat.style.setProperty("--heat-opacity", v ? "0.55" : "0");
   });
 
+  store.subscribeKey("view.tiltOn", (v) => {
+    tiltOn = !!v;
+    tiltCanvas!.style.setProperty("--tilt-opacity", v ? "1" : "0");
+    if (!v && tiltCanvas) {
+      const ctx = tiltCanvas.getContext("2d");
+      ctx?.clearRect(0, 0, tiltCanvas.width, tiltCanvas.height);
+    }
+  });
+
   store.subscribeKey("view.mirror", (v) => {
     videoEl.classList.toggle("mirror", v);
     heat.classList.toggle("mirror", v);
+    tiltCanvas?.classList.toggle("mirror", v);
   });
 
   store.subscribeKey("harmony.palette", () => {
@@ -271,11 +319,10 @@ async function begin(): Promise<void> {
   // Apply initial state from store
   videoEl.classList.toggle("mirror", store.get("view.mirror"));
   heat.classList.toggle("mirror", store.get("view.mirror"));
+  tiltCanvas.classList.toggle("mirror", store.get("view.mirror"));
   vidAnalyzer.heatOn = store.get("view.heatOn");
-  heat.style.setProperty(
-    "--heat-opacity",
-    store.get("view.heatOn") ? "0.55" : "0",
-  );
+  heat.style.setProperty("--heat-opacity", store.get("view.heatOn") ? "0.55" : "0");
+  tiltCanvas.style.setProperty("--tilt-opacity", store.get("view.tiltOn") ? "1" : "0");
 
   (window as any)._avva = {
     synth,

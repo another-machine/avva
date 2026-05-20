@@ -95,6 +95,12 @@ export const SCHEMA = {
     label: "Motion heatmap",
     group: "view",
   },
+  "view.tiltOn": {
+    kind: "boolean",
+    default: false,
+    label: "Tilt overlay",
+    group: "view",
+  },
 
   // ── input source ───────────────────────────────────────────
   "source.kind": {

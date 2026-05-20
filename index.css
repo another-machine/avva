@@ -43,6 +43,13 @@
   initial-value: 0;
 }
 
+/* Tilt overlay opacity — set on #tilt; CSS transitions it. */
+@property --tilt-opacity {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
 /* HUD layer opacity — JS sets this on body; all HUD elements inherit
    the live interpolated value. Timing is fully controlled by CSS vars. */
 @property --hud-opacity {
@@ -261,6 +268,12 @@ body {
   object-position: center;
   opacity: var(--heat-opacity);
   transition: --heat-opacity var(--dur-long) var(--ease);
+}
+
+#tilt {
+  opacity: var(--tilt-opacity);
+  transition: --tilt-opacity var(--dur-long) var(--ease);
+  pointer-events: none;
 }
 
 /* ============================================================
