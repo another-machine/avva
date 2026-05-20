@@ -346,21 +346,24 @@ export class AudioAnalyzer {
     hi = Math.min(1, hi / (perOct * cutLo));
     mid = Math.min(1, mid / (perOct * Math.max(1, cutHi - cutLo)));
 
-    // ── Canonical axes: tilt (spectral centroid), ctr (peakiness), pos (stereo) ─
-    let centNum = 0, centDen = 0;
+    // ── Canonical axes: tilt (raw FFT energy split), ctr (peakiness), pos (stereo) ─
+    // Tilt: ratio of high-frequency to total energy, split at ~1.5 kHz.
+    // Cap loop at 12 kHz — bins above that are always empty for synth content,
+    // and including them only adds noise to the ratio with no signal benefit.
+    const crossBin = Math.min(data.length - 1, Math.round(1500 / this._binHz));
+    const tiltBinMax = Math.min(data.length, Math.ceil(12000 / this._binHz));
+    let tiltLo = 0, tiltHi = 0;
+    for (let i = 0; i < tiltBinMax; i++) {
+      if (i < crossBin) tiltLo += data[i];
+      else tiltHi += data[i];
+    }
+    const rawTilt = tiltHi / (tiltHi + tiltLo + 1);
+
     let valSum = 0, logSum = 0, logN = 0;
     for (let i = 0; i < N; i++) {
       const v = this._noteVals[i];
-      const octNorm = (this._octaves[i] - this._octL) / Math.max(1, this._octH - this._octL);
-      centNum += octNorm * v;
-      centDen += v;
-      if (v > 1e-9) {
-        valSum += v;
-        logSum += Math.log(v);
-        logN++;
-      }
+      if (v > 1e-9) { valSum += v; logSum += Math.log(v); logN++; }
     }
-    const tilt = centDen > 1e-6 ? centNum / centDen : 0.5;
     const arith = logN > 0 ? valSum / logN : 0;
     const geom = logN > 0 ? Math.exp(logSum / logN) : 0;
     const ctr = arith > 1e-9 ? Math.max(0, 1 - geom / arith) : 0;
@@ -379,9 +382,13 @@ export class AudioAnalyzer {
     this._posSmooth += (rawPos - this._posSmooth) * 0.15;
 
     // ── Full-band loudness ────────────────────────────────────────────────────
+    // Cap at 10 kHz: with fftSize=32768 most bins above 10 kHz are empty for
+    // synth content, so summing all 16 384 bins produces an ~8× underestimate.
+    const briBinMax = Math.min(data.length, Math.ceil(10000 / this._binHz));
     let briSum = 0;
-    for (let i = 0; i < data.length; i++) briSum += data[i];
-    const bri = Math.min(1, briSum / (data.length * 180));
+    for (let i = 0; i < briBinMax; i++) briSum += data[i];
+    const bri = Math.min(1, briSum / (briBinMax * 180));
+    const hasSignal = bri > 0.015;
 
     // ── Hue: weighted circular mean of chroma (static pc*30 hue space) ────────
     const hues = this._chromaHues;
@@ -448,12 +455,12 @@ export class AudioAnalyzer {
         let s = 0;
         for (let c = 0; c < 12; c++) s += t.vec[c] * chroma[c];
         s /= t.norm;
-        slotsOut[i] = Math.max(0, s);
+        if (hasSignal) slotsOut[i] = Math.max(0, s);
         if (s > bestScore) {
           bestScore = s;
           best = t;
         }
-        candidateHeap.push({ slotIdx: i, score: Math.max(0, s), label: t.label });
+        candidateHeap.push({ slotIdx: i, score: hasSignal ? Math.max(0, s) : slotsOut[i], label: t.label });
       }
     }
     candidateHeap.sort((a, b) => b.score - a.score);
@@ -478,8 +485,8 @@ export class AudioAnalyzer {
         }
       }
     }
-    const change = pick.key !== this._prevChordKey;
-    this._prevChordKey = pick.key;
+    const change = hasSignal && pick.key !== this._prevChordKey;
+    if (hasSignal) this._prevChordKey = pick.key;
 
     // ── Assemble output ───────────────────────────────────────────────────────
     this._out.slots = this._slotsOut;
@@ -491,8 +498,8 @@ export class AudioAnalyzer {
     this._out.bri = bri;
     this._out.hi = hi;
     this._out.lo = lo;
-    this._out.hue = hue;
-    this._out.spread = spread;
+    if (hasSignal) this._out.hue = hue;
+    if (hasSignal) this._out.spread = spread;
     this._out.act = act;
     this._out.sat = sat;
     this._out.chord.label = pick.label;
@@ -503,7 +510,7 @@ export class AudioAnalyzer {
     this._out.stickyApplied = stickyApplied;
     this._out.noteInfo = this.noteInfo;
     for (let i = 0; i < N; i++) this._out.notes[i] = this._noteVals[i];
-    this._out.tilt = tilt;
+    this._out.tilt += (rawTilt - this._out.tilt) * 0.15;
     this._out.pos = this._posSmooth;
     this._out.ctr = ctr;
 

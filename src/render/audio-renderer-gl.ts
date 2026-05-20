@@ -126,9 +126,10 @@ void main() {
   float totalField = 0.0;
   vec3  totalColor = vec3(0.0);
 
-  // pos shifts the whole cloud left/right; tilt scales vertical centroid
-  float posShift  = (uPos - 0.5) * 0.4 * aspect;
-  float tiltScale = 0.7 + 0.6 * uTilt;
+  // pos shifts the whole cloud left/right; tilt translates it up/down
+  // tilt=0 (bright top of frame) → blobs shift up; tilt=1 (bright bottom) → down
+  float posShift   = (uPos - 0.5) * 0.4 * aspect;
+  float tiltOffset = (0.5 - uTilt) * 0.4;
 
   for (int i = 0; i < N_HUES; i++) {
     float presence = uDegrees[i];
@@ -142,16 +143,16 @@ void main() {
     vec2 cA = vec2(
       posShift + 0.5 * aspect + 0.36 * aspect * sin(t * (0.088 + fi * 0.019) + seed)
                               + 0.07 * aspect * sin(t * (0.23  + fi * 0.041) + seed + 2.4),
-      tiltScale * (0.5        + 0.36 * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
-                              + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1))
+      0.5 + tiltOffset        + 0.36 * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
+                              + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1)
     );
 
     // Blob B — secondary, offset phase so they separate and merge
     vec2 cB = vec2(
       posShift + 0.5 * aspect + 0.30 * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
                               + 0.06 * aspect * sin(t * (0.31  + fi * 0.017) + seed + 0.8),
-      tiltScale * (0.5        + 0.30 * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
-                              + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0))
+      0.5 + tiltOffset        + 0.30 * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
+                              + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0)
     );
 
     float rB = r * 0.72;
@@ -183,7 +184,15 @@ void main() {
   ) * driftAmt;
   vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
 
-  vec3 base = mix(prev.rgb * uFeedback, blobColor, newAmount);
+  // Background glow — centered at (pos, tilt), chord-tinted, BRI-driven
+  // tilt=0 maps to top of screen (GL y=1); tilt=1 to bottom (GL y=0)
+  vec3 bgColor = totalField > 0.001 ? totalColor / totalField : vec3(0.0);
+  float bgX   = uvA.x - uPos * aspect;
+  float bgY   = uv.y - (1.0 - uTilt);
+  float bgGlow = exp(-(bgX * bgX + bgY * bgY) * 2.5) * uBri * 0.4;
+
+  vec3 bgBase = prev.rgb * uFeedback + bgColor * bgGlow;
+  vec3 base = mix(bgBase, blobColor, newAmount);
 
   // ── Brightness ───────────────────────────────────────────────────────────
   float bScale = uBri * 5.0;

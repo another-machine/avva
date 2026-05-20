@@ -52,11 +52,55 @@ const synthMon  = mountSoundSynthesisMonitor(document.getElementById("mon-synth"
 const audioMon  = mountAudioAnalysisMonitor(document.getElementById("mon-audio")!);
 const visualMon = mountVisualSynthesisMonitor(document.getElementById("mon-visual")!);
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _lastMsg: any = null;
+
 new TelemetryReceiver((msg) => {
+  _lastMsg = msg as any;
   videoMon.onMsg(msg);
   synthMon.onMsg(msg);
   audioMon.onMsg(msg);
   visualMon.onMsg(msg);
+});
+
+// Press D to copy a compact diagnostic JSON blob — paste into Claude instead of screenshots.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "d" && e.key !== "D") return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  const m = _lastMsg as any;
+  if (!m) return;
+  const v = m.video;
+  const a = m.audio;
+  const blob = {
+    vid: v ? {
+      bri: Math.round((v.bri ?? 0) * 100),
+      flux: Math.round((v.flux ?? 0) * 100),
+      spr: Math.round((v.spread ?? 0) * 100),
+      ctr: Math.round((v.contrast ?? 0) * 100),
+      tilt: Math.round((v.tilt ?? 0) * 100),
+      pos: Math.round(((v.pos ?? 0.5) - 0.5) * 200),
+      hue: Math.round(v.hue ?? 0),
+      sat: Math.round((v.sat ?? 0) * 100),
+    } : null,
+    aud: a ? {
+      bri: Math.round((a.bri ?? 0) * 100),
+      flux: Math.round((a.act ?? 0) * 100),
+      spr: Math.round((a.spread ?? 0) * 100),
+      ctr: Math.round((a.ctr ?? 0) * 100),
+      tilt: Math.round((a.tilt ?? 0.5) * 100),
+      pos: Math.round(((a.pos ?? 0.5) - 0.5) * 200),
+      hue: Math.round(a.hue ?? 0),
+    } : null,
+    chord: a?.chord?.label ?? "—",
+    synth: m.synth?.running ? "on" : "off",
+    note: m.synth?.note ?? null,
+  };
+  const json = JSON.stringify(blob);
+  navigator.clipboard.writeText(json).then(() => {
+    console.log("AVVA diag:", json);
+  }).catch(() => {
+    console.log("AVVA diag:", json);
+  });
 });
 
 // ── Optional WS relay from URL param ─────────────────────────────────────────
