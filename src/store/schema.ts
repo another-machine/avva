@@ -14,6 +14,7 @@ export type FieldKind =
   | "boolean"
   | "string"
   | "enum"
+  | "select"
   | "json"
   | "action";
 
@@ -45,6 +46,11 @@ interface EnumField<T extends string> extends FieldBase<T> {
   options: readonly T[];
 }
 
+interface SelectField<T extends string> extends FieldBase<T> {
+  kind: "select";
+  options: readonly T[];
+}
+
 interface JsonField<T> extends FieldBase<T> {
   kind: "json";
 }
@@ -62,6 +68,7 @@ export type Field =
   | BooleanField
   | StringField
   | EnumField<string>
+  | SelectField<string>
   | JsonField<unknown>
   | ActionField;
 
@@ -308,7 +315,7 @@ export const SCHEMA = {
     max: 7,
     step: 1,
     label: "Octave",
-    group: "harmony",
+    group: "synth",
   },
   "harmony.rootHue": {
     kind: "number",
@@ -350,7 +357,7 @@ export const SCHEMA = {
     kind: "boolean",
     default: false,
     label: "Synth on",
-    group: "synth",
+    group: "global",
   },
   "synth.masterGain": {
     kind: "number",
@@ -434,7 +441,7 @@ export const SCHEMA = {
     hint: "Carrier:modulator integer ratio for pluck voices — higher = brighter attack tone",
   },
   "synth.carrierTypeBass": {
-    kind: "enum",
+    kind: "select",
     default: "sine" as string,
     options: [
       "sine",
@@ -450,7 +457,7 @@ export const SCHEMA = {
     hint: "Waveform for bass-tier pad oscillators",
   },
   "synth.carrierTypeMid": {
-    kind: "enum",
+    kind: "select",
     default: "sine" as string,
     options: [
       "sine",
@@ -466,7 +473,7 @@ export const SCHEMA = {
     hint: "Waveform for mid-tier pad oscillators",
   },
   "synth.carrierTypeTreble": {
-    kind: "enum",
+    kind: "select",
     default: "sine" as string,
     options: [
       "sine",
@@ -482,7 +489,7 @@ export const SCHEMA = {
     hint: "Waveform for treble-tier pad oscillators",
   },
   "synth.carrierTypePluck": {
-    kind: "enum",
+    kind: "select",
     default: "sine" as string,
     options: [
       "sine",
@@ -571,7 +578,7 @@ export const SCHEMA = {
     hint: "When > 0, pads re-trigger on a steady tempo regardless of motion. 0 disables pulsing.",
   },
   "synth.preset": {
-    kind: "enum",
+    kind: "select",
     default: "custom" as const,
     options: [
       "custom",
@@ -588,7 +595,7 @@ export const SCHEMA = {
 
   // ── cassette effects ───────────────────────────────────────
   "cassette.preset": {
-    kind: "enum",
+    kind: "select",
     default: "custom" as const,
     options: ["custom", "clean", "warm", "lofi", "vintage", "live"] as const,
     label: "Tape preset",

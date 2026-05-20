@@ -8,7 +8,6 @@
 import { store } from "../src/store/store.js";
 import { legacyConfig as CONFIG } from "../src/store/legacy-config.js";
 import { Palette } from "../src/harmony/palette.js";
-import { hueName } from "../src/analysis/color.js";
 import { toPerceptual } from "../src/harmony/hue-perception.js";
 import type { AnalysisOut } from "../src/analysis/analyzer.js";
 import type { TelemetryMsg } from "../src/store/telemetry.js";
@@ -112,12 +111,6 @@ function _buildPalette(): Palette | null {
 export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
   host.className = "monitor";
 
-  // Compact status row: running dot + chord label (no large display)
-  const statusRow = mk("div", "sig__key-row");
-  const sigDot = mk("span", "sig__dot");
-  const sigChordLbl = mk("span", "sig__status-lbl", "—");
-  statusRow.append(sigDot, sigChordLbl);
-
   // Sparklines (labelled)
   const sparksHdr = mk("div", "sig__hdr", "SIGNAL HISTORY");
   const sparksDiv = mk("div", "sig__sparks sig__sparks--labelled");
@@ -158,31 +151,28 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   const vyRow = mk("div", "sig__row sig__row--pos");
   vyRow.append(mk("span", "sig__lbl", "VY"), vyTrack, vyVal);
 
-  // Hue section
+  // Hue section — shows chord label from palette, not raw hue degrees
   const hueLabel = mk("div", "panel__label", "SEEN CHROMA");
   const hueValDiv = mk("div", "panel__value");
   const hueV = mk("span", undefined, "—");
-  const hueN = mk("span", "panel__unit");
-  hueValDiv.append(hueV, mk("span", "panel__unit", "°"), hueN);
+  hueValDiv.append(hueV);
 
   const huebar = mk("div", "huebar");
   const huemark = mk("div", "huebar__marker");
   huebar.appendChild(huemark);
 
   const huehist = mk("div", "huehist");
+  const huehistLabels = mk("div", "huehist-labels");
   let histPalette = _buildPalette();
 
   function _rebuildHistBars(): void {
     huehist.innerHTML = "";
+    huehistLabels.innerHTML = "";
     const n = histPalette?.slots.length ?? CONFIG.hueBins;
-    const boundaryHues = histPalette?.slotBoundaryHues;
     for (let i = 0; i < n; i++) {
-      const bar = mk("span", "huehist__bar");
-      const hDeg = boundaryHues
-        ? boundaryHues[i].toFixed(0)
-        : ((i / n) * 360).toFixed(0);
-      bar.style.background = `oklch(0.65 0.22 ${hDeg})`;
-      huehist.appendChild(bar);
+      huehist.appendChild(mk("span", "huehist__bar"));
+      const lbl = histPalette ? (histPalette.slots[i]?.chord.label ?? "") : String(i);
+      huehistLabels.appendChild(mk("span", "huehist-labels__lbl", lbl));
     }
   }
   _rebuildHistBars();
@@ -194,10 +184,15 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     });
   }
 
+  const _applySpectrumH = () => {
+    const off = store.get("analysis.hueOffset") as number ?? 0;
+    host.style.setProperty("--spectrum-h", String(-off));
+  };
+  _applySpectrumH();
+  store.subscribeKey("analysis.hueOffset", _applySpectrumH);
+
   host.append(
-    hueLabel, hueValDiv, huebar, huehist,
-    mk("div", "sig__divider"),
-    statusRow,
+    hueLabel, hueValDiv, huebar, huehist, huehistLabels,
     mk("div", "sig__divider"),
     sceneHdr,
     mBri.row, mAct.row, mBg.row, mCtr.row, mSpr.row,
@@ -218,14 +213,13 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 
     _setAccent(host, out);
 
-    hueV.textContent = out.hue.toFixed(0).padStart(3, "0");
-    hueN.textContent = hueName(out.hue);
+    // Show chord label for current hue position in palette
+    hueV.textContent = histPalette ? histPalette.hueToSlot(out.hue).slot.chord.label : "—";
     huemark.style.setProperty("--hue-marker-pos", `${(out.hue / 360) * 100}%`);
     if (histBins) {
       const bars = huehist.children;
       const n = bars.length;
       if (n > 0) {
-        // Aggregate fine histBins into n slot buckets
         const buckets = new Float32Array(n);
         const hb = histBins.length;
         for (let j = 0; j < hb; j++) {
@@ -233,8 +227,11 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
         }
         let mx = 0.0001;
         for (let i = 0; i < n; i++) if (buckets[i] > mx) mx = buckets[i];
-        for (let i = 0; i < n; i++)
-          (bars[i] as HTMLElement).style.height = `${2 + (buckets[i] / mx) * 32}px`;
+        // Bars are dark masks hanging from top; height = empty portion
+        for (let i = 0; i < n; i++) {
+          const emptyH = 32 * (1 - buckets[i] / mx);
+          (bars[i] as HTMLElement).style.height = `${emptyH.toFixed(1)}px`;
+        }
       }
     }
 
@@ -247,10 +244,6 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     mxVal.textContent = ((out.mx * 2 - 1) * 100).toFixed(0);
     vyMarker.style.left = `${(out.vy * 100).toFixed(1)}%`;
     vyVal.textContent = (out.vy * 100).toFixed(0);
-
-    const running = synth?.running ?? false;
-    sigDot.classList.toggle("is-on", running);
-    sigChordLbl.textContent = synth?.note?.label ?? synth?.keyLabel ?? "—";
 
     _drawSpark(sparkAct, actHist, host);
     _drawSpark(sparkActBg, actBgHist, host);
@@ -287,17 +280,6 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
   const sigLabel = mk("span", undefined, "—");
   statusRow.append(sigDot, sigLabel);
 
-  // Chord / voice gates
-  const synthHdr = mk("div", "sig__hdr", "VOICE GATES");
-  const pillsRow = mk("div", "synth-pills");
-  const pillLabels = ["R", "3", "5", "7", "9"];
-  const pills = pillLabels.map((lbl) => {
-    const pill = mk("div", "synth-pill");
-    pill.textContent = lbl;
-    pillsRow.appendChild(pill);
-    return pill;
-  });
-
   // Tier amplitude meters
   const tierHdr = mk("div", "sig__hdr", "TIER AMPLITUDE");
   const mBass = _meterRow("BASS");
@@ -329,8 +311,6 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
   host.append(
     statusRow,
     mk("div", "sig__divider"),
-    synthHdr, pillsRow,
-    mk("div", "sig__divider"),
     tierHdr, mBass.row, mMid.row, mTre.row,
     mk("div", "sig__divider"),
     fmHdr, fmBass.row, fmMid.row, fmTre.row,
@@ -352,13 +332,6 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
 
     if (!sc) return;
     const pct = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
-
-    // Pill opacity: root always full, others by weight
-    const gates = [1, sc.thirdW, sc.fifthW, sc.seventhW, sc.ninthW];
-    for (let i = 0; i < pills.length; i++) {
-      pills[i].style.opacity = String(0.15 + gates[i] * 0.85);
-      pills[i].style.borderColor = `oklch(0.65 0.22 ${(i * 72).toFixed(0)})`;
-    }
 
     mBass.fill.style.width = pct(sc.bassW);   mBass.val.textContent = (sc.bassW * 100).toFixed(0);
     mMid.fill.style.width  = pct(sc.midW);    mMid.val.textContent  = (sc.midW * 100).toFixed(0);
@@ -388,85 +361,76 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
 export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
   host.className = "monitor";
 
+  const NOTE_NAMES_12 = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
   // HEARD CHROMA header + chord value
   const chromaHdr = mk("div", "panel__label", "HEARD CHROMA");
   const chordVal = mk("div", "panel__value");
   const chordNumeral = mk("span", undefined, "—");
-  const chordRoot = mk("span", "panel__unit", "—");
-  const stickyDot = mk("span", "sticky-dot");
-  chordVal.append(chordNumeral, chordRoot, stickyDot);
+  chordVal.append(chordNumeral);
 
   // Huebar + marker
   const huebar = mk("div", "huebar");
   const huemark = mk("div", "huebar__marker");
   huebar.appendChild(huemark);
 
-  // Chroma-12 ring (canvas)
-  const ringLabel = mk("div", "sig__hdr", "CHROMA RING");
-  const ringCanvas = mk("canvas", "chroma-ring");
-  ringCanvas.width = 140;
-  ringCanvas.height = 140;
+  // Slot score histogram (huehist-style bars, mirrors Stage 1 histogram)
+  const slotHist = mk("div", "huehist");
+  const slotHistLabels = mk("div", "huehist-labels");
+  let slotHistBars: HTMLElement[] = [];
+  let currentPalette = _buildPalette();
+
+  function rebuildSlotHist(): void {
+    slotHist.innerHTML = "";
+    slotHistLabels.innerHTML = "";
+    slotHistBars = [];
+    const n = currentPalette?.slots.length ?? 0;
+    for (let i = 0; i < n; i++) {
+      const bar = mk("span", "huehist__bar");
+      slotHist.appendChild(bar);
+      slotHistBars.push(bar);
+      const lbl = currentPalette?.slots[i]?.chord.label ?? "";
+      slotHistLabels.appendChild(mk("span", "huehist-labels__lbl", lbl));
+    }
+  }
+  rebuildSlotHist();
+
+  for (const k of ["harmony.rootHue", "harmony.palette", "harmony.crossZone"] as const) {
+    store.subscribeKey(k, () => { currentPalette = _buildPalette(); rebuildSlotHist(); });
+  }
+
+  const _applySpectrumH3 = () => {
+    const off = store.get("analysis.hueOffset") as number ?? 0;
+    host.style.setProperty("--spectrum-h", String(-off));
+  };
+  _applySpectrumH3();
+  store.subscribeKey("analysis.hueOffset", _applySpectrumH3);
+
+  // Audio → Scene meters (mirrors Stage 1 SCENE for direct comparison)
+  const sceneHdr = mk("div", "sig__hdr", "AUDIO → SCENE");
+  const mBri    = _meterRow("BRI");
+  const mAct    = _meterRow("ACT");
+  const mSpread = _meterRow("SPR");
+  const mBandLo = _meterRow("LO");
+  const mBandHi = _meterRow("HI");
+  const mPulse  = _meterRow("PULSE");
 
   // 60-note grid
   const gridLabel = mk("div", "sig__hdr", "NOTES");
   const noteGrid = mk("div", "note-grid");
   let noteGridBuilt = false;
   let noteCells: HTMLElement[] = [];
-  // noteInfoIdx[octaveRank][pc] → index into audio.notes[] (built once)
   let noteLookup: Int16Array | null = null;
 
-  // Chord score breakdown
-  const scoresLabel = mk("div", "sig__hdr", "SLOT SCORES");
-  const scoresContainer = mk("div", "score-bars");
-  let scoreBars: { fill: HTMLElement; row: HTMLElement }[] = [];
-  let currentPalette = _buildPalette();
-
-  function rebuildScoresDOM(): void {
-    scoresContainer.innerHTML = "";
-    scoreBars = [];
-    if (!currentPalette) return;
-    for (let i = 0; i < currentPalette.slots.length; i++) {
-      const slot = currentPalette.slots[i];
-      const row = mk("div", "score-bar");
-      const lbl = mk("span", "score-bar__lbl", slot.chord.label);
-      const track = mk("div", "score-bar__track");
-      const fill = mk("div", "score-bar__fill");
-      const h0 = currentPalette.slotBoundaryHues[i];
-      fill.style.background = `oklch(0.65 0.22 ${h0.toFixed(0)})`;
-      track.appendChild(fill);
-      row.append(lbl, track);
-      scoresContainer.appendChild(row);
-      scoreBars.push({ fill, row });
-    }
-  }
-  rebuildScoresDOM();
-
-  for (const k of ["harmony.rootHue", "harmony.palette", "harmony.crossZone"] as const) {
-    store.subscribeKey(k, () => {
-      currentPalette = _buildPalette();
-      rebuildScoresDOM();
-    });
-  }
-
-  // Chord-change sparkline
-  const sparkLabel = mk("div", "sig__hdr", "CHORD CHANGES");
-  const chordSparkCanvas = mk("canvas", "spark");
-  const chordChangeSpark = mk("div", "chord-spark-wrap");
-  chordChangeSpark.appendChild(chordSparkCanvas);
-
   host.append(
-    chromaHdr, chordVal, huebar,
+    chromaHdr, chordVal, huebar, slotHist, slotHistLabels,
     mk("div", "sig__divider"),
-    ringLabel, ringCanvas,
+    sceneHdr,
+    mBri.row, mAct.row, mSpread.row, mBandLo.row, mBandHi.row, mPulse.row,
     mk("div", "sig__divider"),
     gridLabel, noteGrid,
-    mk("div", "sig__divider"),
-    scoresLabel, scoresContainer,
-    mk("div", "sig__divider"),
-    sparkLabel, chordChangeSpark,
   );
 
-  const chordIdxHist: number[] = [];
   let latestMsg: TelemetryMsg | null = null;
 
   function _buildNoteGrid(noteInfo: { chromatic: number; octave: number; name: string }[]): void {
@@ -475,17 +439,24 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     noteGrid.innerHTML = "";
     noteCells = [];
     const octaves = [...new Set(noteInfo.map((n) => n.octave))].sort((a, b) => b - a);
-    // lookup[octRank * 12 + pc] = index into notes[]
+
+    // Header row: empty label cell + 12 note names
+    const hdrRow = mk("div", "note-grid__hdr");
+    hdrRow.appendChild(mk("span", "note-grid__hdr-lbl", ""));
+    for (const name of NOTE_NAMES_12) {
+      hdrRow.appendChild(mk("span", "note-grid__hdr-lbl", name));
+    }
+    noteGrid.appendChild(hdrRow);
+
     noteLookup = new Int16Array(octaves.length * 12).fill(-1);
     for (let oi = 0; oi < octaves.length; oi++) {
       const oct = octaves[oi];
       const rowEl = mk("div", "note-grid__row");
-      rowEl.setAttribute("data-oct", String(oct));
+      rowEl.appendChild(mk("span", "note-grid__oct", String(oct)));
       for (let pc = 0; pc < 12; pc++) {
         const idx = noteInfo.findIndex((n) => n.octave === oct && n.chromatic === pc);
         noteLookup[oi * 12 + pc] = idx;
         const cell = mk("div", "note-grid__cell");
-        cell.style.background = `oklch(0.65 0.22 ${(pc * 30).toFixed(0)})`;
         if (idx >= 0) cell.title = `${noteInfo[idx].name}${oct}`;
         rowEl.appendChild(cell);
         noteCells.push(cell);
@@ -494,65 +465,20 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     }
   }
 
-  function _drawRing(frame: NonNullable<TelemetryMsg["audio"]>): void {
-    const ctx = ringCanvas.getContext("2d");
-    if (!ctx) return;
-    const W = ringCanvas.width, H = ringCanvas.height;
-    ctx.clearRect(0, 0, W, H);
-    const cx = W / 2, cy = H / 2;
-    const rOuter = cx - 4, rInner = rOuter * 0.45;
-    const chroma = frame.chroma;
-
-    for (let pc = 0; pc < 12; pc++) {
-      const v = chroma[pc] ?? 0;
-      const startAngle = (pc / 12) * Math.PI * 2 - Math.PI / 2;
-      const endAngle = ((pc + 1) / 12) * Math.PI * 2 - Math.PI / 2;
-      const r = rInner + (rOuter - rInner) * (0.3 + v * 0.7);
-      const hDeg = pc * 30;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(startAngle) * rInner, cy + Math.sin(startAngle) * rInner);
-      ctx.arc(cx, cy, r, startAngle, endAngle);
-      ctx.arc(cx, cy, rInner, endAngle, startAngle, true);
-      ctx.closePath();
-      ctx.fillStyle = `oklch(0.65 0.22 ${hDeg})`;
-      ctx.globalAlpha = 0.25 + v * 0.75;
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    // Center label: top-1 pitch class
-    let maxPc = 0, maxV = -1;
-    for (let i = 0; i < 12; i++) if ((chroma[i] ?? 0) > maxV) { maxV = chroma[i]; maxPc = i; }
-    const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-    ctx.fillStyle = "#e8e6e0";
-    ctx.globalAlpha = maxV > 0.05 ? 1 : 0.3;
-    ctx.font = "bold 14px 'Space Mono', monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(NOTE_NAMES[maxPc], cx, cy);
-    ctx.globalAlpha = 1;
-  }
-
   function paint() {
     requestAnimationFrame(paint);
     if (!latestMsg?.audio) return;
     const audio = latestMsg.audio;
+    const vu = latestMsg.visualUniforms;
+    const pct = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
 
-    // Build note grid on first frame
     if (!noteGridBuilt && audio.noteInfo?.length) _buildNoteGrid(audio.noteInfo);
 
-    // Huebar marker
     huemark.style.setProperty("--hue-marker-pos", `${((audio.hue ?? 0) / 360) * 100}%`);
 
-    // Chord label + sticky dot
-    chordNumeral.textContent = audio.chord.label ? audio.chord.label : "—";
-    chordRoot.textContent = "";
-    stickyDot.classList.toggle("is-on", audio.stickyApplied ?? false);
+    chordNumeral.textContent = audio.chord.label || "—";
 
-    // Chroma-12 ring
-    _drawRing(audio);
-
-    // 60-note grid
+    // Note grid
     if (noteGridBuilt && noteLookup && audio.notes) {
       for (let i = 0; i < noteCells.length; i++) {
         const noteIdx = noteLookup[i];
@@ -561,61 +487,28 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       }
     }
 
-    // Chord score breakdown
-    if (audio.slots && scoreBars.length === audio.slots.length) {
+    // Slot score histogram (same inverted-mask technique as Stage 1 huehist)
+    if (audio.slots && slotHistBars.length === audio.slots.length) {
       const slots = audio.slots;
-      let best = 0;
-      for (let i = 0; i < slots.length; i++) if (slots[i] > best) best = slots[i];
-      const threshold = best * 0.9;
-      for (let i = 0; i < scoreBars.length; i++) {
-        const v = slots[i] ?? 0;
-        const { fill, row } = scoreBars[i];
-        fill.style.width = `${(v * 100).toFixed(1)}%`;
-        row.classList.toggle("score-bar--winner", v === best && best > 0.01);
-        row.classList.toggle("score-bar--sticky-zone", audio.stickyApplied && v >= threshold && v !== best);
+      let mx = 0.0001;
+      for (let i = 0; i < slots.length; i++) if (slots[i] > mx) mx = slots[i];
+      for (let i = 0; i < slotHistBars.length; i++) {
+        const emptyH = 32 * (1 - (slots[i] ?? 0) / mx);
+        slotHistBars[i].style.height = `${emptyH.toFixed(1)}px`;
       }
     }
 
-    // Chord-change sparkline
-    const L = CONFIG.sparkLen;
-    if (audio.chord?.change) {
-      chordIdxHist.push(1);
-    } else {
-      chordIdxHist.push(0);
+    // Audio → Scene — read from visualUniforms which already aggregates these
+    if (vu) {
+      mBri.fill.style.width    = pct(vu.bri);    mBri.val.textContent    = (vu.bri * 100).toFixed(0);
+      mAct.fill.style.width    = pct(vu.act);     mAct.val.textContent    = (vu.act * 100).toFixed(0);
+      mSpread.fill.style.width = pct(vu.spread);  mSpread.val.textContent = (vu.spread * 100).toFixed(0);
+      mBandLo.fill.style.width = pct(vu.bandLo);  mBandLo.val.textContent = (vu.bandLo * 100).toFixed(0);
+      mBandHi.fill.style.width = pct(vu.bandHi);  mBandHi.val.textContent = (vu.bandHi * 100).toFixed(0);
+      mPulse.fill.style.width  = pct(Math.min(1, vu.pulse)); mPulse.val.textContent = vu.pulse.toFixed(2);
     }
-    if (chordIdxHist.length > L) chordIdxHist.shift();
-    _drawChordSpark(chordSparkCanvas, chordIdxHist, audio.chord.change ?? false);
   }
   requestAnimationFrame(paint);
-
-  function _drawChordSpark(canvas: HTMLCanvasElement, data: number[], flash: boolean): void {
-    const r = canvas.getBoundingClientRect();
-    if (r.width === 0) return;
-    if (canvas.width !== Math.round(r.width)) { canvas.width = Math.round(r.width); canvas.height = Math.round(r.height); }
-    const ctx = canvas.getContext("2d")!;
-    const w = canvas.width, h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    const L = CONFIG.sparkLen;
-    // Draw vertical tick marks for chord changes
-    ctx.strokeStyle = flash ? "#fff" : "rgba(232,230,224,0.4)";
-    ctx.lineWidth = flash ? 2 : 1;
-    for (let i = 0; i < data.length; i++) {
-      if (data[i] > 0.5) {
-        const x = (i / (L - 1)) * w;
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
-    }
-    // Baseline
-    ctx.strokeStyle = "rgba(232,230,224,0.1)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, h - 1);
-    ctx.lineTo(w, h - 1);
-    ctx.stroke();
-  }
 
   return { onMsg(msg) { latestMsg = msg; } };
 }
@@ -625,46 +518,13 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 export function mountVisualSynthesisMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
   host.className = "monitor";
 
-  // Winner status row (mirrors Stage 2 compact header)
+  // Winner status row
   const statusRow = mk("div", "sig__key-row");
   const sigDot = mk("span", "sig__dot");
   const sigLabel = mk("span", "sig__status-lbl", "—");
   statusRow.append(sigDot, sigLabel);
 
-  // Slot weights (visual renderer EMA) vs audio slots (raw)
-  const weightsHdr = mk("div", "sig__hdr", "SLOT WEIGHTS");
-  const weightsContainer = mk("div", "score-bars");
-  let weightBars: { fill: HTMLElement; rawFill: HTMLElement; row: HTMLElement }[] = [];
-  let currentPalette = _buildPalette();
-
-  function rebuildWeightsDOM(): void {
-    weightsContainer.innerHTML = "";
-    weightBars = [];
-    if (!currentPalette) return;
-    for (let i = 0; i < currentPalette.slots.length; i++) {
-      const slot = currentPalette.slots[i];
-      const h0 = currentPalette.slotBoundaryHues[i];
-      const row = mk("div", "score-bar");
-      const lbl = mk("span", "score-bar__lbl", slot.chord.label);
-      const track = mk("div", "score-bar__track score-bar__track--dual");
-      const fill = mk("div", "score-bar__fill");
-      fill.style.background = `oklch(0.65 0.22 ${h0.toFixed(0)})`;
-      const rawFill = mk("div", "score-bar__fill score-bar__fill--raw");
-      rawFill.style.background = `oklch(0.45 0.12 ${h0.toFixed(0)})`;
-      track.append(rawFill, fill);
-      row.append(lbl, track);
-      weightsContainer.appendChild(row);
-      weightBars.push({ fill, rawFill, row });
-    }
-  }
-  rebuildWeightsDOM();
-
-  for (const k of ["harmony.rootHue", "harmony.palette", "harmony.crossZone"] as const) {
-    store.subscribeKey(k, () => {
-      currentPalette = _buildPalette();
-      rebuildWeightsDOM();
-    });
-  }
+  const currentPalette = _buildPalette();
 
   // Pulse sparkline
   const pulseHdr = mk("div", "sig__hdr", "PULSE");
@@ -672,27 +532,10 @@ export function mountVisualSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tel
   const pulseWrap = mk("div", "chord-spark-wrap");
   pulseWrap.appendChild(pulseCanvas);
 
-  // GL param readouts
-  const paramsHdr = mk("div", "sig__hdr", "RENDER PARAMS");
-  const mFeedback  = _meterRow("FEED");
-  const mBlobWarp  = _meterRow("WARP");
-  const mBlobSpeed = _meterRow("SPD");
-  const mBri       = _meterRow("BRI");
-  const mSpread    = _meterRow("SPR");
-  const mAct       = _meterRow("ACT");
-  const mBandLo    = _meterRow("LO");
-  const mBandHi    = _meterRow("HI");
-
   host.append(
     statusRow,
     mk("div", "sig__divider"),
-    weightsHdr, weightsContainer,
-    mk("div", "sig__divider"),
     pulseHdr, pulseWrap,
-    mk("div", "sig__divider"),
-    paramsHdr,
-    mFeedback.row, mBlobWarp.row, mBlobSpeed.row,
-    mBri.row, mSpread.row, mAct.row, mBandLo.row, mBandHi.row,
   );
 
   const pulseHist: number[] = [];
@@ -701,57 +544,27 @@ export function mountVisualSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tel
   function paint() {
     requestAnimationFrame(paint);
     const vu = latestMsg?.visualUniforms;
-    const audio = latestMsg?.audio;
-    const pct = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
+    if (!vu) return;
 
-    if (vu) {
-      // Winner: slot with highest EMA weight
-      let winnerIdx = -1, winnerW = 0;
-      for (let i = 0; i < vu.slotWeights.length; i++) {
-        if (vu.slotWeights[i] > winnerW) { winnerW = vu.slotWeights[i]; winnerIdx = i; }
-      }
-      const active = winnerW > 0.01;
-      sigDot.classList.toggle("is-on", active);
-      sigLabel.textContent = (active && currentPalette && winnerIdx >= 0)
-        ? currentPalette.slots[winnerIdx]?.chord.label ?? "—"
-        : "—";
-
-      // Slot weight bars: fill = EMA-smoothed, rawFill = raw audio slots
-      if (weightBars.length === vu.slotWeights.length) {
-        for (let i = 0; i < weightBars.length; i++) {
-          const { fill, rawFill, row } = weightBars[i];
-          fill.style.width = pct(vu.slotWeights[i] ?? 0);
-          if (audio?.slots) rawFill.style.width = pct(audio.slots[i] ?? 0);
-          row.classList.toggle("score-bar--winner", i === winnerIdx && active);
-        }
-      }
-
-      // Pulse sparkline
-      const L = CONFIG.sparkLen;
-      pulseHist.push(vu.pulse);
-      if (pulseHist.length > L) pulseHist.shift();
-
-      // Fake a host accent from vu.bri for spark colour
-      const fakeHost = pulseWrap as HTMLElement;
-      fakeHost.style.setProperty("--accent-l", "0.65");
-      fakeHost.style.setProperty("--accent-c", "0.2");
-      fakeHost.style.setProperty("--accent-h", "200");
-      _drawSpark(pulseCanvas, pulseHist.map((v) => Math.min(1, v)), fakeHost);
-
-      mBri.fill.style.width    = pct(vu.bri);    mBri.val.textContent    = vu.bri.toFixed(2);
-      mSpread.fill.style.width = pct(vu.spread);  mSpread.val.textContent = vu.spread.toFixed(2);
-      mAct.fill.style.width    = pct(vu.act);     mAct.val.textContent    = vu.act.toFixed(2);
-      mBandLo.fill.style.width = pct(vu.bandLo);  mBandLo.val.textContent = vu.bandLo.toFixed(2);
-      mBandHi.fill.style.width = pct(vu.bandHi);  mBandHi.val.textContent = vu.bandHi.toFixed(2);
+    // Winner: slot with highest EMA weight
+    let winnerIdx = -1, winnerW = 0;
+    for (let i = 0; i < vu.slotWeights.length; i++) {
+      if (vu.slotWeights[i] > winnerW) { winnerW = vu.slotWeights[i]; winnerIdx = i; }
     }
+    const active = winnerW > 0.01;
+    sigDot.classList.toggle("is-on", active);
+    sigLabel.textContent = (active && currentPalette && winnerIdx >= 0)
+      ? currentPalette.slots[winnerIdx]?.chord.label ?? "—"
+      : "—";
 
-    // Store-driven render params (no telemetry needed)
-    const feedback  = store.get("audio.feedback")  as number ?? 0;
-    const blobWarp  = store.get("audio.blobWarp")   as number ?? 0;
-    const blobSpeed = store.get("audio.blobSpeed")  as number ?? 0;
-    mFeedback.fill.style.width  = pct(feedback);   mFeedback.val.textContent  = feedback.toFixed(2);
-    mBlobWarp.fill.style.width  = pct(blobWarp);   mBlobWarp.val.textContent  = blobWarp.toFixed(2);
-    mBlobSpeed.fill.style.width = pct(blobSpeed);  mBlobSpeed.val.textContent = blobSpeed.toFixed(2);
+    // Pulse sparkline
+    const L = CONFIG.sparkLen;
+    pulseHist.push(vu.pulse);
+    if (pulseHist.length > L) pulseHist.shift();
+    pulseWrap.style.setProperty("--accent-l", "0.65");
+    pulseWrap.style.setProperty("--accent-c", "0.2");
+    pulseWrap.style.setProperty("--accent-h", "200");
+    _drawSpark(pulseCanvas, pulseHist.map((v) => Math.min(1, v)), pulseWrap);
   }
   requestAnimationFrame(paint);
 

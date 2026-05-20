@@ -493,28 +493,6 @@ function buildSettingsPanel(container: HTMLElement): void {
   store.subscribeKey("harmony.scale", (v) => { scaleSelect.value = String(v); });
   harmBody.appendChild(_spRow("Scale", scaleSelect));
 
-  const octField = SCHEMA["harmony.octave"];
-  const octWrap = document.createElement("div");
-  octWrap.className = "sp-range-wrap";
-  const octInput = document.createElement("input");
-  octInput.type = "range";
-  octInput.min = String(octField.min); octInput.max = String(octField.max);
-  octInput.step = String(octField.step);
-  octInput.value = String(store.get("harmony.octave"));
-  const octOut = document.createElement("output");
-  octOut.textContent = String(store.get("harmony.octave"));
-  octInput.addEventListener("input", () => {
-    const v = Number(octInput.value);
-    octOut.textContent = String(v);
-    store.set("harmony.octave", v);
-  });
-  store.subscribeKey("harmony.octave", (v) => {
-    octInput.value = String(v);
-    octOut.textContent = String(v);
-  });
-  octWrap.append(octInput, octOut);
-  harmBody.appendChild(_spRow("Octave", octWrap));
-
   const fillBtn = document.createElement("button");
   fillBtn.className = "action-btn sp-fill-btn";
   fillBtn.textContent = "Fill palette from key";
@@ -761,6 +739,24 @@ function buildControl(key: SchemaKey): HTMLElement {
     }
     return wrap;
   }
+
+  // ── select dropdown ────────────────────────────────────────────────────────
+  if (field.kind === "select") {
+    const wrap = document.createElement("div");
+    wrap.className = "ctrl ctrl--select";
+
+    const sel = document.createElement("select");
+    for (const opt of field.options) {
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = opt;
+      if (opt === value) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener("change", () => store.set(key, sel.value as never));
+    wrap.appendChild(sel);
+    return wrap;
+  }
   // ── action button ─────────────────────────────────────────────────────────────
   if (field.kind === "action") {
     const wrap = document.createElement("div");
@@ -810,6 +806,12 @@ function syncControl(ctrl: HTMLElement, key: SchemaKey, value: unknown): void {
     for (const btn of ctrl.querySelectorAll<HTMLButtonElement>(".seg-btn")) {
       btn.classList.toggle("active", btn.dataset.val === String(value));
     }
+    return;
+  }
+
+  if (field.kind === "select") {
+    const sel = ctrl.querySelector<HTMLSelectElement>("select");
+    if (sel) sel.value = String(value);
     return;
   }
 

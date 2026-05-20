@@ -705,6 +705,7 @@ body {
 
   --spectrum-l: 0.65;
   --spectrum-c: 0.2;
+  --spectrum-h: 0;
 
   --huebar-h: 6px;
   --huemark-h: 14px;
@@ -958,13 +959,13 @@ body {
   border: 1px solid var(--color-hair);
   background: linear-gradient(
     in oklch 90deg,
-    oklch(var(--spectrum-l) var(--spectrum-c) 0),
-    oklch(var(--spectrum-l) var(--spectrum-c) 60),
-    oklch(var(--spectrum-l) var(--spectrum-c) 120),
-    oklch(var(--spectrum-l) var(--spectrum-c) 180),
-    oklch(var(--spectrum-l) var(--spectrum-c) 240),
-    oklch(var(--spectrum-l) var(--spectrum-c) 300),
-    oklch(var(--spectrum-l) var(--spectrum-c) 360)
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 0)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 60)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 120)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 180)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 240)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 300)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 360))
   );
 }
 
@@ -981,17 +982,43 @@ body {
 
 .monitor .huehist {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 1px;
   height: var(--huehist-h);
   margin-top: 9px;
+  background: linear-gradient(
+    in oklch 90deg,
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 0)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 60)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 120)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 180)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 240)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 300)),
+    oklch(var(--spectrum-l) var(--spectrum-c) calc(var(--spectrum-h) + 360))
+  );
 }
 
 .monitor .huehist__bar {
   flex: 1;
-  min-height: 1px;
-  opacity: 0.8;
-  transition: height 0.15s var(--ease);
+  min-height: 0;
+  background: #111;
+}
+
+.monitor .huehist-labels {
+  display: flex;
+  gap: 1px;
+  margin-top: 3px;
+  margin-bottom: 4px;
+}
+
+.monitor .huehist-labels__lbl {
+  flex: 1;
+  font-size: 5px;
+  text-align: center;
+  color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  letter-spacing: 0;
 }
 
 /* ── Meta bar ─────────────────────────────────────────────────── */
@@ -1084,19 +1111,42 @@ body {
 .monitor .note-grid {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   margin-bottom: 6px;
+}
+
+.monitor .note-grid__hdr {
+  display: grid;
+  grid-template-columns: 14px repeat(12, 1fr);
+  gap: 2px;
+}
+
+.monitor .note-grid__hdr-lbl {
+  font-size: 6px;
+  letter-spacing: 0;
+  color: var(--color-dim);
+  text-align: center;
+  line-height: 1;
 }
 
 .monitor .note-grid__row {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: 14px repeat(12, 1fr);
   gap: 2px;
+}
+
+.monitor .note-grid__oct {
+  font-size: 6px;
+  color: var(--color-dim);
+  text-align: center;
+  line-height: 11px;
+  flex-shrink: 0;
 }
 
 .monitor .note-grid__cell {
   height: 11px;
   border-radius: 0;
+  background: rgba(232, 230, 224, 1);
   opacity: 0.06;
   transition: opacity 0.08s linear;
 }
