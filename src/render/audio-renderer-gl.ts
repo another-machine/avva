@@ -473,7 +473,7 @@ export class AudioRendererGL {
       this._slotWeights[i] += (target - this._slotWeights[i]) * 0.12;
     }
 
-    this._fillDegreeRGB(frame.slotHues, frame.slotBoundaryHues);
+    this._fillDegreeRGB(frame.slotHues, frame.slotBoundaryHues, frame.bandClarity ?? 0);
 
     gl.useProgram(this._prog);
     gl.uniform1f(u.uTime, t);
@@ -645,21 +645,27 @@ export class AudioRendererGL {
   private _fillDegreeRGB(
     centerHues: Float32Array,
     boundaryHues?: Float32Array,
+    bandClarity = 0,
   ): void {
     const buf = this._degreeRGBBuf;
     const buf2 = this._degreeRGB2Buf;
     const n = this._activeN;
     const fallbackHalfStep = 180 / n;
     for (let i = 0; i < n; i++) {
-      const hLeft = boundaryHues
-        ? boundaryHues[i] ?? centerHues[i] - fallbackHalfStep
-        : centerHues[i] - fallbackHalfStep;
+      const center = centerHues[i];
+      const hLeftFull = boundaryHues
+        ? boundaryHues[i] ?? center - fallbackHalfStep
+        : center - fallbackHalfStep;
       const hRightRaw = boundaryHues
         ? (boundaryHues[i + 1] ?? boundaryHues[0] + 360)
-        : centerHues[i] + fallbackHalfStep;
+        : center + fallbackHalfStep;
       // If the right boundary wraps below the left (last slot touching 360→0),
       // unwrap it so the gradient direction is always forward.
-      const hRight = hRightRaw < hLeft ? hRightRaw + 360 : hRightRaw;
+      const hRightFull = hRightRaw < hLeftFull ? hRightRaw + 360 : hRightRaw;
+      // Squeeze edges toward center hue when bandClarity is high.
+      const squeeze = bandClarity * 0.85;
+      const hLeft  = hLeftFull  + (center - hLeftFull)  * squeeze;
+      const hRight = hRightFull - (hRightFull - center) * squeeze;
       const [r, g, b] = oklchToLinearRGB(0.65, 0.32, hLeft);
       const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, hRight);
       buf[i * 3] = r;

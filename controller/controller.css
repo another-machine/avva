@@ -324,6 +324,12 @@ body {
 
 /* ── Stage column ─────────────────────────────────────────────────────────── */
 
+/* Stage accent colors — applied to num badge + top border of header */
+[data-stage="videoAnalysis"]  { --stage-accent: oklch(0.72 0.18 200); --stage-accent-dim: oklch(0.72 0.18 200 / 0.12); }
+[data-stage="audioAnalysis"]  { --stage-accent: oklch(0.72 0.18 200); --stage-accent-dim: oklch(0.72 0.18 200 / 0.12); }
+[data-stage="soundSynthesis"] { --stage-accent: oklch(0.75 0.18 145); --stage-accent-dim: oklch(0.75 0.18 145 / 0.12); }
+[data-stage="visualSynthesis"]{ --stage-accent: oklch(0.70 0.18 300); --stage-accent-dim: oklch(0.70 0.18 300 / 0.12); }
+
 .stage-col {
   height: 100%;
   display: flex;
@@ -343,6 +349,7 @@ body {
   padding: 8px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  border-top: 2px solid var(--stage-accent, var(--accent));
   user-select: none;
 }
 
@@ -350,9 +357,9 @@ body {
   font-size: 10px;
   font-weight: 700;
   font-family: monospace;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid var(--accent);
+  color: var(--stage-accent, var(--accent));
+  background: var(--stage-accent-dim, var(--accent-dim));
+  border: 1px solid var(--stage-accent, var(--accent));
   border-radius: 0;
   padding: 1px 5px;
   flex-shrink: 0;
@@ -797,8 +804,18 @@ body {
   color: var(--color-dim);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-widest);
-  margin-bottom: 7px;
+  margin-bottom: 3px;
   margin-top: 2px;
+}
+
+.monitor .sig__sub {
+  font-size: 8px;
+  font-family: monospace;
+  color: var(--color-dim);
+  opacity: 0.6;
+  letter-spacing: 0.03em;
+  margin-bottom: 7px;
+  line-height: 1.5;
 }
 
 .monitor .sig__divider {

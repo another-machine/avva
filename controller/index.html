@@ -37,43 +37,39 @@
         <div class="settings-panel__body" id="settings-body"></div>
       </div>
 
-      <!-- Panels 1–4: pipeline stages -->
+      <!-- Panels 1–4: reordered 1|3|2|4 so input/output analysis sit adjacent -->
       <div class="ctrl-body">
         <section class="stage-col" data-stage="videoAnalysis">
           <header class="stage-col__hdr">
             <span class="stage-col__num">1</span>
             <span class="stage-col__name">VIDEO ANALYSIS</span>
-            <span class="stage-col__arrow">→</span>
           </header>
           <div class="stage-col__monitor" id="mon-video"></div>
           <div class="stage-col__controls" id="ctl-video"></div>
-        </section>
-
-        <section class="stage-col" data-stage="soundSynthesis">
-          <header class="stage-col__hdr">
-            <span class="stage-col__num">2</span>
-            <span class="stage-col__name">SOUND SYNTHESIS</span>
-            <span class="stage-col__arrow">→</span>
-          </header>
-          <div class="stage-col__monitor" id="mon-synth"></div>
-          <div class="stage-col__controls" id="ctl-synth"></div>
         </section>
 
         <section class="stage-col" data-stage="audioAnalysis">
           <header class="stage-col__hdr">
             <span class="stage-col__num">3</span>
             <span class="stage-col__name">AUDIO ANALYSIS</span>
-            <span class="stage-col__arrow">→</span>
           </header>
           <div class="stage-col__monitor" id="mon-audio"></div>
           <div class="stage-col__controls" id="ctl-audio"></div>
+        </section>
+
+        <section class="stage-col" data-stage="soundSynthesis">
+          <header class="stage-col__hdr">
+            <span class="stage-col__num">2</span>
+            <span class="stage-col__name">SOUND SYNTHESIS</span>
+          </header>
+          <div class="stage-col__monitor" id="mon-synth"></div>
+          <div class="stage-col__controls" id="ctl-synth"></div>
         </section>
 
         <section class="stage-col" data-stage="visualSynthesis">
           <header class="stage-col__hdr">
             <span class="stage-col__num">4</span>
             <span class="stage-col__name">VISUAL SYNTHESIS</span>
-            <span class="stage-col__arrow"></span>
           </header>
           <div class="stage-col__monitor" id="mon-visual"></div>
           <div class="stage-col__controls" id="ctl-visual"></div>

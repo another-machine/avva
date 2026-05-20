@@ -115,18 +115,18 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   const sparksHdr = mk("div", "sig__hdr", "SIGNAL HISTORY");
   const sparksDiv = mk("div", "sig__sparks sig__sparks--labelled");
   const sparkRows = [
+    { label: "BRI", canvas: mk("canvas", "spark") },
     { label: "ACT", canvas: mk("canvas", "spark") },
     { label: "BG",  canvas: mk("canvas", "spark") },
-    { label: "BRI", canvas: mk("canvas", "spark") },
     { label: "CTR", canvas: mk("canvas", "spark") },
-    { label: "VY",  canvas: mk("canvas", "spark") },
+    { label: "SPR", canvas: mk("canvas", "spark") },
   ];
   for (const { label, canvas } of sparkRows) {
     const row = mk("div", "spark-row");
     row.append(mk("span", "spark-row__lbl", label), canvas);
     sparksDiv.appendChild(row);
   }
-  const [sparkAct, sparkActBg, sparkBri, sparkContrast, sparkVy] = sparkRows.map((r) => r.canvas);
+  const [sparkBri, sparkAct, sparkActBg, sparkContrast, sparkSpr] = sparkRows.map((r) => r.canvas);
 
   // Scene meters
   const sceneHdr = mk("div", "sig__hdr", "SCENE");
@@ -194,15 +194,15 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   host.append(
     hueLabel, hueValDiv, huebar, huehist, huehistLabels,
     mk("div", "sig__divider"),
+    sparksHdr, sparksDiv,
+    mk("div", "sig__divider"),
     sceneHdr,
     mBri.row, mAct.row, mBg.row, mCtr.row, mSpr.row,
     mxRow, vyRow,
-    mk("div", "sig__divider"),
-    sparksHdr, sparksDiv,
   );
 
-  const actHist: number[] = [], briHist: number[] = [],
-        actBgHist: number[] = [], contrastHist: number[] = [], vyHist: number[] = [];
+  const briHist: number[] = [], actHist: number[] = [],
+        actBgHist: number[] = [], contrastHist: number[] = [], sprHist: number[] = [];
   let latest: TelemetryMsg | null = null;
 
   function paint() {
@@ -256,11 +256,11 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     vyMarker.style.left = `${(out.vy * 100).toFixed(1)}%`;
     vyVal.textContent = (out.vy * 100).toFixed(0);
 
+    _drawSpark(sparkBri, briHist, host);
     _drawSpark(sparkAct, actHist, host);
     _drawSpark(sparkActBg, actBgHist, host);
-    _drawSpark(sparkBri, briHist, host);
     _drawSpark(sparkContrast, contrastHist, host);
-    _drawSpark(sparkVy, vyHist, host);
+    _drawSpark(sparkSpr, sprHist, host);
   }
   requestAnimationFrame(paint);
 
@@ -270,11 +270,11 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       if (msg.video) {
         const L = CONFIG.sparkLen;
         const push = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
-        push(actHist, msg.video.act);
         push(briHist, msg.video.bri);
+        push(actHist, msg.video.act);
         push(actBgHist, msg.video.actBg);
         push(contrastHist, Math.min(1, msg.video.contrast * 2));
-        push(vyHist, 1 - msg.video.vy);
+        push(sprHist, msg.video.spread);
       }
     },
   };
@@ -293,15 +293,17 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
 
   // Tier amplitude meters
   const tierHdr = mk("div", "sig__hdr", "TIER AMPLITUDE");
+  const tierSub = mk("div", "sig__sub", "bass ← lo  ·  mid / tre ← bri + vy");
   const mBass = _meterRow("BASS");
   const mMid  = _meterRow("MID");
   const mTre  = _meterRow("TRE");
 
-  // FM index bars
+  // FM index bars (bass ← contrast, mid/tre ← saturation)
   const fmHdr = mk("div", "sig__hdr", "FM INDEX");
-  const fmBass = _meterRow("FM-B", true);
-  const fmMid  = _meterRow("FM-M", true);
-  const fmTre  = _meterRow("FM-T", true);
+  const fmSub = mk("div", "sig__sub", "timbre complexity  ·  bass ← contrast  ·  mid / tre ← sat");
+  const fmBass = _meterRow("BASS", true);
+  const fmMid  = _meterRow("MID",  true);
+  const fmTre  = _meterRow("TRE",  true);
 
   // Glide tau
   const glideHdr = mk("div", "sig__hdr", "GLIDE");
@@ -314,21 +316,14 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
   glideRow.appendChild(glideMeter);
   glideRow.appendChild(glideVal);
 
-  // Pluck LED
-  const pluckRow = mk("div", "sig__key-row");
-  const pluckLed = mk("span", "sig__dot");
-  pluckRow.append(pluckLed, mk("span", undefined, "PLUCK"));
-
   host.append(
     statusRow,
     mk("div", "sig__divider"),
-    tierHdr, mBass.row, mMid.row, mTre.row,
+    tierHdr, tierSub, mBass.row, mMid.row, mTre.row,
     mk("div", "sig__divider"),
-    fmHdr, fmBass.row, fmMid.row, fmTre.row,
+    fmHdr, fmSub, fmBass.row, fmMid.row, fmTre.row,
     mk("div", "sig__divider"),
     glideHdr, glideRow,
-    mk("div", "sig__divider"),
-    pluckRow,
   );
 
   let latest: TelemetryMsg | null = null;
@@ -359,8 +354,6 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
     // Glide tau: 0..500ms → 0..100%
     glideFill.style.width = `${Math.min(100, (sc.glideTau / 0.5) * 100).toFixed(1)}%`;
     glideVal.textContent = (sc.glideTau * 1000).toFixed(0) + "ms";
-
-    pluckLed.classList.toggle("is-on", sc.pluckFired);
   }
   requestAnimationFrame(paint);
 
@@ -417,14 +410,38 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   _applySpectrumH3();
   store.subscribeKey("analysis.hueOffset", _applySpectrumH3);
 
-  // Audio → Scene meters (mirrors Stage 1 SCENE for direct comparison)
-  const sceneHdr = mk("div", "sig__hdr", "AUDIO → SCENE");
-  const mBri    = _meterRow("BRI");
-  const mAct    = _meterRow("ACT");
-  const mSpread = _meterRow("SPR");
-  const mBandLo = _meterRow("LO");
-  const mBandHi = _meterRow("HI");
-  const mPulse  = _meterRow("PULSE");
+  // Signal quality — shows how well the synth output is being interpreted
+  const signalHdr = mk("div", "sig__hdr", "SIGNAL");
+  const signalSub = mk("div", "sig__sub", "sat = chord clarity  ·  spr = harmonic spread  ·  high FM → low sat, high spr");
+  const mSat        = _meterRow("SAT");
+  const mAudioSpread = _meterRow("SPR");
+
+  // Signal history — same 5 video signals as Stage 1, colored by winner slot hue
+  const sparksHdr3 = mk("div", "sig__hdr", "SIGNAL HISTORY");
+  const sparksDiv3 = mk("div", "sig__sparks sig__sparks--labelled");
+  const sparkRows3 = [
+    { label: "BRI", canvas: mk("canvas", "spark") },
+    { label: "ACT", canvas: mk("canvas", "spark") },
+    { label: "BG",  canvas: mk("canvas", "spark") },
+    { label: "CTR", canvas: mk("canvas", "spark") },
+    { label: "SPR", canvas: mk("canvas", "spark") },
+  ];
+  const sparkRowEls3: HTMLElement[] = [];
+  for (const { label, canvas } of sparkRows3) {
+    const row = mk("div", "spark-row");
+    row.append(mk("span", "spark-row__lbl", label), canvas);
+    sparksDiv3.appendChild(row);
+    sparkRowEls3.push(row);
+  }
+  const [s3Bri, s3Act, s3Bg, s3Ctr, s3Spr] = sparkRows3.map((r) => r.canvas);
+
+  // Scene meters — same video signals as Stage 1 for direct alignment
+  const sceneHdr = mk("div", "sig__hdr", "SCENE");
+  const mBri = _meterRow("BRI");
+  const mAct = _meterRow("ACT");
+  const mBg  = _meterRow("BG");
+  const mCtr = _meterRow("CTR");
+  const mSpr = _meterRow("SPR");
 
   // 60-note grid
   const gridLabel = mk("div", "sig__hdr", "NOTES");
@@ -436,12 +453,18 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   host.append(
     chromaHdr, chordVal, huebar, slotHist, slotHistLabels,
     mk("div", "sig__divider"),
+    sparksHdr3, sparksDiv3,
+    mk("div", "sig__divider"),
     sceneHdr,
-    mBri.row, mAct.row, mSpread.row, mBandLo.row, mBandHi.row, mPulse.row,
+    mBri.row, mAct.row, mBg.row, mCtr.row, mSpr.row,
     mk("div", "sig__divider"),
     gridLabel, noteGrid,
+    mk("div", "sig__divider"),
+    signalHdr, signalSub, mSat.row, mAudioSpread.row,
   );
 
+  const briHist3: number[] = [], actHist3: number[] = [],
+        actBgHist3: number[] = [], contrastHist3: number[] = [], sprHist3: number[] = [];
   let latestMsg: TelemetryMsg | null = null;
 
   function _buildNoteGrid(noteInfo: { chromatic: number; octave: number; name: string }[]): void {
@@ -487,17 +510,22 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 
     const _off3 = store.get("analysis.hueOffset") as number ?? 0;
     let _markerHue = audio.hue ?? 0;
+    let winnerIdx3 = 0;
     if (audio.slots && currentPalette) {
-      let winnerIdx = 0, maxScore = -1;
+      let maxScore = -1;
       for (let i = 0; i < audio.slots.length; i++) {
-        if (audio.slots[i] > maxScore) { maxScore = audio.slots[i]; winnerIdx = i; }
+        if (audio.slots[i] > maxScore) { maxScore = audio.slots[i]; winnerIdx3 = i; }
       }
-      _markerHue = currentPalette.slotHues[winnerIdx] ?? _markerHue;
+      _markerHue = currentPalette.slotHues[winnerIdx3] ?? _markerHue;
     }
     const _percPos3 = (toPerceptual(_markerHue) + _off3 + 360) % 360;
     huemark.style.setProperty("--hue-marker-pos", `${(_percPos3 / 360) * 100}%`);
 
     chordNumeral.textContent = audio.chord.label || "—";
+
+    // Signal quality
+    mSat.fill.style.width        = pct(audio.sat ?? 0);    mSat.val.textContent        = ((audio.sat ?? 0) * 100).toFixed(0);
+    mAudioSpread.fill.style.width = pct(audio.spread ?? 0); mAudioSpread.val.textContent = ((audio.spread ?? 0) * 100).toFixed(0);
 
     // Note grid
     if (noteGridBuilt && noteLookup && audio.notes) {
@@ -519,20 +547,44 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       }
     }
 
-    // Audio → Scene
-    const vBri = latestMsg.video?.bri ?? 0;
-    mBri.fill.style.width    = pct(vBri);       mBri.val.textContent    = (vBri * 100).toFixed(0);
-    if (vu) {
-      mAct.fill.style.width    = pct(vu.act);     mAct.val.textContent    = (vu.act * 100).toFixed(0);
-      mSpread.fill.style.width = pct(vu.spread);  mSpread.val.textContent = (vu.spread * 100).toFixed(0);
-      mBandLo.fill.style.width = pct(vu.bandLo);  mBandLo.val.textContent = (vu.bandLo * 100).toFixed(0);
-      mBandHi.fill.style.width = pct(vu.bandHi);  mBandHi.val.textContent = (vu.bandHi * 100).toFixed(0);
-      mPulse.fill.style.width  = pct(Math.min(1, vu.pulse)); mPulse.val.textContent = vu.pulse.toFixed(2);
+    // Signal history sparklines — color tracks winner slot hue
+    const winnerPercHue3 = toPerceptual(currentPalette?.slotHues[winnerIdx3] ?? 0).toFixed(1);
+    for (const rowEl of sparkRowEls3) {
+      rowEl.style.setProperty("--accent-l", "0.65");
+      rowEl.style.setProperty("--accent-c", "0.22");
+      rowEl.style.setProperty("--accent-h", winnerPercHue3);
     }
+    _drawSpark(s3Bri, briHist3, sparkRowEls3[0]);
+    _drawSpark(s3Act, actHist3, sparkRowEls3[1]);
+    _drawSpark(s3Bg, actBgHist3, sparkRowEls3[2]);
+    _drawSpark(s3Ctr, contrastHist3, sparkRowEls3[3]);
+    _drawSpark(s3Spr, sprHist3, sparkRowEls3[4]);
+
+    // Scene — same video signals as Stage 1
+    const vid = latestMsg.video;
+    const pv = (v: number, scale = 1) => `${Math.min(100, v * scale * 100).toFixed(1)}%`;
+    mBri.fill.style.width = pv(vid?.bri    ?? 0);     mBri.val.textContent = ((vid?.bri    ?? 0) * 100).toFixed(0);
+    mAct.fill.style.width = pv(vid?.act    ?? 0);     mAct.val.textContent = ((vid?.act    ?? 0) * 100).toFixed(0);
+    mBg.fill.style.width  = pv(vid?.actBg  ?? 0);     mBg.val.textContent  = ((vid?.actBg  ?? 0) * 100).toFixed(0);
+    mCtr.fill.style.width = pv(vid?.contrast ?? 0, 2); mCtr.val.textContent = ((vid?.contrast ?? 0) * 100).toFixed(0);
+    mSpr.fill.style.width = pv(vid?.spread ?? 0);     mSpr.val.textContent = ((vid?.spread ?? 0) * 100).toFixed(0);
   }
   requestAnimationFrame(paint);
 
-  return { onMsg(msg) { latestMsg = msg; } };
+  return {
+    onMsg(msg) {
+      latestMsg = msg;
+      if (msg.video) {
+        const L = CONFIG.sparkLen;
+        const p3 = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
+        p3(briHist3, msg.video.bri);
+        p3(actHist3, msg.video.act);
+        p3(actBgHist3, msg.video.actBg);
+        p3(contrastHist3, Math.min(1, msg.video.contrast * 2));
+        p3(sprHist3, msg.video.spread);
+      }
+    },
+  };
 }
 
 // ── Stage 4 — Visual Synthesis ────────────────────────────────────────────────

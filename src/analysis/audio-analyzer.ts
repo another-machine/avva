@@ -97,6 +97,8 @@ export interface AudioFrame {
   notes: Float32Array;
   /** Top-3 chord template matches by raw dot-product score. */
   candidates: ChordCandidate[];
+  /** How centered the audio hue is within the winning slot: 1=dead-center, 0=at edge. */
+  bandClarity: number;
   /** True when the 90%-sticky rule overrode the highest-scoring template. */
   stickyApplied: boolean;
   /** Per-(octave, class) note metadata — same indexing as notes[]. */
@@ -219,6 +221,7 @@ export class AudioAnalyzer {
       chord: { label: "—", key: "", change: false },
       notes: new Float32Array(this._N),
       candidates: [],
+      bandClarity: 0,
       stickyApplied: false,
       noteInfo: this.noteInfo,
     };
@@ -391,6 +394,9 @@ export class AudioAnalyzer {
     }
     candidateHeap.sort((a, b) => b.score - a.score);
     const topCandidates = candidateHeap.slice(0, 3);
+    const bandClarity = topCandidates.length >= 2 && topCandidates[0].score > 0
+      ? Math.max(0, (topCandidates[0].score - topCandidates[1].score) / topCandidates[0].score)
+      : topCandidates.length > 0 && topCandidates[0].score > 0 ? 1 : 0;
 
     // Sticky: prefer the previous chord when it scores ≥ 90% of best
     const searchBank = this.palette.chordTemplates;
@@ -429,6 +435,7 @@ export class AudioAnalyzer {
     this._out.chord.key = pick.key;
     this._out.chord.change = change;
     this._out.candidates = topCandidates;
+    this._out.bandClarity = bandClarity;
     this._out.stickyApplied = stickyApplied;
     this._out.noteInfo = this.noteInfo;
     for (let i = 0; i < N; i++) this._out.notes[i] = this._noteVals[i];
@@ -451,6 +458,7 @@ export class AudioAnalyzer {
       chord: { ...this._out.chord },
       notes: new Float32Array(this._out.notes),
       candidates: this._out.candidates,
+      bandClarity: this._out.bandClarity,
       stickyApplied: this._out.stickyApplied,
       noteInfo: this._out.noteInfo,
     };
