@@ -486,7 +486,15 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     if (!noteGridBuilt && audio.noteInfo?.length) _buildNoteGrid(audio.noteInfo);
 
     const _off3 = store.get("analysis.hueOffset") as number ?? 0;
-    const _percPos3 = (toPerceptual(audio.hue ?? 0) + _off3 + 360) % 360;
+    let _markerHue = audio.hue ?? 0;
+    if (audio.slots && currentPalette) {
+      let winnerIdx = 0, maxScore = -1;
+      for (let i = 0; i < audio.slots.length; i++) {
+        if (audio.slots[i] > maxScore) { maxScore = audio.slots[i]; winnerIdx = i; }
+      }
+      _markerHue = currentPalette.slotHues[winnerIdx] ?? _markerHue;
+    }
+    const _percPos3 = (toPerceptual(_markerHue) + _off3 + 360) % 360;
     huemark.style.setProperty("--hue-marker-pos", `${(_percPos3 / 360) * 100}%`);
 
     chordNumeral.textContent = audio.chord.label || "—";
