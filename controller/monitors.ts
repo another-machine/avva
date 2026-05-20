@@ -100,7 +100,7 @@ function _buildPalette(): Palette | null {
   if (!s) return null;
   try {
     return Palette.fromURLParam(s as string, {
-      rootHue: toPerceptual(store.get("harmony.rootHue") ?? 0),
+      rootHue: 0,
       crossZone: store.get("harmony.crossZone"),
     });
   } catch { return null; }
@@ -215,19 +215,30 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 
     // Show chord label for current hue position in palette
     hueV.textContent = histPalette ? histPalette.hueToSlot(out.hue).slot.chord.label : "—";
-    huemark.style.setProperty("--hue-marker-pos", `${(out.hue / 360) * 100}%`);
-    if (histBins) {
+    // Place marker in perceptual hue space so it lands on the matching gradient color.
+    // out.hue is shifted by hueOffset; undo that to get raw camera hue, convert to oklch,
+    // then add hueOffset back so it aligns with the gradient (which is offset by -hueOffset).
+    const _off = store.get("analysis.hueOffset") as number ?? 0;
+    const _rawHue = ((out.hue - _off) + 360) % 360;
+    const _percPos = (toPerceptual(_rawHue) + _off + 360) % 360;
+    huemark.style.setProperty("--hue-marker-pos", `${(_percPos / 360) * 100}%`);
+    if (histBins && histPalette) {
       const bars = huehist.children;
       const n = bars.length;
       if (n > 0) {
+        // Accumulate energy into palette slot indices (not raw hue buckets).
+        // Each histBin midpoint is mapped through hueToSlot so bar[i] always
+        // corresponds to the same slot as the label[i] beneath it.
         const buckets = new Float32Array(n);
         const hb = histBins.length;
         for (let j = 0; j < hb; j++) {
-          buckets[Math.floor((j / hb) * n)] += histBins[j];
+          if (histBins[j] <= 0) continue;
+          const midHue = ((j + 0.5) / hb) * 360;
+          const slotIdx = histPalette.hueToSlot(midHue).slot.index;
+          if (slotIdx < n) buckets[slotIdx] += histBins[j];
         }
         let mx = 0.0001;
         for (let i = 0; i < n; i++) if (buckets[i] > mx) mx = buckets[i];
-        // Bars are dark masks hanging from top; height = empty portion
         for (let i = 0; i < n; i++) {
           const emptyH = 32 * (1 - buckets[i] / mx);
           (bars[i] as HTMLElement).style.height = `${emptyH.toFixed(1)}px`;
@@ -474,7 +485,9 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 
     if (!noteGridBuilt && audio.noteInfo?.length) _buildNoteGrid(audio.noteInfo);
 
-    huemark.style.setProperty("--hue-marker-pos", `${((audio.hue ?? 0) / 360) * 100}%`);
+    const _off3 = store.get("analysis.hueOffset") as number ?? 0;
+    const _percPos3 = (toPerceptual(audio.hue ?? 0) + _off3 + 360) % 360;
+    huemark.style.setProperty("--hue-marker-pos", `${(_percPos3 / 360) * 100}%`);
 
     chordNumeral.textContent = audio.chord.label || "—";
 

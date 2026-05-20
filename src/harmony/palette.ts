@@ -202,18 +202,20 @@ export class Palette {
       this._chordTemplates = this._slots.map((s) => {
         const pcs = s.chord.pitchClasses;
         const vec = new Float32Array(12);
-        // Fundamentals first so they always win over harmonic entries below.
-        for (const pc of pcs) vec[pc] = 1;
-        // Add expected harmonic energy: 3rd partial (+7 semitones, a perfect 5th)
-        // and 5th partial (+4 semitones, a major 3rd). These weights model typical
-        // overtone bleed from FM or any pitched source, so the template scores high
-        // on the actual spectrum of that grouping rather than just on its pitch classes.
-        // Math.max prevents weaker harmonic entries from overwriting fundamentals.
-        for (const pc of pcs) {
-          const h3 = (pc + 7) % 12;
-          const h5 = (pc + 4) % 12;
-          if (vec[h3] < 0.4) vec[h3] = 0.4;
-          if (vec[h5] < 0.15) vec[h5] = 0.15;
+        const n = pcs.length;
+        // Positional weighting: first note scores highest, linearly decreasing.
+        // For n=1: [1.0]. For n=3: [1.0, 0.67, 0.33]. Single-note chords always
+        // outcompete a multi-note chord when only that note is present.
+        for (let pi = 0; pi < n; pi++) {
+          vec[pcs[pi]] = (n - pi) / n;
+        }
+        // Overtone bleed scaled to each note's positional weight.
+        for (let pi = 0; pi < n; pi++) {
+          const baseW = (n - pi) / n;
+          const h3 = (pcs[pi] + 7) % 12;
+          const h5 = (pcs[pi] + 4) % 12;
+          if (vec[h3] < baseW * 0.4) vec[h3] = baseW * 0.4;
+          if (vec[h5] < baseW * 0.15) vec[h5] = baseW * 0.15;
         }
         let normSq = 0;
         for (let c = 0; c < 12; c++) normSq += vec[c] * vec[c];

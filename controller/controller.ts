@@ -348,16 +348,17 @@ function buildSettingsPanel(container: HTMLElement): void {
   const UI_KINDS = ["camera", "file", "screen", "url"] as const;
   const getUiKind = () => store.get("source.kind") as (typeof UI_KINDS)[number];
 
-  const kindBtns = document.createElement("div");
-  kindBtns.className = "ctrl ctrl--enum";
+  const kindSel = document.createElement("select");
+  kindSel.className = "sp-select";
   for (const kind of UI_KINDS) {
-    const btn = document.createElement("button");
-    btn.className = "seg-btn" + (getUiKind() === kind ? " active" : "");
-    btn.textContent = kind;
-    btn.addEventListener("click", () => store.set("source.kind", kind as SourceKind));
-    kindBtns.appendChild(btn);
+    const o = document.createElement("option");
+    o.value = kind; o.textContent = kind;
+    kindSel.appendChild(o);
   }
-  srcBody.appendChild(_spRow("Source", kindBtns));
+  kindSel.value = getUiKind();
+  kindSel.addEventListener("change", () => store.set("source.kind", kindSel.value as SourceKind));
+  store.subscribeKey("source.kind", (v) => { kindSel.value = String(v); });
+  srcBody.appendChild(_spRow("Source", kindSel));
 
   const fileSelect = document.createElement("select");
   fileSelect.className = "sp-select";
@@ -414,8 +415,6 @@ function buildSettingsPanel(container: HTMLElement): void {
 
   const updateSourceVis = () => {
     const kind = getUiKind();
-    for (const btn of kindBtns.querySelectorAll<HTMLButtonElement>(".seg-btn"))
-      btn.classList.toggle("active", btn.textContent === kind);
     fileRow.style.display  = kind === "file"   ? "" : "none";
     urlRow.style.display   = kind === "url"    ? "" : "none";
     rateRow.style.display  = kind !== "camera" ? "" : "none";
@@ -493,16 +492,35 @@ function buildSettingsPanel(container: HTMLElement): void {
   store.subscribeKey("harmony.scale", (v) => { scaleSelect.value = String(v); });
   harmBody.appendChild(_spRow("Scale", scaleSelect));
 
-  const fillBtn = document.createElement("button");
-  fillBtn.className = "action-btn sp-fill-btn";
-  fillBtn.textContent = "Fill palette from key";
-  fillBtn.addEventListener("click", () => {
+  const fillBtns = document.createElement("div");
+  fillBtns.className = "fill-btns";
+
+  const seqBtn = document.createElement("button");
+  seqBtn.className = "action-btn";
+  seqBtn.textContent = "Sequence";
+  seqBtn.title = "Fill palette I – VII in scale order";
+  seqBtn.addEventListener("click", () => {
     const root = store.get("harmony.root") as string;
     const scale = store.get("harmony.scale") as ScaleMode;
     const triads = buildTriadsForMode(root, scale);
     store.set("harmony.palette", triads.join(", "));
   });
-  harmBody.appendChild(fillBtn);
+
+  const mixBtn = document.createElement("button");
+  mixBtn.className = "action-btn";
+  mixBtn.textContent = "Mixed";
+  mixBtn.title = "Fill palette I III V IV VII II VI";
+  mixBtn.addEventListener("click", () => {
+    const root = store.get("harmony.root") as string;
+    const scale = store.get("harmony.scale") as ScaleMode;
+    const triads = buildTriadsForMode(root, scale);
+    // I III V IV VII II VI — strong degrees first, I always first
+    const order = [0, 2, 4, 3, 6, 1, 5];
+    store.set("harmony.palette", order.map((i) => triads[i]).join(", "));
+  });
+
+  fillBtns.append(seqBtn, mixBtn);
+  harmBody.appendChild(fillBtns);
 
   const paletteInput = document.createElement("input");
   paletteInput.type = "text";

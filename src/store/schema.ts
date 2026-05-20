@@ -596,7 +596,7 @@ export const SCHEMA = {
   // ── cassette effects ───────────────────────────────────────
   "cassette.preset": {
     kind: "select",
-    default: "custom" as const,
+    default: "clean" as const,
     options: ["custom", "clean", "warm", "lofi", "vintage", "live"] as const,
     label: "Tape preset",
     group: "cassette",
@@ -681,7 +681,7 @@ export const SCHEMA = {
   },
   "cassette.noiseGain": {
     kind: "number",
-    default: 0.015,
+    default: 0,
     min: 0,
     max: 0.1,
     step: 0.001,

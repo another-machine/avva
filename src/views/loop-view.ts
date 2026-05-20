@@ -7,7 +7,6 @@ import { Synth } from "../audio/synth.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
-import { toPerceptual } from "../harmony/hue-perception.js";
 import { TelemetrySender } from "../store/telemetry.js";
 import { PRESETS, CASSETTE_PRESETS } from "../audio/presets.js";
 import { Pipeline } from "../pipeline/pipeline.js";
@@ -60,7 +59,7 @@ async function begin(): Promise<void> {
 
   const defaultPaletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
   palette = Palette.fromURLParam(defaultPaletteStr, {
-    rootHue: toPerceptual(store.get("harmony.rootHue") ?? CONFIG.rootHue ?? 0),
+    rootHue: 0,
     crossZone: CONFIG.crossZone,
   });
 
@@ -158,17 +157,11 @@ async function begin(): Promise<void> {
     heat.classList.toggle("mirror", v);
   });
 
-  store.subscribeKey("harmony.rootHue", (v) => {
-    palette?.setRootHue(toPerceptual(v));
-  });
-
   store.subscribeKey("harmony.palette", () => {
     const paletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
     try {
       palette = Palette.fromURLParam(paletteStr as string, {
-        rootHue: toPerceptual(
-          store.get("harmony.rootHue") ?? CONFIG.rootHue ?? 0,
-        ),
+        rootHue: 0,
         crossZone: CONFIG.crossZone,
       });
     } catch {
