@@ -88,6 +88,7 @@ interface CassetteChain {
   noise: AudioBufferSourceNode;
   noiseLP: BiquadFilterNode;
   noiseGain: GainNode;
+  noisePan: StereoPannerNode;
   masterLP: BiquadFilterNode;
   wowLfo: OscillatorNode;
   wowDepth: GainNode;
@@ -166,6 +167,8 @@ export class Synth {
   private _pulseCounter: number;
   private _prevNoteKey: string;
   private _lastUpdateTime: number;
+  private _masterLPHzBase: number;
+  private _tapeDelayDampBase: number;
 
   constructor(config: LegacyConfig) {
     this._cfg = config;
@@ -190,6 +193,8 @@ export class Synth {
     this._pulseCounter = 0;
     this._prevNoteKey = "";
     this._lastUpdateTime = 0;
+    this._masterLPHzBase = 0;
+    this._tapeDelayDampBase = 6000;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────
@@ -363,39 +368,26 @@ export class Synth {
   update({
     hue,
     bri,
-    act,
-    actBg,
-    actEdge,
-    vy,
+    flux,
+    tilt,
+    pos,
     spread,
     sat,
     contrast,
-    dContrast,
     lo,
-    mx,
-    vmx,
-    vmy,
-    sx,
-    sy,
   }: AnalysisOut): void {
     const palette = this.palette;
     if (!this.running || !palette) return;
 
     const safeHue = Number.isFinite(hue) ? hue : 0;
     const safeBri = Number.isFinite(bri) ? Math.max(0, bri) : 0;
-    const rawAct = clamp01(act);
-    const rawActBg = clamp01(actBg);
-    const rawActEdge = clamp01(actEdge);
-    const safeAct = Math.max(rawAct, rawActBg);
-    const safeVy = Number.isFinite(vy) ? clamp01(vy) : 0.5;
+    const safeFlux = clamp01(flux);
+    const safeTilt = Number.isFinite(tilt) ? clamp01(tilt) : 0.5;
+    const safePos = Number.isFinite(pos) ? clamp01(pos) : 0.5;
     const safeSpread = clamp01(spread);
     const safeSat = clamp01(sat);
     const safeContrast = clamp01(contrast);
-    const safeDContrast = clamp01(Math.abs(dContrast) * 10);
     const safeLo = clamp01(lo);
-    const safeMx = Number.isFinite(mx) ? clamp01(mx) : 0.5;
-    const vMag = clamp01(Math.sqrt(vmx * vmx + vmy * vmy) * 20);
-    const compactness = clamp01(1 - (sx + sy) * 3);
 
     // ── Palette chord data ───────────────────────────────────
     const baseOctave = this._cfg.octave ?? 4;
@@ -416,7 +408,7 @@ export class Synth {
     };
 
     const now = this._actx!.currentTime;
-    const tau = Math.max(0.001, this._glideTime(safeAct) / 3);
+    const tau = Math.max(0.001, this._glideTime(safeFlux) / 3);
     const slowTau = Math.max(0.05, tau * 4);
 
     // ── Per-tier octave offsets ──────────────────────────────────
@@ -448,9 +440,9 @@ export class Synth {
     // ── Glide spread ─────────────────────────────────────────────
     const glideSpread = this._cfg.glideSpread ?? 1.0;
 
-    this._panTo(this._masterPanner!.pan, (safeMx - 0.5) * 1.4, slowTau, now);
+    this._panTo(this._masterPanner!.pan, (safePos - 0.5) * 1.4, slowTau, now);
 
-    const vt = safeVy * 2;
+    const vt = safeTilt * 2;
     const trebleW = vt <= 1 ? (1 - vt) * safeBri : 0;
     const midW = (vt <= 1 ? vt : 2 - vt) * safeBri;
     // Bass uses bottom-third brightness directly — vy centroid stays near 0.5
@@ -616,28 +608,37 @@ export class Synth {
 
     this._maybePluck(
       note,
-      rawAct,
-      rawActBg,
-      rawActEdge,
+      safeFlux,
       safeSpread,
       widthScale,
       now,
-      safeMx,
-      vMag,
-      compactness,
+      safePos,
+      safeContrast,
     );
 
-    const dlFeedback = clamp01(rawActBg * 0.55 + 0.05);
-    const dlWet = rawActBg * 0.35;
+    const dlFeedback = clamp01(safeFlux * 0.4 + 0.05);
+    const dlWet = safeFlux * 0.25;
     this._delay!.feedback.gain.setTargetAtTime(dlFeedback, now, slowTau);
     this._delay!.wet.gain.setTargetAtTime(dlWet, now, slowTau);
 
-    this._tremolo!.depth.gain.setTargetAtTime(
-      safeDContrast * 0.12,
-      now,
-      slowTau,
-    );
-    this._tremolo!.lfo.frequency.setTargetAtTime(5 + rawAct * 4, now, slowTau);
+    this._tremolo!.depth.gain.setTargetAtTime(safeFlux * 0.12, now, slowTau);
+    this._tremolo!.lfo.frequency.setTargetAtTime(5 + safeFlux * 4, now, slowTau);
+
+    // Dynamic filters: tilt drives masterLP (±1.5 oct), contrast drives tape echo brightness
+    if (this._cassette) {
+      if (this._masterLPHzBase > 0) {
+        const masterLPTarget = Math.max(120, Math.min(20000,
+          this._masterLPHzBase * Math.pow(2, (safeTilt - 0.5) * 3),
+        ));
+        this._cassette.masterLP.frequency.setTargetAtTime(masterLPTarget, now, slowTau);
+      }
+      const dampTarget = Math.max(800, Math.min(14000,
+        this._tapeDelayDampBase * Math.pow(2, (safeContrast - 0.5) * 2),
+      ));
+      this._cassette.tapeDelayDamp.frequency.setTargetAtTime(dampTarget, now, slowTau);
+      // Noise panner carries stereo position through the cassette layer
+      this._cassette.noisePan.pan.setTargetAtTime((safePos - 0.5) * 0.6, now, slowTau);
+    }
 
     const subFreq = _pcToFreq(
       note._palettePrimary.chord.pitchClasses[0],
@@ -664,7 +665,7 @@ export class Synth {
       fmIndexMid: tierIndex[1],
       fmIndexTreble: tierIndex[2],
       glideTau: tau,
-      masterPan: (safeMx - 0.5) * 1.4,
+      masterPan: (safePos - 0.5) * 1.4,
       pluckFired: false,
     };
   }
@@ -673,15 +674,12 @@ export class Synth {
 
   private _maybePluck(
     note: NoteProxy,
-    quickness: number,
-    slowness: number,
-    edge: number,
+    flux: number,
     spread: number,
     widthScale: number,
     now: number,
-    mx: number,
-    vMag: number,
-    compactness: number,
+    pos: number,
+    contrast: number,
   ): void {
     if (!this._plucks.length) return;
     const pluck = this._plucks.reduce((best, v) =>
@@ -693,26 +691,21 @@ export class Synth {
     const pluckGainComp = this._waveGainComp(
       this._cfg.carrierTypePluck ?? "sine",
     );
-    const trigProb = Math.min(
-      1,
-      Math.max(quickness * 0.4, slowness * 0.2, vMag * 0.5) * articulationBoost,
-    );
+    const trigProb = Math.min(1, flux * 0.5 * articulationBoost);
     if (Math.random() > trigProb) return;
 
-    const spacious = 1 - quickness;
-    const peak = (0.04 + quickness * 0.13 + slowness * 0.03) * pluckGainComp;
-    const attackTau = 0.014 - quickness * 0.011;
-    const baseDecay = 0.06 + slowness * 0.4;
+    const spacious = 1 - flux;
+    const peak = (0.04 + flux * 0.16) * pluckGainComp;
+    const attackTau = 0.014 - flux * 0.011;
+    const baseDecay = 0.06 + flux * 0.4;
     const ampDecayTau =
       baseDecay * (1 + spacious * 1.8) +
-      Math.random() * (0.05 + slowness * 0.12);
+      Math.random() * (0.05 + flux * 0.12);
     const indexPeak = Math.min(
       1.0,
-      (0.25 + quickness * 0.45 + edge * 0.3) *
-        (1 - slowness * 0.3) *
-        (0.5 + compactness * 0.5),
+      (0.25 + flux * 0.75) * (1 - flux * 0.3) * (0.5 + contrast * 0.5),
     );
-    const modDecayTau = ampDecayTau * (0.04 + slowness * 0.14);
+    const modDecayTau = ampDecayTau * (0.04 + flux * 0.14);
 
     let fc: number, pluckPan: number;
     const baseOctave = this._cfg.octave ?? 4;
@@ -722,12 +715,12 @@ export class Synth {
       const pcs = note._palettePrimary.chord.pitchClasses;
       const nUnlocked = Math.max(1, Math.round(1 + spread * (pcs.length - 1)));
       const chosenIdx = Math.floor(Math.random() * nUnlocked);
-      const octShift = Math.round(1 - slowness * 2) + pluckOctaveOffset;
+      const octShift = Math.round(1 - flux * 2) + pluckOctaveOffset;
       fc = _pcToFreq(pcs[chosenIdx], baseOctave + octShift);
       const pcFrac = pcs.length > 1 ? chosenIdx / (pcs.length - 1) : 0.5;
       pluckPan =
         (pcFrac - 0.5) * 2 * widthScale * (0.35 + spacious * 1.1) +
-        (mx - 0.5) * 0.8;
+        (pos - 0.5) * 0.8;
     } else {
       return;
     }
@@ -750,7 +743,7 @@ export class Synth {
 
     pluck.nextAllowed =
       now +
-      (0.06 + spacious * 0.5 + slowness * 0.25) /
+      (0.06 + spacious * 0.5 + flux * 0.25) /
         Math.max(1, articulationBoost * 0.5);
   }
 
@@ -958,9 +951,12 @@ export class Synth {
     noiseLP.frequency.value = 7000;
     const noiseGain = actx.createGain();
     noiseGain.gain.value = 0.015;
+    const noisePan = actx.createStereoPanner();
+    noisePan.pan.value = 0;
     noise.connect(noiseLP);
     noiseLP.connect(noiseGain);
-    noiseGain.connect(finalMix);
+    noiseGain.connect(noisePan);
+    noisePan.connect(finalMix);
     noise.start();
 
     // Master LP: final cassette bandwidth roll-off
@@ -1008,6 +1004,7 @@ export class Synth {
       noise,
       noiseLP,
       noiseGain,
+      noisePan,
       masterLP,
       wowLfo,
       wowDepth,
@@ -1021,7 +1018,7 @@ export class Synth {
     const c = this._cassette;
     if (!c || !this._actx) return;
     if (p.midBoostDb !== undefined) c.midBoost.gain.value = p.midBoostDb;
-    if (p.masterLPHz !== undefined) c.masterLP.frequency.value = p.masterLPHz;
+    if (p.masterLPHz !== undefined) this._masterLPHzBase = p.masterLPHz;
     if (p.satWet !== undefined) {
       c.satWet.gain.value = Math.max(0, Math.min(1, p.satWet));
       c.satDry.gain.value = Math.max(0, Math.min(1, 1 - p.satWet));

@@ -298,6 +298,7 @@ function maybeTapSynth(): void {
     palette,
   });
   synth._master.connect(audioAnalyzer.analyser);
+  if (synth._limiter) audioAnalyzer.connectStereo(synth._limiter);
 }
 
 // ── Tick ──────────────────────────────────────────────────────────────────────

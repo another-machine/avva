@@ -103,6 +103,10 @@ export interface AudioFrame {
   stickyApplied: boolean;
   /** Per-(octave, class) note metadata — same indexing as notes[]. */
   noteInfo: NoteInfo[];
+  // canonical aligned axes (audio side ↔ video side)
+  tilt: number;  // spectral centroid 0..1 (low→high); mirrors video tilt (vy)
+  pos: number;   // stereo L/R balance 0..1 (left→right); mirrors video pos (mx)
+  ctr: number;   // spectral peakiness 0..1; mirrors video contrast
 }
 
 export interface NoteInfo {
@@ -129,6 +133,12 @@ export class AudioAnalyzer {
   private readonly _binHz: number;
   private _paletteUnsubscribe: (() => void) | null = null;
   private _slotsOut: Float32Array;
+  private _splitter: ChannelSplitterNode | null = null;
+  private _analyserL: AnalyserNode | null = null;
+  private _analyserR: AnalyserNode | null = null;
+  private _freqDataL: Uint8Array<ArrayBuffer> | null = null;
+  private _freqDataR: Uint8Array<ArrayBuffer> | null = null;
+  private _posSmooth = 0.5;
 
   readonly noteInfo: NoteInfo[];
   private readonly _N: number;
@@ -224,12 +234,34 @@ export class AudioAnalyzer {
       bandClarity: 0,
       stickyApplied: false,
       noteInfo: this.noteInfo,
+      tilt: 0.5,
+      pos: 0.5,
+      ctr: 0,
     };
   }
 
   /** Connect any AudioNode as the analyser's input. */
   connect(node: AudioNode): void {
     node.connect(this.analyser);
+  }
+
+  /** Connect a stereo source for L/R balance analysis (pos axis). */
+  connectStereo(node: AudioNode): void {
+    const splitter = this._actx.createChannelSplitter(2);
+    const analyserL = this._actx.createAnalyser();
+    const analyserR = this._actx.createAnalyser();
+    analyserL.fftSize = 2048;
+    analyserR.fftSize = 2048;
+    analyserL.smoothingTimeConstant = 0.7;
+    analyserR.smoothingTimeConstant = 0.7;
+    node.connect(splitter);
+    splitter.connect(analyserL, 0);
+    splitter.connect(analyserR, 1);
+    this._splitter = splitter;
+    this._analyserL = analyserL;
+    this._analyserR = analyserR;
+    this._freqDataL = new Uint8Array(analyserL.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+    this._freqDataR = new Uint8Array(analyserR.frequencyBinCount) as Uint8Array<ArrayBuffer>;
   }
 
   /** Swap the Palette. */
@@ -313,6 +345,38 @@ export class AudioAnalyzer {
     lo = Math.min(1, lo / (perOct * cutLo));
     hi = Math.min(1, hi / (perOct * cutLo));
     mid = Math.min(1, mid / (perOct * Math.max(1, cutHi - cutLo)));
+
+    // ── Canonical axes: tilt (spectral centroid), ctr (peakiness), pos (stereo) ─
+    let centNum = 0, centDen = 0;
+    let valSum = 0, logSum = 0, logN = 0;
+    for (let i = 0; i < N; i++) {
+      const v = this._noteVals[i];
+      const octNorm = (this._octaves[i] - this._octL) / Math.max(1, this._octH - this._octL);
+      centNum += octNorm * v;
+      centDen += v;
+      if (v > 1e-9) {
+        valSum += v;
+        logSum += Math.log(v);
+        logN++;
+      }
+    }
+    const tilt = centDen > 1e-6 ? centNum / centDen : 0.5;
+    const arith = logN > 0 ? valSum / logN : 0;
+    const geom = logN > 0 ? Math.exp(logSum / logN) : 0;
+    const ctr = arith > 1e-9 ? Math.max(0, 1 - geom / arith) : 0;
+
+    let rawPos = 0.5;
+    if (this._freqDataL && this._freqDataR && this._analyserL && this._analyserR) {
+      this._analyserL.getByteFrequencyData(this._freqDataL);
+      this._analyserR.getByteFrequencyData(this._freqDataR);
+      let sumL = 0, sumR = 0;
+      for (let i = 0; i < this._freqDataL.length; i++) {
+        sumL += this._freqDataL[i];
+        sumR += this._freqDataR[i];
+      }
+      rawPos = 0.5 + 0.5 * (sumR - sumL) / (sumR + sumL + 1);
+    }
+    this._posSmooth += (rawPos - this._posSmooth) * 0.15;
 
     // ── Full-band loudness ────────────────────────────────────────────────────
     let briSum = 0;
@@ -439,6 +503,9 @@ export class AudioAnalyzer {
     this._out.stickyApplied = stickyApplied;
     this._out.noteInfo = this.noteInfo;
     for (let i = 0; i < N; i++) this._out.notes[i] = this._noteVals[i];
+    this._out.tilt = tilt;
+    this._out.pos = this._posSmooth;
+    this._out.ctr = ctr;
 
     // Return a snapshot with deep-copied typed arrays so per-frame probes
     // (telemetry, pipeline stages) hold immutable data after the next tick.
@@ -461,6 +528,9 @@ export class AudioAnalyzer {
       bandClarity: this._out.bandClarity,
       stickyApplied: this._out.stickyApplied,
       noteInfo: this._out.noteInfo,
+      tilt: this._out.tilt,
+      pos: this._out.pos,
+      ctr: this._out.ctr,
     };
   }
 }

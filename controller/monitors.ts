@@ -111,45 +111,38 @@ function _buildPalette(): Palette | null {
 export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
   host.className = "monitor";
 
-  // Sparklines (labelled)
+  // Sparklines (labelled) — canonical axes: BRI / FLUX / SPR / CTR / TILT
   const sparksHdr = mk("div", "sig__hdr", "SIGNAL HISTORY");
   const sparksDiv = mk("div", "sig__sparks sig__sparks--labelled");
   const sparkRows = [
-    { label: "BRI", canvas: mk("canvas", "spark") },
-    { label: "ACT", canvas: mk("canvas", "spark") },
-    { label: "BG",  canvas: mk("canvas", "spark") },
-    { label: "CTR", canvas: mk("canvas", "spark") },
-    { label: "SPR", canvas: mk("canvas", "spark") },
+    { label: "BRI",  canvas: mk("canvas", "spark") },
+    { label: "FLUX", canvas: mk("canvas", "spark") },
+    { label: "SPR",  canvas: mk("canvas", "spark") },
+    { label: "CTR",  canvas: mk("canvas", "spark") },
+    { label: "TILT", canvas: mk("canvas", "spark") },
   ];
   for (const { label, canvas } of sparkRows) {
     const row = mk("div", "spark-row");
     row.append(mk("span", "spark-row__lbl", label), canvas);
     sparksDiv.appendChild(row);
   }
-  const [sparkBri, sparkAct, sparkActBg, sparkContrast, sparkSpr] = sparkRows.map((r) => r.canvas);
+  const [sparkBri, sparkFlux, sparkSpr, sparkCtr, sparkTilt] = sparkRows.map((r) => r.canvas);
 
-  // Scene meters
+  // Scene meters — canonical: BRI / FLUX / SPR / CTR / TILT
   const sceneHdr = mk("div", "sig__hdr", "SCENE");
-  const mBri = _meterRow("BRI");
-  const mAct = _meterRow("ACT");
-  const mBg  = _meterRow("BG");
-  const mCtr = _meterRow("CTR");
-  const mSpr = _meterRow("SPR");
+  const mBri  = _meterRow("BRI");
+  const mFlux = _meterRow("FLUX");
+  const mSpr  = _meterRow("SPR");
+  const mCtr  = _meterRow("CTR");
+  const mTilt = _meterRow("TILT");
 
-  // Position tracks
-  const mxTrack = mk("div", "pos-track");
-  const mxMarker = mk("div", "pos-track__marker");
-  const mxVal = mk("span", "sig__val");
-  mxTrack.appendChild(mxMarker);
-  const mxRow = mk("div", "sig__row sig__row--pos");
-  mxRow.append(mk("span", "sig__lbl", "MX"), mxTrack, mxVal);
-
-  const vyTrack = mk("div", "pos-track");
-  const vyMarker = mk("div", "pos-track__marker");
-  const vyVal = mk("span", "sig__val");
-  vyTrack.appendChild(vyMarker);
-  const vyRow = mk("div", "sig__row sig__row--pos");
-  vyRow.append(mk("span", "sig__lbl", "VY"), vyTrack, vyVal);
+  // Position track — POS (horizontal centroid)
+  const posTrack = mk("div", "pos-track");
+  const posMarker = mk("div", "pos-track__marker");
+  const posVal = mk("span", "sig__val");
+  posTrack.appendChild(posMarker);
+  const posRow = mk("div", "sig__row sig__row--pos");
+  posRow.append(mk("span", "sig__lbl", "POS"), posTrack, posVal);
 
   // Hue section — shows chord label from palette, not raw hue degrees
   const hueLabel = mk("div", "panel__label", "SEEN CHROMA");
@@ -197,18 +190,18 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     sparksHdr, sparksDiv,
     mk("div", "sig__divider"),
     sceneHdr,
-    mBri.row, mAct.row, mBg.row, mCtr.row, mSpr.row,
-    mxRow, vyRow,
+    mBri.row, mFlux.row, mSpr.row, mCtr.row, mTilt.row,
+    posRow,
   );
 
-  const briHist: number[] = [], actHist: number[] = [],
-        actBgHist: number[] = [], contrastHist: number[] = [], sprHist: number[] = [];
+  const briHist: number[] = [], fluxHist: number[] = [],
+        sprHist: number[] = [], ctrHist: number[] = [], tiltHist: number[] = [];
   let latest: TelemetryMsg | null = null;
 
   function paint() {
     requestAnimationFrame(paint);
     if (!latest?.video) return;
-    const { video: out, synth, histBins } = latest;
+    const { video: out, histBins } = latest;
     const pct = (v: number, scale = 1) => `${Math.min(100, v * scale * 100).toFixed(1)}%`;
 
     _setAccent(host, out);
@@ -246,21 +239,19 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       }
     }
 
-    mBri.fill.style.width = pct(out.bri);    mBri.val.textContent = (out.bri * 100).toFixed(0);
-    mAct.fill.style.width = pct(out.act);    mAct.val.textContent = (out.act * 100).toFixed(0);
-    mBg.fill.style.width  = pct(out.actBg);  mBg.val.textContent  = (out.actBg * 100).toFixed(0);
-    mCtr.fill.style.width = pct(out.contrast, 2); mCtr.val.textContent = (out.contrast * 100).toFixed(0);
-    mSpr.fill.style.width = pct(out.spread); mSpr.val.textContent = (out.spread * 100).toFixed(0);
-    mxMarker.style.left = `${(out.mx * 100).toFixed(1)}%`;
-    mxVal.textContent = ((out.mx * 2 - 1) * 100).toFixed(0);
-    vyMarker.style.left = `${(out.vy * 100).toFixed(1)}%`;
-    vyVal.textContent = (out.vy * 100).toFixed(0);
+    mBri.fill.style.width  = pct(out.bri);          mBri.val.textContent  = (out.bri * 100).toFixed(0);
+    mFlux.fill.style.width = pct(out.flux);          mFlux.val.textContent = (out.flux * 100).toFixed(0);
+    mSpr.fill.style.width  = pct(out.spread);        mSpr.val.textContent  = (out.spread * 100).toFixed(0);
+    mCtr.fill.style.width  = pct(out.contrast, 2);   mCtr.val.textContent  = (out.contrast * 100).toFixed(0);
+    mTilt.fill.style.width = pct(out.tilt);          mTilt.val.textContent = (out.tilt * 100).toFixed(0);
+    posMarker.style.left = `${(out.pos * 100).toFixed(1)}%`;
+    posVal.textContent = ((out.pos * 2 - 1) * 100).toFixed(0);
 
-    _drawSpark(sparkBri, briHist, host);
-    _drawSpark(sparkAct, actHist, host);
-    _drawSpark(sparkActBg, actBgHist, host);
-    _drawSpark(sparkContrast, contrastHist, host);
-    _drawSpark(sparkSpr, sprHist, host);
+    _drawSpark(sparkBri,  briHist,  host);
+    _drawSpark(sparkFlux, fluxHist, host);
+    _drawSpark(sparkSpr,  sprHist,  host);
+    _drawSpark(sparkCtr,  ctrHist,  host);
+    _drawSpark(sparkTilt, tiltHist, host);
   }
   requestAnimationFrame(paint);
 
@@ -270,11 +261,11 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       if (msg.video) {
         const L = CONFIG.sparkLen;
         const push = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
-        push(briHist, msg.video.bri);
-        push(actHist, msg.video.act);
-        push(actBgHist, msg.video.actBg);
-        push(contrastHist, Math.min(1, msg.video.contrast * 2));
-        push(sprHist, msg.video.spread);
+        push(briHist,  msg.video.bri);
+        push(fluxHist, msg.video.flux);
+        push(sprHist,  msg.video.spread);
+        push(ctrHist,  Math.min(1, msg.video.contrast * 2));
+        push(tiltHist, msg.video.tilt);
       }
     },
   };
@@ -293,7 +284,7 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
 
   // Tier amplitude meters
   const tierHdr = mk("div", "sig__hdr", "TIER AMPLITUDE");
-  const tierSub = mk("div", "sig__sub", "bass ← lo  ·  mid / tre ← bri + vy");
+  const tierSub = mk("div", "sig__sub", "bass ← lo  ·  mid / tre ← bri + tilt");
   const mBass = _meterRow("BASS");
   const mMid  = _meterRow("MID");
   const mTre  = _meterRow("TRE");
@@ -410,21 +401,20 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   _applySpectrumH3();
   store.subscribeKey("analysis.hueOffset", _applySpectrumH3);
 
-  // Signal quality — shows how well the synth output is being interpreted
+  // Signal quality — chord clarity
   const signalHdr = mk("div", "sig__hdr", "SIGNAL");
-  const signalSub = mk("div", "sig__sub", "sat = chord clarity  ·  spr = harmonic spread  ·  high FM → low sat, high spr");
-  const mSat        = _meterRow("SAT");
-  const mAudioSpread = _meterRow("SPR");
+  const signalSub = mk("div", "sig__sub", "sat = chord clarity  ·  high FM → low sat");
+  const mSat = _meterRow("SAT");
 
-  // Signal history — audio-sourced: bri, act, lo/mid/hi bands
+  // Signal history — canonical axes mirroring video: BRI / FLUX / SPR / CTR / TILT
   const sparksHdr3 = mk("div", "sig__hdr", "SIGNAL HISTORY");
   const sparksDiv3 = mk("div", "sig__sparks sig__sparks--labelled");
   const sparkRows3 = [
-    { label: "BRI", canvas: mk("canvas", "spark") },
-    { label: "ACT", canvas: mk("canvas", "spark") },
-    { label: "LO",  canvas: mk("canvas", "spark") },
-    { label: "MID", canvas: mk("canvas", "spark") },
-    { label: "HI",  canvas: mk("canvas", "spark") },
+    { label: "BRI",  canvas: mk("canvas", "spark") },
+    { label: "FLUX", canvas: mk("canvas", "spark") },
+    { label: "SPR",  canvas: mk("canvas", "spark") },
+    { label: "CTR",  canvas: mk("canvas", "spark") },
+    { label: "TILT", canvas: mk("canvas", "spark") },
   ];
   const sparkRowEls3: HTMLElement[] = [];
   for (const { label, canvas } of sparkRows3) {
@@ -433,15 +423,22 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     sparksDiv3.appendChild(row);
     sparkRowEls3.push(row);
   }
-  const [s3Bri, s3Act, s3Bg, s3Ctr, s3Spr] = sparkRows3.map((r) => r.canvas);
+  const [s3Bri, s3Flux, s3Spr, s3Ctr, s3Tilt] = sparkRows3.map((r) => r.canvas);
 
-  // Scene meters — audio-sourced: bri, act, lo/mid/hi bands
+  // Scene meters — canonical: BRI / FLUX / SPR / CTR / TILT + POS position track
   const sceneHdr = mk("div", "sig__hdr", "SCENE");
-  const mBri = _meterRow("BRI");
-  const mAct = _meterRow("ACT");
-  const mLo  = _meterRow("LO");
-  const mMid = _meterRow("MID");
-  const mHi  = _meterRow("HI");
+  const mBri  = _meterRow("BRI");
+  const mFlux = _meterRow("FLUX");
+  const mSpr  = _meterRow("SPR");
+  const mCtr  = _meterRow("CTR");
+  const mTilt = _meterRow("TILT");
+
+  const posTrack3 = mk("div", "pos-track");
+  const posMarker3 = mk("div", "pos-track__marker");
+  const posVal3 = mk("span", "sig__val");
+  posTrack3.appendChild(posMarker3);
+  const posRow3 = mk("div", "sig__row sig__row--pos");
+  posRow3.append(mk("span", "sig__lbl", "POS"), posTrack3, posVal3);
 
   // 60-note grid
   const gridLabel = mk("div", "sig__hdr", "NOTES");
@@ -456,15 +453,16 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     sparksHdr3, sparksDiv3,
     mk("div", "sig__divider"),
     sceneHdr,
-    mBri.row, mAct.row, mLo.row, mMid.row, mHi.row,
+    mBri.row, mFlux.row, mSpr.row, mCtr.row, mTilt.row,
+    posRow3,
     mk("div", "sig__divider"),
     gridLabel, noteGrid,
     mk("div", "sig__divider"),
-    signalHdr, signalSub, mSat.row, mAudioSpread.row,
+    signalHdr, signalSub, mSat.row,
   );
 
-  const briHist3: number[] = [], actHist3: number[] = [],
-        loHist3: number[] = [], midHist3: number[] = [], hiHist3: number[] = [];
+  const briHist3: number[] = [], fluxHist3: number[] = [],
+        sprHist3: number[] = [], ctrHist3: number[] = [], tiltHist3: number[] = [];
   let latestMsg: TelemetryMsg | null = null;
 
   function _buildNoteGrid(noteInfo: { chromatic: number; octave: number; name: string }[]): void {
@@ -524,8 +522,7 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     chordNumeral.textContent = audio.chord.label || "—";
 
     // Signal quality
-    mSat.fill.style.width        = pct(audio.sat ?? 0);    mSat.val.textContent        = ((audio.sat ?? 0) * 100).toFixed(0);
-    mAudioSpread.fill.style.width = pct(audio.spread ?? 0); mAudioSpread.val.textContent = ((audio.spread ?? 0) * 100).toFixed(0);
+    mSat.fill.style.width = pct(audio.sat ?? 0); mSat.val.textContent = ((audio.sat ?? 0) * 100).toFixed(0);
 
     // Note grid
     if (noteGridBuilt && noteLookup && audio.notes) {
@@ -554,19 +551,21 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       rowEl.style.setProperty("--accent-c", "0.22");
       rowEl.style.setProperty("--accent-h", winnerPercHue3);
     }
-    _drawSpark(s3Bri, briHist3, sparkRowEls3[0]);
-    _drawSpark(s3Act, actHist3, sparkRowEls3[1]);
-    _drawSpark(s3Bg, loHist3, sparkRowEls3[2]);
-    _drawSpark(s3Ctr, midHist3, sparkRowEls3[3]);
-    _drawSpark(s3Spr, hiHist3, sparkRowEls3[4]);
+    _drawSpark(s3Bri,  briHist3,  sparkRowEls3[0]);
+    _drawSpark(s3Flux, fluxHist3, sparkRowEls3[1]);
+    _drawSpark(s3Spr,  sprHist3,  sparkRowEls3[2]);
+    _drawSpark(s3Ctr,  ctrHist3,  sparkRowEls3[3]);
+    _drawSpark(s3Tilt, tiltHist3, sparkRowEls3[4]);
 
-    // Scene — audio signals
+    // Scene — canonical audio signals
     const pct2 = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
-    mBri.fill.style.width = pct2(audio.bri);        mBri.val.textContent = (audio.bri * 100).toFixed(0);
-    mAct.fill.style.width = pct2(audio.act);        mAct.val.textContent = (audio.act * 100).toFixed(0);
-    mLo.fill.style.width  = pct2(audio.bands.lo);   mLo.val.textContent  = (audio.bands.lo * 100).toFixed(0);
-    mMid.fill.style.width = pct2(audio.bands.mid);  mMid.val.textContent = (audio.bands.mid * 100).toFixed(0);
-    mHi.fill.style.width  = pct2(audio.bands.hi);   mHi.val.textContent  = (audio.bands.hi * 100).toFixed(0);
+    mBri.fill.style.width  = pct2(audio.bri);          mBri.val.textContent  = (audio.bri * 100).toFixed(0);
+    mFlux.fill.style.width = pct2(audio.act);          mFlux.val.textContent = (audio.act * 100).toFixed(0);
+    mSpr.fill.style.width  = pct2(audio.spread ?? 0);  mSpr.val.textContent  = ((audio.spread ?? 0) * 100).toFixed(0);
+    mCtr.fill.style.width  = pct2(audio.ctr ?? 0);     mCtr.val.textContent  = ((audio.ctr ?? 0) * 100).toFixed(0);
+    mTilt.fill.style.width = pct2(audio.tilt ?? 0.5);  mTilt.val.textContent = ((audio.tilt ?? 0.5) * 100).toFixed(0);
+    posMarker3.style.left = `${((audio.pos ?? 0.5) * 100).toFixed(1)}%`;
+    posVal3.textContent = (((audio.pos ?? 0.5) * 2 - 1) * 100).toFixed(0);
   }
   requestAnimationFrame(paint);
 
@@ -576,11 +575,11 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       if (msg.audio) {
         const L = CONFIG.sparkLen;
         const p3 = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
-        p3(briHist3, msg.audio.bri);
-        p3(actHist3, msg.audio.act);
-        p3(loHist3, msg.audio.bands.lo);
-        p3(midHist3, msg.audio.bands.mid);
-        p3(hiHist3, msg.audio.bands.hi);
+        p3(briHist3,  msg.audio.bri);
+        p3(fluxHist3, msg.audio.act);
+        p3(sprHist3,  msg.audio.spread ?? 0);
+        p3(ctrHist3,  msg.audio.ctr ?? 0);
+        p3(tiltHist3, msg.audio.tilt ?? 0.5);
       }
     },
   };

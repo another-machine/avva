@@ -78,6 +78,9 @@ uniform float uBlobSize;
 uniform float uBlobSharp;
 uniform float uShiftSpeed;
 uniform float uPulseReactivity;
+uniform float uTilt;
+uniform float uPos;
+uniform float uCtr;
 uniform vec3  uDegreeRGB2[N_HUES];
 uniform sampler2D uPrev;
 
@@ -123,6 +126,10 @@ void main() {
   float totalField = 0.0;
   vec3  totalColor = vec3(0.0);
 
+  // pos shifts the whole cloud left/right; tilt scales vertical centroid
+  float posShift  = (uPos - 0.5) * 0.4 * aspect;
+  float tiltScale = 0.7 + 0.6 * uTilt;
+
   for (int i = 0; i < N_HUES; i++) {
     float presence = uDegrees[i];
     if (presence < 0.005) continue;
@@ -133,18 +140,18 @@ void main() {
 
     // Blob A — primary, slow Lissajous + secondary wobble
     vec2 cA = vec2(
-      0.5 * aspect + 0.36 * aspect * sin(t * (0.088 + fi * 0.019) + seed)
-                   + 0.07 * aspect * sin(t * (0.23  + fi * 0.041) + seed + 2.4),
-      0.5           + 0.36 * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
-                   + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1)
+      posShift + 0.5 * aspect + 0.36 * aspect * sin(t * (0.088 + fi * 0.019) + seed)
+                              + 0.07 * aspect * sin(t * (0.23  + fi * 0.041) + seed + 2.4),
+      tiltScale * (0.5        + 0.36 * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
+                              + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1))
     );
 
     // Blob B — secondary, offset phase so they separate and merge
     vec2 cB = vec2(
-      0.5 * aspect + 0.30 * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
-                   + 0.06 * aspect * sin(t * (0.31  + fi * 0.017) + seed + 0.8),
-      0.5           + 0.30 * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
-                   + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0)
+      posShift + 0.5 * aspect + 0.30 * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
+                              + 0.06 * aspect * sin(t * (0.31  + fi * 0.017) + seed + 0.8),
+      tiltScale * (0.5        + 0.30 * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
+                              + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0))
     );
 
     float rB = r * 0.72;
@@ -155,16 +162,18 @@ void main() {
 
     float contrib = (fA + fB) * presence;
     totalField   += contrib;
-    // Organic gradient across each slot's hue arc: blend between the arc's
-    // left-edge color (uDegreeRGB) and right-edge color (uDegreeRGB2) using
-    // slow noise so the gradient shifts organically rather than being flat.
-    float blend = snoise(uvW * 1.8 + vec2(fi * 7.31 + t * 0.02, fi * 2.17)) * 0.5 + 0.5;
+    // Organic gradient: tilt pushes blend toward uDegreeRGB2 (boundary color)
+    // at high tilt (treble-dominant), noise provides base organic movement.
+    float blend = clamp(
+      snoise(uvW * 1.8 + vec2(fi * 7.31 + t * 0.02, fi * 2.17)) * 0.5 + 0.5 + uTilt * 0.3 - 0.15,
+      0.0, 1.0);
     totalColor   += mix(uDegreeRGB[i], uDegreeRGB2[i], blend) * contrib;
   }
 
   vec3  blobColor = totalField > 0.001 ? totalColor / totalField : vec3(0.0);
-  // Soft isosurface: uBlobSharp controls edge width (higher = softer/glowier)
-  float newAmount = smoothstep(1.2 - uBlobSharp, 1.2 + uBlobSharp, totalField);
+  // CTR sharpens blobs: high contrast (peaky spectrum) → tighter isosurface edge
+  float effectiveSharp = uBlobSharp * (1.4 - 0.8 * uCtr);
+  float newAmount = smoothstep(1.2 - effectiveSharp, 1.2 + effectiveSharp, totalField);
 
   // ── Feedback (ping-pong) ─────────────────────────────────────────────────
   float driftAmt = 0.0015 + uAct * 0.002;
@@ -203,7 +212,7 @@ void main() {
     );
     vec2 dP = uvW - cP;
     float g = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
-    pulseField += g * presence * (uBandLo + uBandHi) * uPulseReactivity;
+    pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
   }
   // Clamp to [0,1]; Gaussian accumulation is naturally smooth — no threshold needed
   base = mix(base, vec3(1.0, 0.96, 0.92), clamp(pulseField, 0.0, 1.0) * 0.7);
@@ -237,6 +246,9 @@ export interface VisualUniforms {
   act: number;
   bandLo: number;
   bandHi: number;
+  tilt: number;
+  pos: number;
+  ctr: number;
 }
 
 export interface AudioRendererGLOpts {
@@ -488,6 +500,9 @@ export class AudioRendererGL {
     gl.uniform1f(u.uBandHi, frame.bands.hi);
     gl.uniform1f(u.uPulse, this._pulse);
     gl.uniform1f(u.uPulseReactivity, this._pulseReactivityVal);
+    gl.uniform1f(u.uTilt, frame.tilt ?? 0.5);
+    gl.uniform1f(u.uPos, frame.pos ?? 0.5);
+    gl.uniform1f(u.uCtr, frame.ctr ?? 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._texA!.tex);
@@ -526,6 +541,9 @@ export class AudioRendererGL {
       act: frame.act,
       bandLo: frame.bands.lo,
       bandHi: frame.bands.hi,
+      tilt: frame.tilt ?? 0.5,
+      pos: frame.pos ?? 0.5,
+      ctr: frame.ctr ?? 0,
     };
   }
 
