@@ -135,24 +135,6 @@ export const SCHEMA = {
   },
 
   // ── analysis ───────────────────────────────────────────────
-  "analysis.sampleW": {
-    kind: "number",
-    default: 96,
-    min: 16,
-    max: 320,
-    step: 8,
-    label: "Sample width",
-    group: "analysis",
-  },
-  "analysis.sampleH": {
-    kind: "number",
-    default: 72,
-    min: 16,
-    max: 240,
-    step: 8,
-    label: "Sample height",
-    group: "analysis",
-  },
   "analysis.smoothing": {
     kind: "number",
     default: 0.18,
@@ -214,16 +196,6 @@ export const SCHEMA = {
     group: "analysis",
     hint: "Frame-diff below this is clamped to zero — suppresses camera sensor noise",
   },
-  "analysis.hueBins": {
-    kind: "number",
-    default: 30,
-    min: 6,
-    max: 120,
-    step: 1,
-    label: "Hue bins",
-    group: "analysis",
-    hint: "Histogram buckets around the hue wheel — more = finer resolution",
-  },
   "analysis.hueOffset": {
     kind: "number",
     default: 0,
@@ -235,14 +207,14 @@ export const SCHEMA = {
     group: "analysis",
     hint: "Rotates the hue wheel before bucketing — e.g. +15 puts pure red at the centre of bucket 1 instead of its left edge",
   },
-  "analysis.sparkLen": {
+  "global.sparkLen": {
     kind: "number",
     default: 160,
     min: 30,
     max: 600,
     step: 10,
     label: "Sparkline length",
-    group: "analysis",
+    group: "global",
     hint: "Frames of history shown in sparklines",
   },
 

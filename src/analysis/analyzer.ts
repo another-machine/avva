@@ -9,6 +9,10 @@ import { rgbToHsv } from "./color.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { Calibration } from "../controls/calibration.js";
 
+const SAMPLE_W = 96;
+const SAMPLE_H = 72;
+const HUE_BINS = 30;
+
 // ── Types ─────────────────────────────────────────────────────
 
 export interface AnalysisOut {
@@ -65,8 +69,8 @@ export class Analyzer {
     this._calibration = calibration;
 
     this._canvas = document.createElement("canvas");
-    this._canvas.width = config.sampleW;
-    this._canvas.height = config.sampleH;
+    this._canvas.width = SAMPLE_W;
+    this._canvas.height = SAMPLE_H;
     this._ctx = this._canvas.getContext("2d", {
       willReadFrequently: true,
     })!;
@@ -95,7 +99,7 @@ export class Analyzer {
       mass: 0,
     };
     this._prevContrast = 0;
-    this._histBins = new Float32Array(config.hueBins);
+    this._histBins = new Float32Array(HUE_BINS);
     this._briHist = [];
     this._actHist = [];
     this.heatOn = false;
@@ -104,7 +108,7 @@ export class Analyzer {
   // ── Public API ──────────────────────────────────────────────
 
   analyze(videoEl: HTMLVideoElement): AnalysisFrame {
-    const { sampleW: W, sampleH: H } = this._cfg;
+    const W = SAMPLE_W, H = SAMPLE_H;
 
     this._ctx.filter = this._calibration?.filterString ?? "none";
     this._ctx.drawImage(videoEl, 0, 0, W, H);
@@ -162,8 +166,8 @@ export class Analyzer {
         satN++;
 
         const bin = Math.min(
-          this._cfg.hueBins - 1,
-          ((hShifted / 360) * this._cfg.hueBins) | 0,
+          HUE_BINS - 1,
+          ((hShifted / 360) * HUE_BINS) | 0,
         );
         this._histBins[bin] += w;
       }

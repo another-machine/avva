@@ -87,11 +87,11 @@ async function begin(): Promise<void> {
   }
 
   _sourceLabel = videoSource.label;
-  _resLabel = `${CONFIG.sampleW}×${CONFIG.sampleH}`;
+  _resLabel = `96×72`;
 
   const heat = document.getElementById("heat") as HTMLCanvasElement;
-  heat.width = CONFIG.sampleW;
-  heat.height = CONFIG.sampleH;
+  heat.width = 96;
+  heat.height = 72;
   heatCtx = heat.getContext("2d")!;
   heatCtx.imageSmoothingEnabled = false;
 

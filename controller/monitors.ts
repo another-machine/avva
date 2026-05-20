@@ -168,7 +168,7 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   function _rebuildHistBars(): void {
     huehist.innerHTML = "";
     huehistLabels.innerHTML = "";
-    const n = histPalette?.slots.length ?? CONFIG.hueBins;
+    const n = histPalette?.slots.length ?? 30;
     for (let i = 0; i < n; i++) {
       huehist.appendChild(mk("span", "huehist__bar"));
       const lbl = histPalette ? (histPalette.slots[i]?.chord.label ?? "") : String(i);
@@ -519,9 +519,10 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
       }
     }
 
-    // Audio → Scene — read from visualUniforms which already aggregates these
+    // Audio → Scene
+    const vBri = latestMsg.video?.bri ?? 0;
+    mBri.fill.style.width    = pct(vBri);       mBri.val.textContent    = (vBri * 100).toFixed(0);
     if (vu) {
-      mBri.fill.style.width    = pct(vu.bri);    mBri.val.textContent    = (vu.bri * 100).toFixed(0);
       mAct.fill.style.width    = pct(vu.act);     mAct.val.textContent    = (vu.act * 100).toFixed(0);
       mSpread.fill.style.width = pct(vu.spread);  mSpread.val.textContent = (vu.spread * 100).toFixed(0);
       mBandLo.fill.style.width = pct(vu.bandLo);  mBandLo.val.textContent = (vu.bandLo * 100).toFixed(0);

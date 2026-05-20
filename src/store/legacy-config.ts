@@ -13,15 +13,12 @@ export interface LegacyConfig {
   source: string | string[];
   preferCamera: "environment" | "user";
 
-  sampleW: number;
-  sampleH: number;
   smoothing: number;
   hueSmoothing: number;
   satFloor: number;
   valFloor: number;
   activityGain: number;
   activityNoise: number;
-  hueBins: number;
   hueOffset: number;
   sparkLen: number;
 
@@ -71,12 +68,6 @@ export const legacyConfig: LegacyConfig = {
     return store.get("source.preferCamera");
   },
 
-  get sampleW() {
-    return store.get("analysis.sampleW");
-  },
-  get sampleH() {
-    return store.get("analysis.sampleH");
-  },
   get smoothing() {
     return store.get("analysis.smoothing");
   },
@@ -95,14 +86,11 @@ export const legacyConfig: LegacyConfig = {
   get activityNoise() {
     return store.get("analysis.activityNoise");
   },
-  get hueBins() {
-    return store.get("analysis.hueBins");
-  },
   get hueOffset() {
     return store.get("analysis.hueOffset") as number ?? 0;
   },
   get sparkLen() {
-    return store.get("analysis.sparkLen");
+    return store.get("global.sparkLen");
   },
 
   get mirror() {
