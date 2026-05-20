@@ -155,7 +155,9 @@ export class Analyzer {
       else if (i >= botThresh) briBotSum += v;
 
       if (s > this._cfg.satFloor && v > this._cfg.valFloor) {
-        const w = s * v;
+        // sqrt(s) reduces vivid-pixel dominance: muted (s=0.15) vs vivid (s=0.9)
+        // goes from 6:1 bias down to ~2.4:1, so faded colors register properly.
+        const w = Math.sqrt(s) * v;
         const hOff = (this._cfg.hueOffset ?? 0);
         const hShifted = ((h + hOff) % 360 + 360) % 360;
         const rad = (hShifted * Math.PI) / 180;

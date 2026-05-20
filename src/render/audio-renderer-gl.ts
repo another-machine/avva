@@ -226,6 +226,7 @@ void main() {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { AudioFrame } from "../analysis/audio-analyzer.js";
+import { toPerceptual } from "../harmony/hue-perception.js";
 
 /** Observable snapshot of what the GL renderer sent to the shader this frame. */
 export interface VisualUniforms {
@@ -666,8 +667,8 @@ export class AudioRendererGL {
       const squeeze = bandClarity * 0.85;
       const hLeft  = hLeftFull  + (center - hLeftFull)  * squeeze;
       const hRight = hRightFull - (hRightFull - center) * squeeze;
-      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, hLeft);
-      const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, hRight);
+      const [r, g, b] = oklchToLinearRGB(0.65, 0.32, toPerceptual(hLeft));
+      const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, toPerceptual(hRight));
       buf[i * 3] = r;
       buf[i * 3 + 1] = g;
       buf[i * 3 + 2] = b;

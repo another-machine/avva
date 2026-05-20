@@ -416,15 +416,15 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   const mSat        = _meterRow("SAT");
   const mAudioSpread = _meterRow("SPR");
 
-  // Signal history — same 5 video signals as Stage 1, colored by winner slot hue
+  // Signal history — audio-sourced: bri, act, lo/mid/hi bands
   const sparksHdr3 = mk("div", "sig__hdr", "SIGNAL HISTORY");
   const sparksDiv3 = mk("div", "sig__sparks sig__sparks--labelled");
   const sparkRows3 = [
     { label: "BRI", canvas: mk("canvas", "spark") },
     { label: "ACT", canvas: mk("canvas", "spark") },
-    { label: "BG",  canvas: mk("canvas", "spark") },
-    { label: "CTR", canvas: mk("canvas", "spark") },
-    { label: "SPR", canvas: mk("canvas", "spark") },
+    { label: "LO",  canvas: mk("canvas", "spark") },
+    { label: "MID", canvas: mk("canvas", "spark") },
+    { label: "HI",  canvas: mk("canvas", "spark") },
   ];
   const sparkRowEls3: HTMLElement[] = [];
   for (const { label, canvas } of sparkRows3) {
@@ -435,13 +435,13 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   }
   const [s3Bri, s3Act, s3Bg, s3Ctr, s3Spr] = sparkRows3.map((r) => r.canvas);
 
-  // Scene meters — same video signals as Stage 1 for direct alignment
+  // Scene meters — audio-sourced: bri, act, lo/mid/hi bands
   const sceneHdr = mk("div", "sig__hdr", "SCENE");
   const mBri = _meterRow("BRI");
   const mAct = _meterRow("ACT");
-  const mBg  = _meterRow("BG");
-  const mCtr = _meterRow("CTR");
-  const mSpr = _meterRow("SPR");
+  const mLo  = _meterRow("LO");
+  const mMid = _meterRow("MID");
+  const mHi  = _meterRow("HI");
 
   // 60-note grid
   const gridLabel = mk("div", "sig__hdr", "NOTES");
@@ -456,7 +456,7 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     sparksHdr3, sparksDiv3,
     mk("div", "sig__divider"),
     sceneHdr,
-    mBri.row, mAct.row, mBg.row, mCtr.row, mSpr.row,
+    mBri.row, mAct.row, mLo.row, mMid.row, mHi.row,
     mk("div", "sig__divider"),
     gridLabel, noteGrid,
     mk("div", "sig__divider"),
@@ -464,7 +464,7 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   );
 
   const briHist3: number[] = [], actHist3: number[] = [],
-        actBgHist3: number[] = [], contrastHist3: number[] = [], sprHist3: number[] = [];
+        loHist3: number[] = [], midHist3: number[] = [], hiHist3: number[] = [];
   let latestMsg: TelemetryMsg | null = null;
 
   function _buildNoteGrid(noteInfo: { chromatic: number; octave: number; name: string }[]): void {
@@ -556,32 +556,31 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     }
     _drawSpark(s3Bri, briHist3, sparkRowEls3[0]);
     _drawSpark(s3Act, actHist3, sparkRowEls3[1]);
-    _drawSpark(s3Bg, actBgHist3, sparkRowEls3[2]);
-    _drawSpark(s3Ctr, contrastHist3, sparkRowEls3[3]);
-    _drawSpark(s3Spr, sprHist3, sparkRowEls3[4]);
+    _drawSpark(s3Bg, loHist3, sparkRowEls3[2]);
+    _drawSpark(s3Ctr, midHist3, sparkRowEls3[3]);
+    _drawSpark(s3Spr, hiHist3, sparkRowEls3[4]);
 
-    // Scene — same video signals as Stage 1
-    const vid = latestMsg.video;
-    const pv = (v: number, scale = 1) => `${Math.min(100, v * scale * 100).toFixed(1)}%`;
-    mBri.fill.style.width = pv(vid?.bri    ?? 0);     mBri.val.textContent = ((vid?.bri    ?? 0) * 100).toFixed(0);
-    mAct.fill.style.width = pv(vid?.act    ?? 0);     mAct.val.textContent = ((vid?.act    ?? 0) * 100).toFixed(0);
-    mBg.fill.style.width  = pv(vid?.actBg  ?? 0);     mBg.val.textContent  = ((vid?.actBg  ?? 0) * 100).toFixed(0);
-    mCtr.fill.style.width = pv(vid?.contrast ?? 0, 2); mCtr.val.textContent = ((vid?.contrast ?? 0) * 100).toFixed(0);
-    mSpr.fill.style.width = pv(vid?.spread ?? 0);     mSpr.val.textContent = ((vid?.spread ?? 0) * 100).toFixed(0);
+    // Scene — audio signals
+    const pct2 = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
+    mBri.fill.style.width = pct2(audio.bri);        mBri.val.textContent = (audio.bri * 100).toFixed(0);
+    mAct.fill.style.width = pct2(audio.act);        mAct.val.textContent = (audio.act * 100).toFixed(0);
+    mLo.fill.style.width  = pct2(audio.bands.lo);   mLo.val.textContent  = (audio.bands.lo * 100).toFixed(0);
+    mMid.fill.style.width = pct2(audio.bands.mid);  mMid.val.textContent = (audio.bands.mid * 100).toFixed(0);
+    mHi.fill.style.width  = pct2(audio.bands.hi);   mHi.val.textContent  = (audio.bands.hi * 100).toFixed(0);
   }
   requestAnimationFrame(paint);
 
   return {
     onMsg(msg) {
       latestMsg = msg;
-      if (msg.video) {
+      if (msg.audio) {
         const L = CONFIG.sparkLen;
         const p3 = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
-        p3(briHist3, msg.video.bri);
-        p3(actHist3, msg.video.act);
-        p3(actBgHist3, msg.video.actBg);
-        p3(contrastHist3, Math.min(1, msg.video.contrast * 2));
-        p3(sprHist3, msg.video.spread);
+        p3(briHist3, msg.audio.bri);
+        p3(actHist3, msg.audio.act);
+        p3(loHist3, msg.audio.bands.lo);
+        p3(midHist3, msg.audio.bands.mid);
+        p3(hiHist3, msg.audio.bands.hi);
       }
     },
   };
