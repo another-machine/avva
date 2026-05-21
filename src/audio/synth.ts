@@ -762,6 +762,22 @@ export class Synth {
         return 0.78;
       case "softsaw":
         return 0.7;
+      case "softsquare":
+        return 0.72;
+      case "softtri":
+        return 0.95;
+      case "chip":
+        return 0.6;
+      case "pulse12":
+        return 0.58;
+      case "reed":
+        return 0.78;
+      case "vox":
+        return 0.7;
+      case "bell":
+        return 0.72;
+      case "brass":
+        return 0.68;
       default:
         return 1.0; // sine
     }
@@ -778,11 +794,35 @@ export class Synth {
       for (let n = 1; n < N; n++) {
         imag[n] = ((2 / Math.PI) * (n % 2 === 0 ? -1 : 1)) / (n * n);
       }
+    } else if (name === "softsquare") {
+      // Square with 1/n² rolloff on odd harmonics — mellow, hollow but rounded
+      for (let n = 1; n < N; n += 2) {
+        imag[n] = (4 / Math.PI) / (n * n);
+      }
+    } else if (name === "softtri") {
+      // Triangle with extra 1/n⁴ rolloff — near-sine with a hint of body
+      for (let n = 1; n < N; n += 2) {
+        const sign = ((n - 1) / 2) % 2 === 0 ? 1 : -1;
+        imag[n] = (sign * (8 / (Math.PI * Math.PI))) / (n * n * n * n);
+      }
     } else if (name === "pwm") {
       // 25% duty-cycle pulse — nasal, hollow, cutting
       const d = 0.25;
       for (let n = 1; n < N; n++) {
         real[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * d);
+      }
+    } else if (name === "pulse12") {
+      // 12.5% duty-cycle pulse — thin, nasal, classic chiptune lead
+      const d = 0.125;
+      for (let n = 1; n < N; n++) {
+        real[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * d);
+      }
+    } else if (name === "chip") {
+      // 8-bit-style square: hard 50% pulse, harmonics cut off after the 9th —
+      // produces that crunchy, band-limited NES buzz.
+      const maxN = 9;
+      for (let n = 1; n <= maxN && n < N; n += 2) {
+        imag[n] = (4 / Math.PI) / n;
       }
     } else if (name === "organ") {
       // Hammond-style drawbar blend: partials 1, 2, 3, 4, 6
@@ -791,6 +831,44 @@ export class Synth {
       imag[3] = 0.5;
       imag[4] = 0.35;
       imag[6] = 0.15;
+    } else if (name === "reed") {
+      // Clarinet-ish: odd harmonics, gentle descending energy — woody, hollow
+      const weights = [1.0, 0.75, 0.5, 0.28, 0.15, 0.08, 0.04];
+      for (let k = 0; k < weights.length; k++) {
+        const n = 2 * k + 1;
+        if (n < N) imag[n] = weights[k];
+      }
+    } else if (name === "vox") {
+      // Vocal/formant blend: low formant around partials 2-3, upper around 8-10.
+      // Sounds like a soft "ahh"/"ohh" pad.
+      imag[1] = 0.7;
+      imag[2] = 1.0;
+      imag[3] = 0.85;
+      imag[4] = 0.4;
+      imag[5] = 0.2;
+      imag[6] = 0.15;
+      imag[7] = 0.3;
+      imag[8] = 0.55;
+      imag[9] = 0.45;
+      imag[10] = 0.25;
+      imag[11] = 0.12;
+    } else if (name === "bell") {
+      // Bell/tine-like: emphasize 1st, 3rd, 6th, 10th partials; suppress evens
+      // adjacent to them — chimey and metallic within harmonic constraints.
+      imag[1] = 1.0;
+      imag[3] = 0.7;
+      imag[5] = 0.18;
+      imag[6] = 0.55;
+      imag[10] = 0.35;
+      imag[14] = 0.18;
+    } else if (name === "brass") {
+      // Saw-like spectrum with a formant lift around partials 3-5 — bright,
+      // tonal, and a little aggressive without being harsh.
+      for (let n = 1; n < N; n++) {
+        const base = 1 / n;
+        const formant = Math.exp(-Math.pow((n - 4) / 2.2, 2)) * 0.6;
+        imag[n] = (n % 2 === 0 ? -base : base) * (0.55 + formant);
+      }
     }
     const wave = this._actx!.createPeriodicWave(real, imag, {
       disableNormalization: false,
