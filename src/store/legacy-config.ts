@@ -19,7 +19,6 @@ export interface LegacyConfig {
   valFloor: number;
   activityGain: number;
   activityNoise: number;
-  hueOffset: number;
   sparkLen: number;
 
   mirror: boolean;
@@ -55,6 +54,12 @@ export interface LegacyConfig {
 
   palette: string | null;
   crossZone: number;
+
+  viewboxOn: boolean;
+  viewboxX: number;
+  viewboxY: number;
+  viewboxW: number;
+  viewboxH: number;
 }
 
 export const legacyConfig: LegacyConfig = {
@@ -85,9 +90,6 @@ export const legacyConfig: LegacyConfig = {
   },
   get activityNoise() {
     return store.get("analysis.activityNoise");
-  },
-  get hueOffset() {
-    return store.get("analysis.hueOffset") as number ?? 0;
   },
   get sparkLen() {
     return store.get("global.sparkLen");
@@ -180,4 +182,10 @@ export const legacyConfig: LegacyConfig = {
   get crossZone() {
     return store.get("harmony.crossZone");
   },
+
+  get viewboxOn() { return store.get("view.viewboxOn"); },
+  get viewboxX()  { return store.get("view.viewboxX"); },
+  get viewboxY()  { return store.get("view.viewboxY"); },
+  get viewboxW()  { return store.get("view.viewboxW"); },
+  get viewboxH()  { return store.get("view.viewboxH"); },
 };

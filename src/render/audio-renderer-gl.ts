@@ -14,6 +14,17 @@
  *   opts.noiseScale — noise spatial scale (default 2.5)
  */
 
+// ── Hue helpers ───────────────────────────────────────────────────────────────
+
+// Shortest-arc lerp in display hue space (0–360). Ensures interpolation always
+// goes the short way around the circle — critical for slot 0 which straddles 0°.
+function _hueArcLerp(a: number, b: number, t: number): number {
+  let d = b - a;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return ((a + d * t) % 360 + 360) % 360;
+}
+
 // ── oklch → linear sRGB ───────────────────────────────────────────────────────
 function oklchToLinearRGB(
   L: number,
@@ -68,7 +79,6 @@ uniform float uBri;
 uniform float uSpread;
 uniform float uAct;
 uniform float uBandLo;
-uniform float uBandHi;
 uniform float uPulse;
 uniform float uFeedback;
 uniform float uBlobWarp;
@@ -78,6 +88,7 @@ uniform float uBlobSize;
 uniform float uBlobSharp;
 uniform float uShiftSpeed;
 uniform float uPulseReactivity;
+uniform float uBriScale;
 uniform float uTilt;
 uniform float uPos;
 uniform float uCtr;
@@ -109,12 +120,12 @@ void main() {
   float aspect = uRes.x / uRes.y;
   vec2 uvA = vec2(uv.x * aspect, uv.y);
 
-  // Activity speeds everything up
-  float tSpeed = 1.0 + uAct * 1.2;
-  float t = uTime * tSpeed;
+  // Activity speeds everything up; chord-change pulse adds a velocity burst
+  float tSpeed = uBlobSpeed + uAct * uBlobDrive;
+  float t = uTime * (tSpeed + uPulse * uShiftSpeed);
 
   // Organic edge warp — small noise displacement before distance test
-  float warpAmt = 0.022 + uAct * 0.014;
+  float warpAmt = uBlobWarp + uAct * 0.014;
   vec2 uvW = uvA + vec2(
     snoise(uv * 2.8 + vec2(t * 0.09, 0.0)),
     snoise(uv * 2.8 + vec2(0.0, t * 0.09 + 5.7))
@@ -137,21 +148,25 @@ void main() {
 
     float fi   = float(i);
     float seed = fi * 1.618;
-    float r    = (0.20 + presence * 0.10) * aspect; // scale r with aspect
+    float r    = (uBlobSize + presence * 0.10) * aspect;
+
+    // Spread widens the Lissajous orbits: focused chord → tight cluster, rich → wide scatter
+    float orbitA = 0.22 + uSpread * 0.20;
+    float orbitB = orbitA * 0.83;
 
     // Blob A — primary, slow Lissajous + secondary wobble
     vec2 cA = vec2(
-      posShift + 0.5 * aspect + 0.36 * aspect * sin(t * (0.088 + fi * 0.019) + seed)
+      posShift + 0.5 * aspect + orbitA * aspect * sin(t * (0.088 + fi * 0.019) + seed)
                               + 0.07 * aspect * sin(t * (0.23  + fi * 0.041) + seed + 2.4),
-      0.5 + tiltOffset        + 0.36 * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
+      0.5 + tiltOffset        + orbitA * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
                               + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1)
     );
 
     // Blob B — secondary, offset phase so they separate and merge
     vec2 cB = vec2(
-      posShift + 0.5 * aspect + 0.30 * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
+      posShift + 0.5 * aspect + orbitB * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
                               + 0.06 * aspect * sin(t * (0.31  + fi * 0.017) + seed + 0.8),
-      0.5 + tiltOffset        + 0.30 * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
+      0.5 + tiltOffset        + orbitB * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
                               + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0)
     );
 
@@ -187,18 +202,17 @@ void main() {
   // Background glow — centered at (pos, tilt), chord-tinted, BRI-driven
   // tilt=0 maps to top of screen (GL y=1); tilt=1 to bottom (GL y=0)
   vec3 bgColor = totalField > 0.001 ? totalColor / totalField : vec3(0.0);
-  float bgX   = uvA.x - uPos * aspect;
-  float bgY   = uv.y - (1.0 - uTilt);
-  float bgGlow = exp(-(bgX * bgX + bgY * bgY) * 2.5) * uBri * 0.4;
+  float bgDist = dot(uvA, uvA);
+  float bgGlow = exp(-bgDist * 2.5) * (uBri + uBandLo * 0.3) * 0.4;
 
   vec3 bgBase = prev.rgb * uFeedback + bgColor * bgGlow;
   vec3 base = mix(bgBase, blobColor, newAmount);
 
   // ── Brightness ───────────────────────────────────────────────────────────
-  float bScale = uBri * 5.0;
+  float bScale = uBri * uBriScale;
   base *= clamp(max(bScale, newAmount * 0.55), 0.0, 1.0);
   float briOver = max(0.0, bScale - 1.0);
-  base += mix(vec3(1.0), blobColor, 0.5) * briOver * 0.4;
+  base += blobColor * briOver * 0.5;
 
   // ── Band-driven pulse blobs ───────────────────────────────────────────────
   // Soft Gaussian glows on independent Lissajous paths (distinct phase from
@@ -289,6 +303,7 @@ export class AudioRendererGL {
   private _blobSharpVal = 0.4;
   private _shiftSpeedVal = 1.5;
   private _pulseReactivityVal = 1.0;
+  private _briScaleVal = 1.5;
   private readonly _gl: WebGL2RenderingContext;
   private readonly _progCache: Map<
     number,
@@ -353,6 +368,7 @@ export class AudioRendererGL {
     gl.uniform1f(this._u.uBlobSharp, this._blobSharpVal);
     gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
     gl.uniform1f(this._u.uPulseReactivity, this._pulseReactivityVal);
+    gl.uniform1f(this._u.uBriScale, this._briScaleVal);
 
     this._startT = performance.now();
     this.resize();
@@ -391,6 +407,9 @@ export class AudioRendererGL {
   }
   setPulseReactivity(v: number): void {
     this._setAll("uPulseReactivity", (this._pulseReactivityVal = v));
+  }
+  setBriScale(v: number): void {
+    this._setAll("uBriScale", (this._briScaleVal = v));
   }
 
   private _setAll(name: string, v: number): void {
@@ -431,6 +450,7 @@ export class AudioRendererGL {
     gl.uniform1f(this._u.uBlobSharp, this._blobSharpVal);
     gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
     gl.uniform1f(this._u.uPulseReactivity, this._pulseReactivityVal);
+    gl.uniform1f(this._u.uBriScale, this._briScaleVal);
   }
 
   /** Resize canvas backing store to CSS px × min(2, dpr). Re-allocates textures. */
@@ -468,9 +488,8 @@ export class AudioRendererGL {
     if (N !== this._activeN) this.setN(N);
 
     // Top-2 slots: winner always shows; runner-up shows only if it scores
-    // ≥65% of winner. This lets adjacent crossZone blending appear (both
-    // slots genuinely active when hue is at a boundary) while preventing
-    // acoustically similar but hue-distant slots from bleeding in.
+    // ≥80% of winner (tight threshold keeps colors clean — only genuine
+    // boundary crossings between adjacent palette slots show two blobs).
     let winner = 0,
       runnerUp = -1;
     let winnerScore = 0,
@@ -486,13 +505,13 @@ export class AudioRendererGL {
         runnerScore = frame.slots[i];
       }
     }
-    const runnerThreshold = winnerScore * 0.65;
+    const runnerThreshold = winnerScore * 0.80;
     for (let i = 0; i < N; i++) {
       let target = 0;
       if (i === winner) target = winnerScore;
       else if (i === runnerUp && runnerScore >= runnerThreshold)
         target = runnerScore;
-      this._slotWeights[i] += (target - this._slotWeights[i]) * 0.12;
+      this._slotWeights[i] += (target - this._slotWeights[i]) * 0.3;
     }
 
     this._fillDegreeRGB(frame.slotHues, frame.slotBoundaryHues, frame.bandClarity ?? 0);
@@ -506,9 +525,9 @@ export class AudioRendererGL {
     gl.uniform1f(u.uSpread, frame.spread);
     gl.uniform1f(u.uAct, frame.act);
     gl.uniform1f(u.uBandLo, frame.bands.lo);
-    gl.uniform1f(u.uBandHi, frame.bands.hi);
     gl.uniform1f(u.uPulse, this._pulse);
     gl.uniform1f(u.uPulseReactivity, this._pulseReactivityVal);
+    gl.uniform1f(u.uBriScale, this._briScaleVal);
     gl.uniform1f(u.uTilt, frame.tilt ?? 0.5);
     gl.uniform1f(u.uPos, frame.pos ?? 0.5);
     gl.uniform1f(u.uCtr, frame.ctr ?? 0);
@@ -600,7 +619,6 @@ export class AudioRendererGL {
       "uSpread",
       "uAct",
       "uBandLo",
-      "uBandHi",
       "uPulse",
       "uFeedback",
       "uBlobWarp",
@@ -610,6 +628,10 @@ export class AudioRendererGL {
       "uBlobSharp",
       "uShiftSpeed",
       "uPulseReactivity",
+      "uBriScale",
+      "uTilt",
+      "uPos",
+      "uCtr",
       "uDegreeRGB2",
       "uPrev",
     ];
@@ -691,9 +713,12 @@ export class AudioRendererGL {
       // unwrap it so the gradient direction is always forward.
       const hRightFull = hRightRaw < hLeftFull ? hRightRaw + 360 : hRightRaw;
       // Squeeze edges toward center hue when bandClarity is high.
+      // Use shortest-arc lerp — slot 0 straddles the display-space 0°/360° wrap,
+      // so linear arithmetic would go the wrong way around the circle.
       const squeeze = bandClarity * 0.85;
-      const hLeft  = hLeftFull  + (center - hLeftFull)  * squeeze;
-      const hRight = hRightFull - (hRightFull - center) * squeeze;
+      const hRightNorm = ((hRightFull % 360) + 360) % 360;
+      const hLeft  = _hueArcLerp(hLeftFull, center, squeeze);
+      const hRight = _hueArcLerp(hRightNorm, center, squeeze);
       const [r, g, b] = oklchToLinearRGB(0.65, 0.32, toPerceptual(hLeft));
       const [r2, g2, b2] = oklchToLinearRGB(0.72, 0.28, toPerceptual(hRight));
       buf[i * 3] = r;

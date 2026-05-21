@@ -77,6 +77,13 @@ function sanitize(obj: unknown): Partial<Settings> {
       (field.options as readonly string[]).includes(v)
     ) {
       (out as Record<string, unknown>)[k] = v;
+    } else if (
+      (field.kind as string) === "select" &&
+      typeof v === "string" &&
+      "options" in field &&
+      (field.options as readonly string[]).includes(v)
+    ) {
+      (out as Record<string, unknown>)[k] = v;
     } else if ((field.kind as string) === "json") {
       (out as Record<string, unknown>)[k] = v;
     }

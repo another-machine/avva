@@ -209,14 +209,6 @@ export class Palette {
         for (let pi = 0; pi < n; pi++) {
           vec[pcs[pi]] = (n - pi) / n;
         }
-        // Overtone bleed scaled to each note's positional weight.
-        for (let pi = 0; pi < n; pi++) {
-          const baseW = (n - pi) / n;
-          const h3 = (pcs[pi] + 7) % 12;
-          const h5 = (pcs[pi] + 4) % 12;
-          if (vec[h3] < baseW * 0.4) vec[h3] = baseW * 0.4;
-          if (vec[h5] < baseW * 0.15) vec[h5] = baseW * 0.15;
-        }
         let normSq = 0;
         for (let c = 0; c < 12; c++) normSq += vec[c] * vec[c];
         const keyStr = pcs

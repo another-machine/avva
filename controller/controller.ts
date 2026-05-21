@@ -36,7 +36,7 @@ const ASSET_FILES = Object.keys(
 
 const STAGE_GROUPS: Record<string, string[]> = {
   videoAnalysis:   ["calibration", "analysis"],
-  soundSynthesis:  ["synth", "cassette"],
+  soundSynthesis:  ["synth", "waveforms", "octaves", "effects"],
   audioAnalysis:   ["audioAnalysis"],
   visualSynthesis: ["visualSynthesis"],
 };
@@ -105,7 +105,6 @@ document.addEventListener("keydown", (e) => {
 
 // ── Optional WS relay from URL param ─────────────────────────────────────────
 
-const wsStatusEl = document.getElementById("ws-status") as HTMLElement;
 const wsUrlInput = document.getElementById("ws-url") as HTMLInputElement;
 const wsConnectBtn = document.getElementById("ws-connect") as HTMLButtonElement;
 
@@ -114,85 +113,31 @@ let stopWs: (() => void) | null = null;
 function connectWs(url: string): void {
   stopWs?.();
   stopWs = null;
-
   if (!url.trim()) return;
-
-  // Validate URL before connecting
-  try {
-    new URL(url);
-  } catch {
-    wsStatusEl.textContent = "invalid URL";
-    wsStatusEl.className = "ctrl-header__status ws-error";
-    return;
-  }
-
+  try { new URL(url); } catch { return; }
   stopWs = startWebSocketSync(url);
-  wsStatusEl.textContent = `WS: ${url}`;
-  wsStatusEl.className = "ctrl-header__status ws-connected";
-  wsConnectBtn.textContent = "Disconnect";
   wsConnectBtn.classList.add("active");
   wsUrlInput.value = url;
-
-  // Persist so a page refresh reconnects automatically
-  try {
-    sessionStorage.setItem("avva.relay", url);
-  } catch {
-    /* ignore */
-  }
+  try { sessionStorage.setItem("avva.relay", url); } catch { /* ignore */ }
 }
 
 function disconnectWs(): void {
   stopWs?.();
   stopWs = null;
-  wsStatusEl.textContent = "BC";
-  wsStatusEl.className = "ctrl-header__status";
-  wsConnectBtn.textContent = "Connect";
   wsConnectBtn.classList.remove("active");
-  try {
-    sessionStorage.removeItem("avva.relay");
-  } catch {
-    /* ignore */
-  }
+  try { sessionStorage.removeItem("avva.relay"); } catch { /* ignore */ }
 }
 
-// URL param or sessionStorage reconnect
 const initialRelay =
   new URLSearchParams(location.search).get("relay") ??
-  (() => {
-    try {
-      return sessionStorage.getItem("avva.relay");
-    } catch {
-      return null;
-    }
-  })();
+  (() => { try { return sessionStorage.getItem("avva.relay"); } catch { return null; } })();
 if (initialRelay) {
   wsUrlInput.value = initialRelay;
   connectWs(initialRelay);
-} else {
-  wsStatusEl.textContent = "BC";
 }
 
-wsConnectBtn.addEventListener("click", () => {
-  if (stopWs) {
-    disconnectWs();
-  } else {
-    connectWs(wsUrlInput.value.trim());
-  }
-});
-
-wsUrlInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") connectWs(wsUrlInput.value.trim());
-});
-
-// Copy-URL button
-document.getElementById("copy-url-btn")?.addEventListener("click", () => {
-  const url = stopWs
-    ? `${location.origin}${location.pathname}?relay=${encodeURIComponent(wsUrlInput.value)}`
-    : location.href;
-  navigator.clipboard.writeText(url).catch(() => {
-    /* ignore */
-  });
-});
+wsConnectBtn.addEventListener("click", () => { stopWs ? disconnectWs() : connectWs(wsUrlInput.value.trim()); });
+wsUrlInput.addEventListener("keydown", (e) => { if (e.key === "Enter") connectWs(wsUrlInput.value.trim()); });
 
 // ── Build UI ──────────────────────────────────────────────────────────────────
 
@@ -471,7 +416,7 @@ function buildSettingsPanel(container: HTMLElement): void {
   const { section: viewSec, body: viewBody } = _spSection("VIEW");
   const viewBtns = document.createElement("div");
   viewBtns.className = "ctrl ctrl--enum";
-  for (const [key, label] of [["view.mirror", "mirror"], ["view.heatOn", "heat"], ["view.tiltOn", "tilt"]] as const) {
+  for (const [key, label] of [["view.mirror", "mirror"], ["view.heatOn", "heat"], ["view.tiltOn", "tilt"], ["view.maskOn", "mask"]] as const) {
     const btn = document.createElement("button");
     btn.className = "seg-btn" + (store.get(key) ? " active" : "");
     btn.textContent = label;
@@ -480,6 +425,42 @@ function buildSettingsPanel(container: HTMLElement): void {
     viewBtns.appendChild(btn);
   }
   viewBody.appendChild(_spRow("Display", viewBtns));
+
+  // Viewbox x/y/w/h — compact range sliders styled like meter bars
+  const vboxGrid = document.createElement("div");
+  vboxGrid.className = "vbox-grid";
+  for (const [key, abbr, mn, mx] of [
+    ["view.viewboxX", "X", 0, 1],
+    ["view.viewboxY", "Y", 0, 1],
+    ["view.viewboxW", "W", 0.05, 1],
+    ["view.viewboxH", "H", 0.05, 1],
+  ] as [string, string, number, number][]) {
+    const cell = document.createElement("div");
+    cell.className = "vbox-cell";
+    const lbl = document.createElement("span");
+    lbl.className = "vbox-cell__lbl";
+    lbl.textContent = abbr;
+    const inp = document.createElement("input");
+    inp.type = "range";
+    inp.min = String(mn); inp.max = String(mx); inp.step = "0.01";
+    const curVal = store.get(key as SchemaKey) as number ?? mx;
+    inp.value = String(curVal);
+    const valSpan = document.createElement("span");
+    valSpan.className = "vbox-cell__val";
+    valSpan.textContent = curVal.toFixed(2);
+    inp.addEventListener("input", () => {
+      const v = Number(inp.value);
+      valSpan.textContent = v.toFixed(2);
+      store.set(key as SchemaKey, v as never);
+    });
+    store.subscribeKey(key as SchemaKey, (v) => {
+      inp.value = String(v);
+      valSpan.textContent = (v as number).toFixed(2);
+    });
+    cell.append(lbl, inp, valSpan);
+    vboxGrid.appendChild(cell);
+  }
+  viewBody.appendChild(_spRow("Viewbox", vboxGrid));
   container.appendChild(viewSec);
 
   // ── SYNTH ─────────────────────────────────────────────────────────────────
@@ -509,20 +490,37 @@ function buildSettingsPanel(container: HTMLElement): void {
     opt.value = n; opt.textContent = n;
     rootSelect.appendChild(opt);
   }
-  const getActiveNote = () => Math.round(((store.get("harmony.rootHue") as number) ?? 0) / 30) % 12;
-  rootSelect.value = NOTE_NAMES[getActiveNote()];
+  rootSelect.value = String(store.get("harmony.root") ?? "C");
   rootSelect.addEventListener("change", () => {
-    const i = NOTE_NAMES.indexOf(rootSelect.value as typeof NOTE_NAMES[number]);
-    if (i >= 0) {
-      store.set("harmony.rootHue", i * 30);
-      store.set("harmony.root", rootSelect.value as never);
-    }
+    store.set("harmony.root", rootSelect.value as never);
   });
-  store.subscribeKey("harmony.rootHue", (v) => {
-    const i = Math.round(((v as number) ?? 0) / 30) % 12;
-    rootSelect.value = NOTE_NAMES[i];
+  store.subscribeKey("harmony.root", (v) => {
+    rootSelect.value = String(v ?? "C");
   });
   harmBody.appendChild(_spRow("Root", rootSelect));
+
+  const rhField = SCHEMA["harmony.rootHue"];
+  const rhWrap = document.createElement("div");
+  rhWrap.className = "sp-range-wrap";
+  const rhInput = document.createElement("input");
+  rhInput.type = "range";
+  rhInput.min = String(rhField.min); rhInput.max = String(rhField.max);
+  rhInput.step = String(rhField.step);
+  rhInput.value = String(store.get("harmony.rootHue") ?? 0);
+  const rhOut = document.createElement("output");
+  rhOut.textContent = fmtNum(store.get("harmony.rootHue") as number ?? 0, rhField.step) + "°";
+  rhInput.addEventListener("input", () => {
+    const v = Number(rhInput.value);
+    rhOut.textContent = fmtNum(v, rhField.step) + "°";
+    store.set("harmony.rootHue", v);
+  });
+  rhInput.addEventListener("dblclick", () => store.reset("harmony.rootHue"));
+  store.subscribeKey("harmony.rootHue", (v) => {
+    rhInput.value = String(v);
+    rhOut.textContent = fmtNum(v as number ?? 0, rhField.step) + "°";
+  });
+  rhWrap.append(rhInput, rhOut);
+  harmBody.appendChild(_spRow("Root hue", rhWrap));
 
   const scaleSelect = document.createElement("select");
   scaleSelect.className = "sp-select";

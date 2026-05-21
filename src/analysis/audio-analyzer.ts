@@ -382,12 +382,14 @@ export class AudioAnalyzer {
     this._posSmooth += (rawPos - this._posSmooth) * 0.15;
 
     // ── Full-band loudness ────────────────────────────────────────────────────
-    // Cap at 10 kHz: with fftSize=32768 most bins above 10 kHz are empty for
-    // synth content, so summing all 16 384 bins produces an ~8× underestimate.
+    // Cap at 10 kHz. For tonal (synth) content only a tiny fraction of bins
+    // carry energy, so dividing by all briBinMax bins produces a ~90× underestimate.
+    // Dividing by (briBinMax * 2) corrects for ~1% active bin density while
+    // still scaling gracefully for broadband (mic/voice) input.
     const briBinMax = Math.min(data.length, Math.ceil(10000 / this._binHz));
     let briSum = 0;
     for (let i = 0; i < briBinMax; i++) briSum += data[i];
-    const bri = Math.min(1, briSum / (briBinMax * 180));
+    const bri = Math.min(1, briSum / (briBinMax * 4));
     const hasSignal = bri > 0.015;
 
     // ── Hue: weighted circular mean of chroma (static pc*30 hue space) ────────

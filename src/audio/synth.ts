@@ -390,7 +390,7 @@ export class Synth {
     const safeLo = clamp01(lo);
 
     // ── Palette chord data ───────────────────────────────────
-    const baseOctave = this._cfg.octave ?? 4;
+    const baseOctave = 4;
     const blend = palette.hueToBlend(safeHue);
     const primarySlot = blend[0].slot;
     const secEntry = blend.length > 1 ? blend[1] : null;
@@ -413,9 +413,9 @@ export class Synth {
 
     // ── Per-tier octave offsets ──────────────────────────────────
     const tierOctaveOffsets = [
-      this._cfg.octaveOffsetBass ?? -1,
-      this._cfg.octaveOffsetMid ?? 0,
-      this._cfg.octaveOffsetTreble ?? 1,
+      (this._cfg.octaveOffsetBass ?? 3) - 4,
+      (this._cfg.octaveOffsetMid ?? 4) - 4,
+      (this._cfg.octaveOffsetTreble ?? 5) - 4,
     ] as const;
 
     // ── Carrier waveforms (per-tier + pluck) ────────────────────────
@@ -708,15 +708,13 @@ export class Synth {
     const modDecayTau = ampDecayTau * (0.04 + flux * 0.14);
 
     let fc: number, pluckPan: number;
-    const baseOctave = this._cfg.octave ?? 4;
-    const pluckOctaveOffset = this._cfg.octaveOffsetPluck ?? 1;
+    const pluckAbsoluteOctave = this._cfg.octaveOffsetPluck ?? 5;
 
     if (this.palette) {
       const pcs = note._palettePrimary.chord.pitchClasses;
       const nUnlocked = Math.max(1, Math.round(1 + spread * (pcs.length - 1)));
       const chosenIdx = Math.floor(Math.random() * nUnlocked);
-      const octShift = Math.round(1 - flux * 2) + pluckOctaveOffset;
-      fc = _pcToFreq(pcs[chosenIdx], baseOctave + octShift);
+      fc = _pcToFreq(pcs[chosenIdx], pluckAbsoluteOctave + Math.round(1 - flux * 2));
       const pcFrac = pcs.length > 1 ? chosenIdx / (pcs.length - 1) : 0.5;
       pluckPan =
         (pcFrac - 0.5) * 2 * widthScale * (0.35 + spacious * 1.1) +

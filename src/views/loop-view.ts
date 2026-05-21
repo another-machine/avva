@@ -8,7 +8,7 @@ import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
 import { TelemetrySender } from "../store/telemetry.js";
-import { PRESETS, CASSETTE_PRESETS } from "../audio/presets.js";
+import { PRESETS, CASSETTE_PRESETS, FM_PRESETS, GLIDE_PRESETS, ARTICULATION_PRESETS } from "../audio/presets.js";
 import { Pipeline } from "../pipeline/pipeline.js";
 
 // ── HTML template ─────────────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ const LOOP_HTML = /* html */ `
       <video id="vid" playsinline muted></video>
       <canvas id="heat" class="canvas-layer"></canvas>
       <canvas id="tilt" class="canvas-layer"></canvas>
+      <canvas id="mask" class="canvas-layer"></canvas>
     </div>
   </div>
   <div id="gate" class="hide">
@@ -39,7 +40,9 @@ let videoSource: any, vidAnalyzer: any, calibration: any;
 let synth: any;
 let heatCtx: CanvasRenderingContext2D | null = null;
 let tiltCanvas: HTMLCanvasElement | null = null;
+let maskCanvas: HTMLCanvasElement | null = null;
 let tiltOn = false;
+let maskOn = false;
 let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
 let palette: Palette | null = null;
@@ -79,6 +82,37 @@ function _drawTiltOverlay(canvas: HTMLCanvasElement, tilt: number): void {
   ctx.stroke();
 }
 
+// ── Mask overlay ──────────────────────────────────────────────────────────────
+
+function _drawMaskOverlay(canvas: HTMLCanvasElement): void {
+  const r = canvas.getBoundingClientRect();
+  if (r.width === 0) return;
+  if (canvas.width !== Math.round(r.width) || canvas.height !== Math.round(r.height)) {
+    canvas.width = Math.round(r.width);
+    canvas.height = Math.round(r.height);
+  }
+  const ctx = canvas.getContext("2d")!;
+  const w = canvas.width, h = canvas.height;
+  const vx  = store.get("view.viewboxX") as number ?? 0;
+  const vy  = store.get("view.viewboxY") as number ?? 0;
+  const vbw = store.get("view.viewboxW") as number ?? 1;
+  const vbh = store.get("view.viewboxH") as number ?? 1;
+  const cx = Math.round(vx * w);
+  const cy = Math.round(vy * h);
+  const cw = Math.max(1, Math.round(Math.min(vbw, 1 - vx) * w));
+  const ch = Math.max(1, Math.round(Math.min(vbh, 1 - vy) * h));
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
+  ctx.fillRect(0, 0, w, h);
+  ctx.clearRect(cx, cy, cw, ch);
+}
+
+function _clearMask(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext("2d");
+  ctx?.clearRect(0, 0, canvas.width, canvas.height);
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function begin(): Promise<void> {
@@ -93,7 +127,7 @@ async function begin(): Promise<void> {
 
   const defaultPaletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
   palette = Palette.fromURLParam(defaultPaletteStr, {
-    rootHue: 0,
+    rootHue: store.get("harmony.rootHue") as number ?? 0,
     crossZone: CONFIG.crossZone,
   });
 
@@ -130,7 +164,10 @@ async function begin(): Promise<void> {
   heatCtx.imageSmoothingEnabled = false;
 
   tiltCanvas = document.getElementById("tilt") as HTMLCanvasElement;
+  maskCanvas = document.getElementById("mask") as HTMLCanvasElement;
   tiltOn = !!store.get("view.tiltOn");
+  maskOn = !!store.get("view.maskOn");
+  videoEl.playbackRate = store.get("source.playbackRate") as number;
 
   telemetry = new TelemetrySender();
 
@@ -148,7 +185,13 @@ async function begin(): Promise<void> {
       root.style.setProperty("--accent-h", f.out.hue.toFixed(1));
       if (f.heatImageData && heatCtx) heatCtx.putImageData(f.heatImageData, 0, 0);
       if (tiltOn && tiltCanvas) _drawTiltOverlay(tiltCanvas, f.out.tilt);
+      if (maskOn && maskCanvas) _drawMaskOverlay(maskCanvas);
       synth.update(f.out);
+      if (synth._master && synth._actx) {
+        const dimScale = Math.min(1, f.out.bri / 0.1);
+        const userGain = store.get("synth.masterGain") as number;
+        synth._master.gain.setTargetAtTime(userGain * dimScale, synth._actx.currentTime, 0.08);
+      }
       return synth.lastControls;
     },
     runAudio: () => {
@@ -167,6 +210,14 @@ async function begin(): Promise<void> {
     noiseScale: CONFIG.blobWarp,
   });
   audioRenderer.setN(palette.slots.length);
+  // Sync all visual synthesis store values — subscribeKey doesn't fire on init
+  audioRenderer.setBlobSpeed(store.get("audio.blobSpeed") as number);
+  audioRenderer.setBlobDrive(store.get("audio.blobDrive") as number);
+  audioRenderer.setShiftSpeed(store.get("audio.shiftSpeed") as number);
+  audioRenderer.setBlobSize(store.get("audio.blobSize") as number);
+  audioRenderer.setBlobSharp(store.get("audio.blobSharp") as number);
+  audioRenderer.setPulseReactivity(store.get("audio.pulseReactivity") as number);
+  audioRenderer.setBriScale(store.get("audio.briScale") as number);
 
   document.getElementById("gate")?.classList.add("hide");
 
@@ -182,7 +233,7 @@ async function begin(): Promise<void> {
   });
 
   store.subscribeKey("synth.masterGain", (v) => {
-    if (synth._master) synth._master.gain.value = v;
+    if (synth._master) synth._master.gain.value = v as number;
   });
 
   store.subscribeKey("view.heatOn", (v) => {
@@ -205,11 +256,19 @@ async function begin(): Promise<void> {
     tiltCanvas?.classList.toggle("mirror", v);
   });
 
+  store.subscribeKey("view.maskOn", (v) => {
+    maskOn = !!v;
+    if (!v && maskCanvas) _clearMask(maskCanvas);
+  });
+  store.subscribeKey("view.viewboxOn", () => {
+    // viewboxOn is read live in analyze(); no extra action needed here
+  });
+
   store.subscribeKey("harmony.palette", () => {
     const paletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
     try {
       palette = Palette.fromURLParam(paletteStr as string, {
-        rootHue: 0,
+        rootHue: store.get("harmony.rootHue") as number ?? 0,
         crossZone: CONFIG.crossZone,
       });
     } catch {
@@ -220,6 +279,10 @@ async function begin(): Promise<void> {
       audioAnalyzer?.setPalette(palette);
       if (audioRenderer) audioRenderer.setN(palette.slots.length);
     }
+  });
+
+  store.subscribeKey("harmony.rootHue", (v) => {
+    palette?.setRootHue(v as number);
   });
 
   store.subscribeKey("harmony.crossZone", (v) => {
@@ -250,6 +313,9 @@ async function begin(): Promise<void> {
   store.subscribeKey("audio.pulseReactivity", (v) => {
     audioRenderer?.setPulseReactivity(v);
   });
+  store.subscribeKey("audio.briScale", (v) => {
+    audioRenderer?.setBriScale(v);
+  });
 
   store.subscribeKey("synth.preset", (name) => {
     if (name === "custom") return;
@@ -260,8 +326,28 @@ async function begin(): Promise<void> {
     }
   });
   store.subscribeKey("cassette.preset", (name) => {
-    if (name === "custom") return;
     const preset = CASSETTE_PRESETS[name as string];
+    if (!preset) return;
+    for (const [k, v] of Object.entries(preset)) {
+      store.set(k as any, v as any);
+    }
+  });
+  store.subscribeKey("synth.fmPreset", (name) => {
+    const preset = FM_PRESETS[name as string];
+    if (!preset) return;
+    for (const [k, v] of Object.entries(preset)) {
+      store.set(k as any, v as any);
+    }
+  });
+  store.subscribeKey("synth.glidePreset", (name) => {
+    const preset = GLIDE_PRESETS[name as string];
+    if (!preset) return;
+    for (const [k, v] of Object.entries(preset)) {
+      store.set(k as any, v as any);
+    }
+  });
+  store.subscribeKey("synth.articulationPreset", (name) => {
+    const preset = ARTICULATION_PRESETS[name as string];
     if (!preset) return;
     for (const [k, v] of Object.entries(preset)) {
       store.set(k as any, v as any);
@@ -323,6 +409,11 @@ async function begin(): Promise<void> {
   vidAnalyzer.heatOn = store.get("view.heatOn");
   heat.style.setProperty("--heat-opacity", store.get("view.heatOn") ? "0.55" : "0");
   tiltCanvas.style.setProperty("--tilt-opacity", store.get("view.tiltOn") ? "1" : "0");
+  maskOn = !!store.get("view.maskOn");
+  _applyCassette();
+  for (const [k, v] of Object.entries(FM_PRESETS[store.get("synth.fmPreset") as string] ?? {})) store.set(k as any, v as any);
+  for (const [k, v] of Object.entries(GLIDE_PRESETS[store.get("synth.glidePreset") as string] ?? {})) store.set(k as any, v as any);
+  for (const [k, v] of Object.entries(ARTICULATION_PRESETS[store.get("synth.articulationPreset") as string] ?? {})) store.set(k as any, v as any);
 
   (window as any)._avva = {
     synth,

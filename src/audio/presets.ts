@@ -8,7 +8,96 @@
 
 import type { Settings } from "../store/schema.js";
 
+export const FM_PRESETS: Record<string, Partial<Settings>> = {
+  none: {
+    "synth.fmIndexBase": 0,
+    "synth.fmIndexScale": 0,
+    "synth.fmRatioDrift": 0,
+    "synth.fmStereoWidth": 0,
+    "synth.fmPluckRatio": 1,
+  },
+  subtle: {
+    "synth.fmIndexBase": 0.05,
+    "synth.fmIndexScale": 0.8,
+    "synth.fmRatioDrift": 0.01,
+    "synth.fmStereoWidth": 0.3,
+    "synth.fmPluckRatio": 2,
+  },
+  warm: {
+    "synth.fmIndexBase": 0.15,
+    "synth.fmIndexScale": 2.4,
+    "synth.fmRatioDrift": 0.04,
+    "synth.fmStereoWidth": 0.75,
+    "synth.fmPluckRatio": 2,
+  },
+  bright: {
+    "synth.fmIndexBase": 0.3,
+    "synth.fmIndexScale": 4.5,
+    "synth.fmRatioDrift": 0.08,
+    "synth.fmStereoWidth": 0.9,
+    "synth.fmPluckRatio": 3,
+  },
+  harsh: {
+    "synth.fmIndexBase": 0.8,
+    "synth.fmIndexScale": 7.0,
+    "synth.fmRatioDrift": 0.15,
+    "synth.fmStereoWidth": 1.0,
+    "synth.fmPluckRatio": 5,
+  },
+};
+
+export const GLIDE_PRESETS: Record<string, Partial<Settings>> = {
+  none: {
+    "synth.glideMin": 0.001,
+    "synth.glideMax": 0.001,
+    "synth.glideSpread": 0,
+  },
+  tight: {
+    "synth.glideMin": 0.005,
+    "synth.glideMax": 0.3,
+    "synth.glideSpread": 0.5,
+  },
+  smooth: {
+    "synth.glideMin": 0.01,
+    "synth.glideMax": 2.0,
+    "synth.glideSpread": 1.0,
+  },
+  slow: {
+    "synth.glideMin": 0.05,
+    "synth.glideMax": 5.0,
+    "synth.glideSpread": 2.0,
+  },
+};
+
+export const ARTICULATION_PRESETS: Record<string, Partial<Settings>> = {
+  none: {
+    "synth.articulation": 0,
+    "synth.pulseRate": 0,
+  },
+  light: {
+    "synth.articulation": 0.3,
+    "synth.pulseRate": 0,
+  },
+  plucks: {
+    "synth.articulation": 1.0,
+    "synth.pulseRate": 0,
+  },
+};
+
 export const CASSETTE_PRESETS: Record<string, Partial<Settings>> = {
+  none: {
+    "cassette.midBoostDb": 0,
+    "cassette.masterLPHz": 20000,
+    "cassette.satAmount": 0,
+    "cassette.satWet": 0,
+    "cassette.tapeDelayMs": 60,
+    "cassette.tapeDelayFb": 0,
+    "cassette.tapeDelayWet": 0,
+    "cassette.reverbWet": 0,
+    "cassette.noiseGain": 0,
+    "cassette.wowDepthCents": 0,
+    "cassette.flutterDepthCents": 0,
+  },
   clean: {
     "cassette.midBoostDb": 0,
     "cassette.masterLPHz": 18000,

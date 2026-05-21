@@ -88,7 +88,21 @@ export class Analyzer {
     const W = SAMPLE_W, H = SAMPLE_H;
 
     this._ctx.filter = this._calibration?.filterString ?? "none";
-    this._ctx.drawImage(videoEl, 0, 0, W, H);
+    if (this._cfg.viewboxOn) {
+      const vw = videoEl.videoWidth  || videoEl.clientWidth  || W;
+      const vh = videoEl.videoHeight || videoEl.clientHeight || H;
+      const vx  = this._cfg.viewboxX ?? 0;
+      const vy  = this._cfg.viewboxY ?? 0;
+      const vbw = this._cfg.viewboxW ?? 1;
+      const vbh = this._cfg.viewboxH ?? 1;
+      const sx = Math.round(vx * vw);
+      const sy = Math.round(vy * vh);
+      const sw = Math.max(1, Math.round(Math.min(vbw, 1 - vx) * vw));
+      const sh = Math.max(1, Math.round(Math.min(vbh, 1 - vy) * vh));
+      this._ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, W, H);
+    } else {
+      this._ctx.drawImage(videoEl, 0, 0, W, H);
+    }
     this._ctx.filter = "none";
 
     let frame: ImageData;
@@ -131,9 +145,7 @@ export class Analyzer {
         // sqrt(s) reduces vivid-pixel dominance: muted (s=0.15) vs vivid (s=0.9)
         // goes from 6:1 bias down to ~2.4:1, so faded colors register properly.
         const w = Math.sqrt(s) * v;
-        const hOff = (this._cfg.hueOffset ?? 0);
-        const hShifted = ((h + hOff) % 360 + 360) % 360;
-        const rad = (hShifted * Math.PI) / 180;
+        const rad = (h * Math.PI) / 180;
         sumX += Math.cos(rad) * w;
         sumY += Math.sin(rad) * w;
         sumW += w;
@@ -142,7 +154,7 @@ export class Analyzer {
 
         const bin = Math.min(
           HUE_BINS - 1,
-          ((hShifted / 360) * HUE_BINS) | 0,
+          ((h / 360) * HUE_BINS) | 0,
         );
         this._histBins[bin] += w;
       }
