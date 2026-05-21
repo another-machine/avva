@@ -93,6 +93,10 @@ uniform float uTilt;
 uniform float uPos;
 uniform float uCtr;
 uniform vec3  uDegreeRGB2[N_HUES];
+// Per-slot signed edge bias in [-1, +1]. -1 pulls the blob's gradient mix
+// toward the slot's left-boundary color, +1 toward the right-boundary color.
+// Derived from where the continuous audio hue sits within / next to each slot.
+uniform float uSlotEdge[N_HUES];
 uniform sampler2D uPrev;
 
 vec2 _h2(vec2 p) {
@@ -180,8 +184,12 @@ void main() {
     totalField   += contrib;
     // Organic gradient: tilt pushes blend toward uDegreeRGB2 (boundary color)
     // at high tilt (treble-dominant), noise provides base organic movement.
+    // Edge bias slides the blob's gradient toward whichever side of the
+    // slot's hue arc the heard chroma is closest to (per-slot signed shift).
     float blend = clamp(
-      snoise(uvW * 1.8 + vec2(fi * 7.31 + t * 0.02, fi * 2.17)) * 0.5 + 0.5 + uTilt * 0.3 - 0.15,
+      snoise(uvW * 1.8 + vec2(fi * 7.31 + t * 0.02, fi * 2.17)) * 0.5 + 0.5
+        + uTilt * 0.3 - 0.15
+        + uSlotEdge[i] * 0.4,
       0.0, 1.0);
     totalColor   += mix(uDegreeRGB[i], uDegreeRGB2[i], blend) * contrib;
   }
@@ -317,6 +325,7 @@ export class AudioRendererGL {
   private _degreeRGBBuf: Float32Array;
   private _degreeRGB2Buf: Float32Array;
   private _slotWeights: Float32Array;
+  private _slotEdgeBuf: Float32Array;
   private _pulse = 0;
   private readonly _startT: number;
   private _w = 0;
@@ -354,6 +363,7 @@ export class AudioRendererGL {
     this._degreeRGBBuf = new Float32Array(7 * 3);
     this._degreeRGB2Buf = new Float32Array(7 * 3);
     this._slotWeights = new Float32Array(7);
+    this._slotEdgeBuf = new Float32Array(7);
     this._fillDegreeRGB(degreeHues);
 
     this._vao = gl.createVertexArray()!;
@@ -439,6 +449,7 @@ export class AudioRendererGL {
     this._degreeRGBBuf = new Float32Array(n * 3);
     this._degreeRGB2Buf = new Float32Array(n * 3);
     this._slotWeights = new Float32Array(n);
+    this._slotEdgeBuf = new Float32Array(n);
     const gl = this._gl;
     gl.useProgram(this._prog);
     gl.uniform2f(this._u.uRes, this._w, this._h);
@@ -514,6 +525,15 @@ export class AudioRendererGL {
       this._slotWeights[i] += (target - this._slotWeights[i]) * 0.3;
     }
 
+    // Smooth per-slot edge bias so blob color doesn't pop when audio.hue
+    // crosses a boundary. Uses the same EMA factor as slot weights.
+    if (frame.slotEdge && this._slotEdgeBuf.length === N) {
+      for (let i = 0; i < N; i++) {
+        const target = frame.slotEdge[i] ?? 0;
+        this._slotEdgeBuf[i] += (target - this._slotEdgeBuf[i]) * 0.2;
+      }
+    }
+
     this._fillDegreeRGB(frame.slotHues, frame.slotBoundaryHues, frame.bandClarity ?? 0);
 
     gl.useProgram(this._prog);
@@ -521,6 +541,7 @@ export class AudioRendererGL {
     gl.uniform1fv(u.uDegrees, this._slotWeights);
     gl.uniform3fv(u.uDegreeRGB, this._degreeRGBBuf);
     gl.uniform3fv(u.uDegreeRGB2, this._degreeRGB2Buf);
+    gl.uniform1fv(u.uSlotEdge, this._slotEdgeBuf);
     gl.uniform1f(u.uBri, frame.bri);
     gl.uniform1f(u.uSpread, frame.spread);
     gl.uniform1f(u.uAct, frame.act);
@@ -633,6 +654,7 @@ export class AudioRendererGL {
       "uPos",
       "uCtr",
       "uDegreeRGB2",
+      "uSlotEdge",
       "uPrev",
     ];
     const locs: UniformMap = {};

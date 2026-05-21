@@ -85,6 +85,14 @@ export interface AudioFrame {
   slots: Float32Array;
   slotHues: Float32Array;
   slotBoundaryHues: Float32Array;
+  /**
+   * Per-slot directional edge bias in [-1, +1] derived from where the
+   * continuous audio hue sits within / relative to each slot's arc.
+   *   -1 → bias toward the slot's left boundary
+   *   +1 → bias toward the slot's right boundary
+   *    0 → centered (or audio hue is too far away to influence this slot)
+   */
+  slotEdge: Float32Array;
   bands: AudioBands;
   hue: number;
   spread: number;
@@ -133,6 +141,7 @@ export class AudioAnalyzer {
   private readonly _binHz: number;
   private _paletteUnsubscribe: (() => void) | null = null;
   private _slotsOut: Float32Array;
+  private _slotEdgeOut: Float32Array;
   private _splitter: ChannelSplitterNode | null = null;
   private _analyserL: AnalyserNode | null = null;
   private _analyserR: AnalyserNode | null = null;
@@ -208,10 +217,12 @@ export class AudioAnalyzer {
     this._chromaPrev = new Float32Array(12);
 
     this._slotsOut = new Float32Array(palette.slots.length);
+    this._slotEdgeOut = new Float32Array(palette.slots.length);
     this._paletteUnsubscribe = palette.onChange(() => {
       const newN = palette.slots.length;
       if (this._slotsOut.length !== newN) {
         this._slotsOut = new Float32Array(newN);
+        this._slotEdgeOut = new Float32Array(newN);
       }
     });
 
@@ -220,6 +231,7 @@ export class AudioAnalyzer {
       slots: this._slotsOut,
       slotHues: palette.slotHues,
       slotBoundaryHues: palette.slotBoundaryHues,
+      slotEdge: this._slotEdgeOut,
       bands: { lo: 0, mid: 0, hi: 0 },
       hue: 0,
       spread: 1,
@@ -272,14 +284,18 @@ export class AudioAnalyzer {
     }
     this.palette = p;
     this._slotsOut = new Float32Array(p.slots.length);
+    this._slotEdgeOut = new Float32Array(p.slots.length);
     this._out.slots = this._slotsOut;
+    this._out.slotEdge = this._slotEdgeOut;
     this._out.slotHues = p.slotHues;
     this._out.slotBoundaryHues = p.slotBoundaryHues;
     this._paletteUnsubscribe = p.onChange(() => {
       const newN = p.slots.length;
       if (this._slotsOut.length !== newN) {
         this._slotsOut = new Float32Array(newN);
+        this._slotEdgeOut = new Float32Array(newN);
         this._out.slots = this._slotsOut;
+        this._out.slotEdge = this._slotEdgeOut;
       }
       this._out.slotHues = p.slotHues;
       this._out.slotBoundaryHues = p.slotBoundaryHues;
@@ -490,8 +506,46 @@ export class AudioAnalyzer {
     const change = hasSignal && pick.key !== this._prevChordKey;
     if (hasSignal) this._prevChordKey = pick.key;
 
+    // ── Per-slot directional edge bias ───────────────────────────────────────
+    // Derived from the chord-template slot weights (NOT audio.hue, which lives
+    // in chroma-class space and is unrelated to the palette's display-hue
+    // arrangement). For the winning slot, the bias points toward whichever
+    // neighbor has more template weight, scaled by how ambiguous the win is.
+    // Immediate neighbors carry a fixed ±1 toward the boundary they share with
+    // the winner, so when crossZone lights them up their blob colors pull
+    // toward the winner's hue.
+    const slotEdge = this._slotEdgeOut;
+    const nSlots = this.palette.slots.length;
+    if (hasSignal && nSlots > 0) {
+      let winnerIdx = 0;
+      let winnerScore = -1;
+      for (let i = 0; i < nSlots; i++) {
+        const s = this._slotsOut[i];
+        if (s > winnerScore) { winnerScore = s; winnerIdx = i; }
+      }
+      const rightIdx = (winnerIdx + 1) % nSlots;
+      const leftIdx = (winnerIdx - 1 + nSlots) % nSlots;
+      const wR = this._slotsOut[rightIdx];
+      const wL = this._slotsOut[leftIdx];
+      const neighborSum = wR + wL;
+      // Direction: -1 = pure-left lean, +1 = pure-right lean
+      const dir = neighborSum > 1e-6 ? (wR - wL) / neighborSum : 0;
+      // Ambiguity: how much energy is in neighbors vs. winner (0 = clean win, 1 = even)
+      const ambiguity = winnerScore > 1e-6
+        ? Math.min(1, neighborSum / winnerScore)
+        : 0;
+      const winnerBias = dir * ambiguity;
+      for (let i = 0; i < nSlots; i++) {
+        if (i === winnerIdx) slotEdge[i] = winnerBias;
+        else if (i === rightIdx) slotEdge[i] = -1;
+        else if (i === leftIdx) slotEdge[i] = +1;
+        else slotEdge[i] = 0;
+      }
+    }
+
     // ── Assemble output ───────────────────────────────────────────────────────
     this._out.slots = this._slotsOut;
+    this._out.slotEdge = this._slotEdgeOut;
     this._out.slotHues = this.palette.slotHues;
     this._out.slotBoundaryHues = this.palette.slotBoundaryHues;
     this._out.bands.lo = lo;
@@ -523,6 +577,7 @@ export class AudioAnalyzer {
       slots: new Float32Array(this._out.slots),
       slotHues: this._out.slotHues,
       slotBoundaryHues: this._out.slotBoundaryHues,
+      slotEdge: new Float32Array(this._out.slotEdge),
       bands: { ...this._out.bands },
       hue: this._out.hue,
       spread: this._out.spread,

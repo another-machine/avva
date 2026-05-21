@@ -487,16 +487,38 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 
     if (!noteGridBuilt && audio.noteInfo?.length) _buildNoteGrid(audio.noteInfo);
 
-    let _markerHue = audio.hue ?? 0;
+    // Marker position: weighted circular mean of palette slot centers in
+    // PERCEPTUAL hue space, using the chord-template slot weights. We can't
+    // use audio.hue directly because it's a circular mean over chroma-class
+    // angles (C=0°, F=150°, …) which is unrelated to the palette's
+    // display-hue arrangement (e.g. FAC may be positioned at red). The slot
+    // weights, by contrast, already live in slot space and slide continuously
+    // between neighbors as the chord transitions.
     let winnerIdx3 = 0;
-    if (audio.slots && currentPalette) {
+    let _percPos3 = 0;
+    if (audio.slots && currentPalette && audio.slots.length === currentPalette.slots.length) {
       let maxScore = -1;
+      let cx = 0;
+      let cy = 0;
+      let totalW = 0;
       for (let i = 0; i < audio.slots.length; i++) {
-        if (audio.slots[i] > maxScore) { maxScore = audio.slots[i]; winnerIdx3 = i; }
+        const w = audio.slots[i];
+        if (w > maxScore) { maxScore = w; winnerIdx3 = i; }
+        if (w <= 0) continue;
+        const p = (toPerceptual(currentPalette.slotHues[i] ?? 0) * Math.PI) / 180;
+        cx += Math.cos(p) * w;
+        cy += Math.sin(p) * w;
+        totalW += w;
       }
-      _markerHue = currentPalette.slotHues[winnerIdx3] ?? _markerHue;
+      if (totalW > 0 && (cx !== 0 || cy !== 0)) {
+        const meanRad = Math.atan2(cy, cx);
+        _percPos3 = (((meanRad * 180) / Math.PI) + 360) % 360;
+      } else {
+        _percPos3 = toPerceptual(currentPalette.slotHues[winnerIdx3] ?? 0);
+      }
+    } else {
+      _percPos3 = toPerceptual(audio.hue ?? 0);
     }
-    const _percPos3 = toPerceptual(_markerHue);
     huemark.style.setProperty("--hue-marker-pos", `${(_percPos3 / 360) * 100}%`);
 
     chordNumeral.textContent = audio.chord.label || "—";
