@@ -406,7 +406,7 @@ function buildSettingsPanel(container: HTMLElement): void {
     const kind = getUiKind();
     fileRow.style.display  = kind === "file"   ? "" : "none";
     urlRow.style.display   = kind === "url"    ? "" : "none";
-    rateRow.style.display  = kind !== "camera" ? "" : "none";
+    rateRow.style.display  = (kind === "file" || kind === "url") ? "" : "none";
   };
   updateSourceVis();
   store.subscribeKey("source.kind", updateSourceVis);

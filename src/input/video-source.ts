@@ -22,6 +22,9 @@ export class VideoSource {
   private _sources: string[];
   private _fileIdx: number;
 
+  // Screen share callback
+  private _onStreamEnded: (() => void) | null = null;
+
   constructor(el: HTMLVideoElement, config: LegacyConfig) {
     this._el = el;
     this._config = config;
@@ -47,6 +50,9 @@ export class VideoSource {
   get isCamera(): boolean {
     return this._config.source === "camera";
   }
+  get isScreen(): boolean {
+    return this._config.source === "screen";
+  }
   get isFileArray(): boolean {
     return Array.isArray(this._config.source);
   }
@@ -54,10 +60,16 @@ export class VideoSource {
     return this.isCamera ? this._devices.length > 1 : this._sources.length > 1;
   }
 
+  set onStreamEnded(cb: (() => void) | null) {
+    this._onStreamEnded = cb;
+  }
+
   async start(): Promise<void> {
     if (this.isCamera) {
       await this._startCamera(null);
       await this._enumerateDevices();
+    } else if (this.isScreen) {
+      await this._startScreen();
     } else {
       this._fileIdx = 0;
       await this._startFile(this._sources[this._fileIdx]);
@@ -116,6 +128,28 @@ export class VideoSource {
     } catch {
       this._devices = [];
     }
+  }
+
+  // ── Private — screen share ───────────────────────────────────
+
+  private async _startScreen(): Promise<void> {
+    if (this._stream) this._stream.getTracks().forEach((t) => t.stop());
+
+    this._stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "browser" } as MediaTrackConstraints,
+      audio: false,
+    });
+    this._el.srcObject = this._stream;
+    this._el.muted = true;
+    await this._el.play();
+
+    const track = this._stream.getVideoTracks()[0];
+    this._label = (track?.label || "screen").slice(0, 28).toUpperCase();
+
+    track?.addEventListener("ended", () => {
+      this._stream = null;
+      this._onStreamEnded?.();
+    }, { once: true });
   }
 
   // ── Private — file ───────────────────────────────────────────

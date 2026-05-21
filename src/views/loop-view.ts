@@ -142,11 +142,15 @@ async function begin(): Promise<void> {
     const gate = document.getElementById("gate");
     gate?.classList.remove("hide");
     const errEl = document.getElementById("err");
-    if (errEl) errEl.textContent = "Video error: " + (e.message || e.name);
-    document.getElementById("go")?.addEventListener(
+    const goBtn = document.getElementById("go");
+    const isScreen = store.get("source.kind") === "screen";
+    if (errEl) errEl.textContent = isScreen ? "" : "Video error: " + (e.message || e.name);
+    if (goBtn) goBtn.textContent = isScreen ? "Start Screen Share" : "Retry";
+    gate?.addEventListener(
       "click",
-      () => {
-        gate?.classList.add("hide");
+      (ev) => {
+        if ((ev.target as HTMLElement).id !== "go") return;
+        gate.classList.add("hide");
         void begin();
       },
       { once: true },
@@ -155,6 +159,20 @@ async function begin(): Promise<void> {
   }
 
   _sourceLabel = videoSource.label;
+
+  videoSource.onStreamEnded = () => {
+    const gate = document.getElementById("gate");
+    const errEl = document.getElementById("err");
+    const goBtn = document.getElementById("go");
+    gate?.classList.remove("hide");
+    if (errEl) errEl.textContent = "Screen share ended.";
+    if (goBtn) goBtn.textContent = "Restart Screen Share";
+    gate?.addEventListener("click", (ev) => {
+      if ((ev.target as HTMLElement).id !== "go") return;
+      gate.classList.add("hide");
+      void begin();
+    }, { once: true });
+  };
   _resLabel = `96×72`;
 
   const heat = document.getElementById("heat") as HTMLCanvasElement;
@@ -363,8 +381,35 @@ async function begin(): Promise<void> {
     try {
       await videoSource.start();
       _sourceLabel = videoSource.label;
+      videoSource.onStreamEnded = () => {
+        const gate = document.getElementById("gate");
+        const errEl = document.getElementById("err");
+        const goBtn = document.getElementById("go");
+        gate?.classList.remove("hide");
+        if (errEl) errEl.textContent = "Screen share ended.";
+        if (goBtn) goBtn.textContent = "Restart Screen Share";
+        gate?.addEventListener("click", (ev) => {
+          if ((ev.target as HTMLElement).id !== "go") return;
+          gate.classList.add("hide");
+          void begin();
+        }, { once: true });
+      };
     } catch (e: any) {
-      console.error("Source restart failed:", e.message);
+      if (store.get("source.kind") === "screen") {
+        const gate = document.getElementById("gate");
+        const errEl = document.getElementById("err");
+        const goBtn = document.getElementById("go");
+        gate?.classList.remove("hide");
+        if (errEl) errEl.textContent = "";
+        if (goBtn) goBtn.textContent = "Start Screen Share";
+        gate?.addEventListener("click", (ev) => {
+          if ((ev.target as HTMLElement).id !== "go") return;
+          gate.classList.add("hide");
+          void begin();
+        }, { once: true });
+      } else {
+        console.error("Source restart failed:", e.message);
+      }
     }
   };
   for (const k of ["source.kind", "source.file", "source.url"] as const) {

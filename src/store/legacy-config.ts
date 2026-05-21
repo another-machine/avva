@@ -66,6 +66,7 @@ export const legacyConfig: LegacyConfig = {
   get source() {
     const kind = store.get("source.kind");
     if (kind === "camera") return "camera";
+    if (kind === "screen") return "screen";
     if (kind === "url") return store.get("source.url");
     return store.get("source.file") || "camera";
   },
