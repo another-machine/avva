@@ -373,6 +373,13 @@ body {
   }
 }
 
+/* Visualize view: only one pane (the audio-driven canvas) — fill the stage
+   in both portrait and landscape (overrides the split-pane media query). */
+body.visualize #stage {
+  grid-template-rows: 1fr;
+  grid-template-columns: 1fr;
+}
+
 .pane {
   position: relative;
   overflow: hidden;

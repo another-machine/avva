@@ -36,7 +36,7 @@ const ASSET_FILES = Object.keys(
 
 const STAGE_GROUPS: Record<string, string[]> = {
   videoAnalysis:   ["calibration", "analysis"],
-  soundSynthesis:  ["synth", "waveforms", "octaves", "effects"],
+  soundSynthesis:  ["synth", "bass", "mid", "treble", "pluck", "effects"],
   audioAnalysis:   ["audioAnalysis"],
   visualSynthesis: ["visualSynthesis"],
 };
@@ -711,20 +711,20 @@ function buildRow(key: SchemaKey): HTMLElement {
   const label = document.createElement("label");
   label.className = "row__label";
   label.textContent = field.label;
+  // Render hint as a hover popover (CSS-styled tooltip) instead of an
+  // always-visible second line. Keeps row density tight in tier panels.
+  const hintText =
+    "hint" in field && typeof (field as { hint?: string }).hint === "string"
+      ? (field as { hint: string }).hint
+      : null;
+  if (hintText) {
+    label.dataset.hint = hintText;
+    label.title = hintText; // OS fallback + screen-reader accessibility
+  }
   row.appendChild(label);
 
   const ctrl = buildControl(key);
   row.appendChild(ctrl);
-
-  if (
-    "hint" in field &&
-    typeof (field as { hint?: string }).hint === "string"
-  ) {
-    const hint = document.createElement("div");
-    hint.className = "row__hint";
-    hint.textContent = (field as { hint: string }).hint;
-    row.appendChild(hint);
-  }
 
   // Reflect external changes (BroadcastChannel / WebSocket) back into the control
   if (field.kind !== "action") {

@@ -8,8 +8,9 @@ import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
 import { TelemetrySender } from "../store/telemetry.js";
-import { PRESETS, CASSETTE_PRESETS, FM_PRESETS, GLIDE_PRESETS, ARTICULATION_PRESETS } from "../audio/presets.js";
+import { PRESETS, CASSETTE_PRESETS, FM_PRESETS, GLIDE_PRESETS } from "../audio/presets.js";
 import { Pipeline } from "../pipeline/pipeline.js";
+import { startBroadcaster, type BroadcasterBridge } from "../input/webrtc-bridge.js";
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
@@ -50,9 +51,14 @@ let telemetry: TelemetrySender | null = null;
 let pipeline: Pipeline | null = null;
 let _sourceLabel = "—";
 let _resLabel = "—";
+let broadcaster: BroadcasterBridge | null = null;
+let broadcastStreamNode: MediaStreamAudioDestinationNode | null = null;
 
 // ── Tilt overlay ──────────────────────────────────────────────────────────────
 
+// Tilt is computed by the analyzer over the active sample area, which is the
+// viewbox crop when masking is on. We need to map it back into viewbox-relative
+// canvas coordinates so the line lands where the analyzer is actually looking.
 function _drawTiltOverlay(canvas: HTMLCanvasElement, tilt: number): void {
   const r = canvas.getBoundingClientRect();
   if (r.width === 0) return;
@@ -64,21 +70,32 @@ function _drawTiltOverlay(canvas: HTMLCanvasElement, tilt: number): void {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  const y = tilt * h;
-  const bw = Math.round(h * 0.18); // gradient band ± ~18% of height
+  // Map tilt (0-1 within the analyzed region) into pane pixel space.
+  const viewboxOn = !!store.get("view.viewboxOn");
+  const vy = viewboxOn ? (store.get("view.viewboxY") as number ?? 0) : 0;
+  const vbh = viewboxOn ? (store.get("view.viewboxH") as number ?? 1) : 1;
+  const vx = viewboxOn ? (store.get("view.viewboxX") as number ?? 0) : 0;
+  const vbw = viewboxOn ? (store.get("view.viewboxW") as number ?? 1) : 1;
+  const clampedVh = Math.max(0, Math.min(vbh, 1 - vy));
+  const clampedVw = Math.max(0, Math.min(vbw, 1 - vx));
 
-  const grad = ctx.createLinearGradient(0, y - bw, 0, y + bw);
+  const y = (vy + tilt * clampedVh) * h;
+  const xL = vx * w;
+  const xR = (vx + clampedVw) * w;
+  const bandH = Math.round(clampedVh * h * 0.18); // 18% of *cropped* height
+
+  const grad = ctx.createLinearGradient(0, y - bandH, 0, y + bandH);
   grad.addColorStop(0,   "rgba(100, 220, 190, 0)");
   grad.addColorStop(0.5, "rgba(100, 220, 190, 0.15)");
   grad.addColorStop(1,   "rgba(100, 220, 190, 0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, Math.max(0, y - bw), w, bw * 2);
+  ctx.fillRect(xL, Math.max(0, y - bandH), xR - xL, bandH * 2);
 
   ctx.strokeStyle = "rgba(130, 240, 210, 0.9)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(0, y);
-  ctx.lineTo(w, y);
+  ctx.moveTo(xL, y);
+  ctx.lineTo(xR, y);
   ctx.stroke();
 }
 
@@ -188,6 +205,11 @@ async function begin(): Promise<void> {
   videoEl.playbackRate = store.get("source.playbackRate") as number;
 
   telemetry = new TelemetrySender();
+
+  // Start the WebRTC broadcaster bridge. It's idle (no peer connections)
+  // until a listener tab pings; the synth tap (in maybeTapSynth) wires its
+  // master output into a MediaStreamDestination once the synth is running.
+  if (!broadcaster) broadcaster = startBroadcaster();
 
   pipeline = new Pipeline({
     runVideo: () => {
@@ -364,13 +386,6 @@ async function begin(): Promise<void> {
       store.set(k as any, v as any);
     }
   });
-  store.subscribeKey("synth.articulationPreset", (name) => {
-    const preset = ARTICULATION_PRESETS[name as string];
-    if (!preset) return;
-    for (const [k, v] of Object.entries(preset)) {
-      store.set(k as any, v as any);
-    }
-  });
   store.subscribeKey("source.playbackRate", (v) => {
     videoEl.playbackRate = v;
   });
@@ -458,7 +473,6 @@ async function begin(): Promise<void> {
   _applyCassette();
   for (const [k, v] of Object.entries(FM_PRESETS[store.get("synth.fmPreset") as string] ?? {})) store.set(k as any, v as any);
   for (const [k, v] of Object.entries(GLIDE_PRESETS[store.get("synth.glidePreset") as string] ?? {})) store.set(k as any, v as any);
-  for (const [k, v] of Object.entries(ARTICULATION_PRESETS[store.get("synth.articulationPreset") as string] ?? {})) store.set(k as any, v as any);
 
   (window as any)._avva = {
     synth,
@@ -482,6 +496,17 @@ function maybeTapSynth(): void {
   });
   synth._master.connect(audioAnalyzer.analyser);
   if (synth._limiter) audioAnalyzer.connectStereo(synth._limiter);
+
+  // Expose the synth's master output as a MediaStream for any listener tabs
+  // that have started a WebRTC bridge (visualize-view). Tap from _limiter so
+  // the broadcast carries the same final-stage signal that hits the speakers.
+  if (broadcaster && !broadcastStreamNode) {
+    const tapSource: AudioNode = synth._limiter ?? synth._master;
+    const dest = synth._actx.createMediaStreamDestination();
+    tapSource.connect(dest);
+    broadcastStreamNode = dest;
+    broadcaster.setStream(dest.stream);
+  }
 }
 
 // ── Tick ──────────────────────────────────────────────────────────────────────

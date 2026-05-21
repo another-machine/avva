@@ -46,8 +46,16 @@ export interface LegacyConfig {
   octaveOffsetTreble: number;
   octaveOffsetPluck: number;
 
-  articulation: number;
-  pulseRate: number;
+  articulationBass: number;
+  articulationMid: number;
+  articulationTreble: number;
+  pulseRateBass: number;
+  pulseRateMid: number;
+  pulseRateTreble: number;
+  glideScaleBass: number;
+  glideScaleMid: number;
+  glideScaleTreble: number;
+  pluckFluxSensitivity: number;
 
   feedback: number;
   blobWarp: number;
@@ -163,11 +171,35 @@ export const legacyConfig: LegacyConfig = {
     return store.get("synth.octaveOffsetPluck");
   },
 
-  get articulation() {
-    return store.get("synth.articulation");
+  get articulationBass() {
+    return store.get("synth.articulationBass");
   },
-  get pulseRate() {
-    return store.get("synth.pulseRate");
+  get articulationMid() {
+    return store.get("synth.articulationMid");
+  },
+  get articulationTreble() {
+    return store.get("synth.articulationTreble");
+  },
+  get pulseRateBass() {
+    return store.get("synth.pulseRateBass");
+  },
+  get pulseRateMid() {
+    return store.get("synth.pulseRateMid");
+  },
+  get pulseRateTreble() {
+    return store.get("synth.pulseRateTreble");
+  },
+  get glideScaleBass() {
+    return store.get("synth.glideScaleBass");
+  },
+  get glideScaleMid() {
+    return store.get("synth.glideScaleMid");
+  },
+  get glideScaleTreble() {
+    return store.get("synth.glideScaleTreble");
+  },
+  get pluckFluxSensitivity() {
+    return store.get("synth.pluckFluxSensitivity");
   },
 
   get feedback() {

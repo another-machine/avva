@@ -69,21 +69,6 @@ export const GLIDE_PRESETS: Record<string, Partial<Settings>> = {
   },
 };
 
-export const ARTICULATION_PRESETS: Record<string, Partial<Settings>> = {
-  none: {
-    "synth.articulation": 0,
-    "synth.pulseRate": 0,
-  },
-  light: {
-    "synth.articulation": 0.3,
-    "synth.pulseRate": 0,
-  },
-  plucks: {
-    "synth.articulation": 1.0,
-    "synth.pulseRate": 0,
-  },
-};
-
 export const CASSETTE_PRESETS: Record<string, Partial<Settings>> = {
   none: {
     "cassette.midBoostDb": 0,
@@ -167,8 +152,12 @@ export const CASSETTE_PRESETS: Record<string, Partial<Settings>> = {
 
 export const PRESETS: Record<string, Partial<Settings>> = {
   lush: {
-    "synth.articulation": 0.0,
-    "synth.pulseRate": 0,
+    "synth.articulationBass": 0,
+    "synth.articulationMid": 0,
+    "synth.articulationTreble": 0,
+    "synth.pulseRateBass": 0,
+    "synth.pulseRateMid": 0,
+    "synth.pulseRateTreble": 0,
     "synth.fmIndexBase": 0.15,
     "synth.fmIndexScale": 2.4,
     "synth.glideMax": 2.0,
@@ -177,8 +166,12 @@ export const PRESETS: Record<string, Partial<Settings>> = {
     "cassette.satAmount": 8,
   },
   drone: {
-    "synth.articulation": 0.0,
-    "synth.pulseRate": 0,
+    "synth.articulationBass": 0,
+    "synth.articulationMid": 0,
+    "synth.articulationTreble": 0,
+    "synth.pulseRateBass": 0,
+    "synth.pulseRateMid": 0,
+    "synth.pulseRateTreble": 0,
     "synth.fmIndexBase": 0.05,
     "synth.fmIndexScale": 1.2,
     "synth.glideMax": 3.5,
@@ -187,8 +180,12 @@ export const PRESETS: Record<string, Partial<Settings>> = {
     "cassette.satAmount": 5,
   },
   staccato: {
-    "synth.articulation": 0.65,
-    "synth.pulseRate": 2,
+    "synth.articulationBass": 0.65,
+    "synth.articulationMid": 0.65,
+    "synth.articulationTreble": 0.65,
+    "synth.pulseRateBass": 2,
+    "synth.pulseRateMid": 2,
+    "synth.pulseRateTreble": 2,
     "synth.fmIndexScale": 1.8,
     "synth.glideMax": 0.5,
     "cassette.reverbWet": 0.04,
@@ -196,8 +193,12 @@ export const PRESETS: Record<string, Partial<Settings>> = {
     "cassette.satAmount": 10,
   },
   percussive: {
-    "synth.articulation": 0.95,
-    "synth.pulseRate": 4,
+    "synth.articulationBass": 0.95,
+    "synth.articulationMid": 0.95,
+    "synth.articulationTreble": 0.95,
+    "synth.pulseRateBass": 4,
+    "synth.pulseRateMid": 4,
+    "synth.pulseRateTreble": 4,
     "synth.fmPluckRatio": 3,
     "synth.glideMax": 0.2,
     "cassette.reverbWet": 0.02,
@@ -205,8 +206,12 @@ export const PRESETS: Record<string, Partial<Settings>> = {
     "cassette.satAmount": 12,
   },
   bell: {
-    "synth.articulation": 0.85,
-    "synth.pulseRate": 0,
+    "synth.articulationBass": 0.85,
+    "synth.articulationMid": 0.85,
+    "synth.articulationTreble": 0.85,
+    "synth.pulseRateBass": 0,
+    "synth.pulseRateMid": 0,
+    "synth.pulseRateTreble": 0,
     "synth.fmPluckRatio": 7,
     "synth.carrierTypePluck": "sine",
     "synth.glideMax": 0.3,

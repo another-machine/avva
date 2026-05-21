@@ -164,7 +164,7 @@ export class Synth {
   private _lastCarrierTypes: string[];
   private _periodicWaves: Map<string, PeriodicWave>;
   private _articulationEnvs: number[];
-  private _pulseCounter: number;
+  private _pulseCounters: number[];
   private _prevNoteKey: string;
   private _lastUpdateTime: number;
   private _masterLPHzBase: number;
@@ -190,7 +190,7 @@ export class Synth {
     this._lastCarrierTypes = ["sine", "sine", "sine", "sine"];
     this._periodicWaves = new Map();
     this._articulationEnvs = [1.0, 1.0, 1.0];
-    this._pulseCounter = 0;
+    this._pulseCounters = [0, 0, 0];
     this._prevNoteKey = "";
     this._lastUpdateTime = 0;
     this._masterLPHzBase = 0;
@@ -469,15 +469,34 @@ export class Synth {
     const seventhW = clamp01((safeSat - 0.35) / 0.35);
     const ninthW = clamp01((safeSat - 0.65) / 0.3);
 
-    // Compute per-voice glide time with configurable spread
-    const _vGlide = (vi: number) => {
+    // Per-voice glide time with configurable spread (the tier's tau is
+    // resolved per-tier below; this helper just applies the per-voice ratio).
+    const _vGlide = (tauForTier: number, vi: number) => {
       const base = VOICE_GLIDE_SPREAD[vi];
-      return tau * (1.0 + (base - 1.0) * glideSpread);
+      return tauForTier * (1.0 + (base - 1.0) * glideSpread);
     };
 
-    // ── Articulation envelope ──────────────────────────────────
-    const articulation = clamp01(this._cfg.articulation ?? 0);
-    const pulseRate = Math.max(0, this._cfg.pulseRate ?? 0);
+    // ── Per-tier glide scaling (multiplies the base glide time) ───
+    const tierGlideScales = [
+      Math.max(0.05, this._cfg.glideScaleBass ?? 1),
+      Math.max(0.05, this._cfg.glideScaleMid ?? 1),
+      Math.max(0.05, this._cfg.glideScaleTreble ?? 1),
+    ] as const;
+    const tierTaus = tierGlideScales.map((s) => Math.max(0.001, tau * s));
+    const tierSlowTaus = tierTaus.map((t) => Math.max(0.05, t * 4));
+
+    // ── Per-tier articulation + pulse rate ─────────────────────────
+    const tierArticulations = [
+      clamp01(this._cfg.articulationBass ?? 0),
+      clamp01(this._cfg.articulationMid ?? 0),
+      clamp01(this._cfg.articulationTreble ?? 0),
+    ];
+    const tierPulseRates = [
+      Math.max(0, this._cfg.pulseRateBass ?? 0),
+      Math.max(0, this._cfg.pulseRateMid ?? 0),
+      Math.max(0, this._cfg.pulseRateTreble ?? 0),
+    ];
+
     const dt = this._lastUpdateTime > 0 ? now - this._lastUpdateTime : 0;
     this._lastUpdateTime = now;
 
@@ -485,24 +504,29 @@ export class Synth {
     const chordChanged = noteKey !== this._prevNoteKey;
     this._prevNoteKey = noteKey;
 
-    let pulseFire = false;
-    if (pulseRate > 0 && dt > 0 && dt < 0.5) {
-      const prevCount = this._pulseCounter;
-      this._pulseCounter += dt * pulseRate;
-      pulseFire = Math.floor(this._pulseCounter) > Math.floor(prevCount);
+    // Per-tier pulse fire (each tier maintains its own counter so tiers can
+    // pulse at independent tempos).
+    const tierPulseFires = [false, false, false];
+    if (dt > 0 && dt < 0.5) {
+      for (let ti = 0; ti < 3; ti++) {
+        const rate = tierPulseRates[ti];
+        if (rate <= 0) continue;
+        const prev = this._pulseCounters[ti];
+        this._pulseCounters[ti] += dt * rate;
+        tierPulseFires[ti] =
+          Math.floor(this._pulseCounters[ti]) > Math.floor(prev);
+      }
     }
 
-    const retrigger = chordChanged || pulseFire;
-    // When the slot actually changes, snap to the new pitches quickly regardless
-    // of video activity — without this, a static video (act≈0) would cause a 3-second
-    // glide that makes the synth sound like it's ignoring palette/rootHue changes.
-    const pitchTau = chordChanged ? 0.05 : tau;
-    const decayTau = articulation > 0 ? 2.0 + (0.05 - 2.0) * articulation : 2.0;
-
+    // Per-tier articulation envelope decay. retrigger sources: chord change
+    // (global, snaps every voice) or that tier's own pulse fire.
     for (let ti = 0; ti < 3; ti++) {
+      const articulation = tierArticulations[ti];
+      const retrigger = chordChanged || tierPulseFires[ti];
       if (retrigger) {
         this._articulationEnvs[ti] = 1.0;
       } else if (dt > 0 && dt < 0.5 && articulation > 0) {
+        const decayTau = 2.0 + (0.05 - 2.0) * articulation;
         this._articulationEnvs[ti] *= Math.exp(-dt / decayTau);
       }
     }
@@ -510,6 +534,10 @@ export class Synth {
     this._tiers.forEach(({ voices }, ti) => {
       const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
+      const articulation = tierArticulations[ti];
+      const tierTau = tierTaus[ti];
+      const tierSlowTau = tierSlowTaus[ti];
+      const tierPitchTau = chordChanged ? 0.05 : tierTau;
       const artEnv = articulation > 0 ? this._articulationEnvs[ti] : 1.0;
       const tierBase =
         Math.max(0, tierSignals[ti] * 0.25) *
@@ -523,7 +551,7 @@ export class Synth {
           const nPCs = note.triad.length;
           targetFreq = note.triad[vi % nPCs].freq * freqScale;
           if (!Number.isFinite(targetFreq) || targetFreq <= 0) {
-            fm.setGain(0, tau);
+            fm.setGain(0, tierTau);
             return;
           }
 
@@ -539,20 +567,20 @@ export class Synth {
             }
           }
 
-          fm.glideTo(targetFreq, chordChanged ? pitchTau : _vGlide(vi));
+          fm.glideTo(targetFreq, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
           const triadGain =
             tierBase *
             voiceWeights[vi] *
             (1 - bf2) *
             (note._palettePrimary.gain ?? 1);
-          fm.setGain(triadGain, tau);
-          fm.setIndex(tierIndex[ti], slowTau);
+          fm.setGain(triadGain, tierTau);
+          fm.setIndex(tierIndex[ti], tierSlowTau);
           const bassExtraDrift = ti === 0 ? 0.02 : 0;
           const targetRatio =
             ratioBase + (ratioDrift + bassExtraDrift) * VOICE_DRIFT_SIGN[vi];
-          fm.setRatio(targetRatio, slowTau);
+          fm.setRatio(targetRatio, tierSlowTau);
           const targetPan = TIER_BASE_PAN[ti][vi] * widthScale;
-          this._panTo(panner.pan, targetPan, slowTau, now);
+          this._panTo(panner.pan, targetPan, tierSlowTau, now);
         } else {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
@@ -566,16 +594,16 @@ export class Synth {
               const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
               if (si < secPCs.length) {
                 const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
-                fm.glideTo(sf, chordChanged ? pitchTau : _vGlide(vi));
+                fm.glideTo(sf, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
                 fm.setGain(
                   tierBase *
                     voiceWeights[[0, 2][ei]] *
                     bf2 *
                     (secSlot.gain ?? 1),
-                  tau,
+                  tierTau,
                 );
-                fm.setIndex(tierIndex[ti] * 0.65, slowTau);
-                fm.setRatio(ratioBase, slowTau);
+                fm.setIndex(tierIndex[ti] * 0.65, tierSlowTau);
+                fm.setRatio(ratioBase, tierSlowTau);
                 handled = true;
               }
             }
@@ -583,20 +611,20 @@ export class Synth {
               const xi = 3 + ei;
               if (xi < pcs.length) {
                 const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
-                fm.glideTo(ef, chordChanged ? pitchTau : _vGlide(vi));
+                fm.glideTo(ef, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
                 fm.setGain(
                   tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
-                  tau,
+                  tierTau,
                 );
-                fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), slowTau);
-                fm.setRatio(ratioBase, slowTau);
+                fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), tierSlowTau);
+                fm.setRatio(ratioBase, tierSlowTau);
                 handled = true;
               }
             }
-            if (!handled) fm.setGain(0, tau);
+            if (!handled) fm.setGain(0, tierTau);
           }
           const extPan = TIER_BASE_PAN_EXT[ti][ei] * widthScale;
-          this._panTo(panner.pan, extPan, slowTau, now);
+          this._panTo(panner.pan, extPan, tierSlowTau, now);
         }
       });
     });
@@ -645,11 +673,14 @@ export class Synth {
       baseOctave - 2,
     );
     if (Number.isFinite(subFreq) && subFreq > 0) {
+      // Sub osc lives in the bass tier conceptually, so it inherits bass's
+      // glide scaling. Snap on chord change so the sub never drags.
+      const subPitchTau = chordChanged ? 0.05 : tierTaus[0];
       this._cancelParam(this._sub!.osc.frequency, now);
-      this._sub!.osc.frequency.setTargetAtTime(subFreq, now, pitchTau);
+      this._sub!.osc.frequency.setTargetAtTime(subFreq, now, subPitchTau);
     }
     this._cancelParam(this._sub!.gain.gain, now);
-    this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tau);
+    this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tierTaus[0]);
 
     this._lastControls = {
       slotLabel: primarySlot.chord.label,
@@ -687,11 +718,16 @@ export class Synth {
     );
     if (now < pluck.nextAllowed) return;
 
-    const articulationBoost = 1.0 + clamp01(this._cfg.articulation ?? 0) * 4;
+    // Plucks have their own dedicated knob: flux sensitivity. Replaces the
+    // old pad-articulation coupling — pluck triggering is now independent of
+    // the pad tiers' percussiveness. 0 = silent, 1 = default, higher = more
+    // frequent plucks at any flux level.
+    const fluxSens = Math.max(0, this._cfg.pluckFluxSensitivity ?? 1);
+    if (fluxSens <= 0) return;
     const pluckGainComp = this._waveGainComp(
       this._cfg.carrierTypePluck ?? "sine",
     );
-    const trigProb = Math.min(1, flux * 0.5 * articulationBoost);
+    const trigProb = Math.min(1, flux * 0.5 * (1 + fluxSens * 3));
     if (Math.random() > trigProb) return;
 
     const spacious = 1 - flux;
@@ -742,7 +778,7 @@ export class Synth {
     pluck.nextAllowed =
       now +
       (0.06 + spacious * 0.5 + flux * 0.25) /
-        Math.max(1, articulationBoost * 0.5);
+        Math.max(0.25, 0.5 + fluxSens);
   }
 
   // ── Helpers ─────────────────────────────────────────────────
