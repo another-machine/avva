@@ -64,6 +64,7 @@ export interface LegacyConfig {
   crossZone: number;
 
   viewboxOn: boolean;
+  maskOn: boolean;
   viewboxX: number;
   viewboxY: number;
   viewboxW: number;
@@ -217,6 +218,7 @@ export const legacyConfig: LegacyConfig = {
   },
 
   get viewboxOn() { return store.get("view.viewboxOn"); },
+  get maskOn()    { return store.get("view.maskOn"); },
   get viewboxX()  { return store.get("view.viewboxX"); },
   get viewboxY()  { return store.get("view.viewboxY"); },
   get viewboxW()  { return store.get("view.viewboxW"); },

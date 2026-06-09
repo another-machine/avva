@@ -88,7 +88,10 @@ export class Analyzer {
     const W = SAMPLE_W, H = SAMPLE_H;
 
     this._ctx.filter = this._calibration?.filterString ?? "none";
-    if (this._cfg.viewboxOn) {
+    // The mask is the region of interest: when it's on (or the explicit
+    // viewboxOn flag), restrict analysis to the viewbox so every axis — tilt,
+    // pos, brightness — is measured over the masked crop, not the whole frame.
+    if (this._cfg.viewboxOn || this._cfg.maskOn) {
       const vw = videoEl.videoWidth  || videoEl.clientWidth  || W;
       const vh = videoEl.videoHeight || videoEl.clientHeight || H;
       const vx  = this._cfg.viewboxX ?? 0;

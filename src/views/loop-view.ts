@@ -98,12 +98,14 @@ function _drawTiltOverlay(canvas: HTMLCanvasElement, tilt: number): void {
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  // Map tilt (0-1 within the analyzed region) into pane pixel space.
-  const viewboxOn = !!store.get("view.viewboxOn");
-  const vy = viewboxOn ? (store.get("view.viewboxY") as number ?? 0) : 0;
-  const vbh = viewboxOn ? (store.get("view.viewboxH") as number ?? 1) : 1;
-  const vx = viewboxOn ? (store.get("view.viewboxX") as number ?? 0) : 0;
-  const vbw = viewboxOn ? (store.get("view.viewboxW") as number ?? 1) : 1;
+  // Map tilt (0-1 within the analyzed region) into pane pixel space. The
+  // analyzer crops to the viewbox whenever the mask (or viewboxOn) is on, so the
+  // overlay must match — tilt is relative to the masked crop, not the frame.
+  const cropped = !!store.get("view.maskOn") || !!store.get("view.viewboxOn");
+  const vy = cropped ? (store.get("view.viewboxY") as number ?? 0) : 0;
+  const vbh = cropped ? (store.get("view.viewboxH") as number ?? 1) : 1;
+  const vx = cropped ? (store.get("view.viewboxX") as number ?? 0) : 0;
+  const vbw = cropped ? (store.get("view.viewboxW") as number ?? 1) : 1;
   const clampedVh = Math.max(0, Math.min(vbh, 1 - vy));
   const clampedVw = Math.max(0, Math.min(vbw, 1 - vx));
 
