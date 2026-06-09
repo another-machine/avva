@@ -157,6 +157,7 @@ async function _activateSource(): Promise<void> {
 }
 
 function _applyRendererStoreValues(r: AudioRendererGL): void {
+  r.setStyle(store.get("audio.visualStyle") as string);
   r.setBlobSpeed(store.get("audio.blobSpeed") as number);
   r.setBlobDrive(store.get("audio.blobDrive") as number);
   r.setShiftSpeed(store.get("audio.shiftSpeed") as number);
@@ -203,6 +204,7 @@ async function _begin(): Promise<void> {
   });
   store.subscribeKey("harmony.rootHue", (v) => palette.setRootHue(v as number));
   store.subscribeKey("harmony.crossZone", (v) => palette.setCrossZone(v as number));
+  store.subscribeKey("audio.visualStyle", (v) => audioRenderer?.setStyle(v as string));
   store.subscribeKey("audio.feedback", (v) => audioRenderer?.setFeedback(v as number));
   store.subscribeKey("audio.blobWarp", (v) => audioRenderer?.setBlobWarp(v as number));
   store.subscribeKey("audio.blobSpeed", (v) => audioRenderer?.setBlobSpeed(v as number));

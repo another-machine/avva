@@ -313,6 +313,201 @@ void main() {
 }`;
 }
 
+// ── Aurora fragment shader factory ───────────────────────────────────────────
+// Alternative "style" to the metaball blobs. Identical uniform set, identical
+// palette colors (oklch slot gradients) and brightness model — but instead of
+// discrete round blobs the chord paints flowing, marbled veils via a
+// domain-warped fBm field. Reads as drifting smoke / aurora curtains rather
+// than a lava lamp, while presenting the same colors and loudness response.
+function makeAuroraFragSrc(nHues: number): string {
+  return `#version 300 es
+#define N_HUES ${nHues}
+precision highp float;
+
+in  vec2 vUV;
+out vec4 outColor;
+
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uDegrees[N_HUES];
+uniform vec3  uDegreeRGB[N_HUES];
+uniform float uBri;
+uniform float uSpread;
+uniform float uAct;
+uniform float uBandLo;
+uniform float uPulse;
+uniform float uFeedback;
+uniform float uBlobWarp;
+uniform float uBlobSpeed;
+uniform float uBlobDrive;
+uniform float uBlobSize;
+uniform float uBlobSharp;
+uniform float uShiftSpeed;
+uniform float uPulseReactivity;
+uniform float uBriScale;
+uniform float uTilt;
+uniform float uPos;
+uniform float uCtr;
+uniform vec3  uDegreeRGB2[N_HUES];
+uniform float uSlotEdge[N_HUES];
+uniform sampler2D uPrev;
+
+vec2 _h2(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453123) * 2.0 - 1.0;
+}
+
+float snoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = dot(_h2(i),                  f);
+  float b = dot(_h2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+  float c = dot(_h2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+  float d = dot(_h2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float snoiseN(vec2 p) { return snoise(p) * 0.5 + 0.5; }
+
+// 4-octave fractal Brownian motion — the base texture for the veils.
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * snoise(p); p *= 2.0; a *= 0.5; }
+  return v;
+}
+
+void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+
+  // Activity speeds the flow; chord-change pulse adds a velocity burst.
+  float tSpeed = uBlobSpeed + uAct * uBlobDrive;
+  float t = uTime * (tSpeed + uPulse * uShiftSpeed);
+
+  // POS shifts the field left/right, TILT up/down (same sense as the blob view).
+  vec2 p = uvA;
+  p.x -= (uPos - 0.5) * 0.5 * aspect;
+  p.y -= (0.5 - uTilt) * 0.4;
+
+  // SPR sets turbulence scale: focused chord -> broad smooth veils, rich chord
+  // -> fine filaments. Size nudges the overall feature scale (bigger = coarser).
+  float scale = mix(1.3, 3.2, uSpread) / max(0.4, uBlobSize * 2.5);
+
+  // Two wandering flow offsets, one per warp octave — same turning-drift idea as
+  // the blob feedback. CRITICAL: these must be bounded oscillations, NOT a linear
+  // t-scroll. A term like (... + 0.1*t) added to the sample coord advances the
+  // pattern at constant velocity along one axis, which reads as the whole field
+  // sliding toward a corner. Incommensurate sin/cos keep the offset bounded so
+  // the field morphs and locally drifts, but with no net heading. Warp widens
+  // the path so the streaming is more pronounced.
+  float warpAmp = 0.5 + uBlobWarp * 4.0;
+  vec2 flow = vec2(cos(t * 0.10) + 0.5 * sin(t * 0.043),
+                   sin(t * 0.08) + 0.5 * cos(t * 0.037)) * warpAmp;
+  vec2 flow2 = vec2(sin(t * 0.11) + 0.5 * cos(t * 0.037),
+                    cos(t * 0.09) + 0.5 * sin(t * 0.041)) * warpAmp;
+
+  // Domain-warped fBm — marbled, smoke-like structure. Each octave evolves only
+  // through its bounded flow offset, so there is no constant-velocity drift.
+  vec2 q = vec2(fbm(p * scale + flow),
+                fbm(p * scale + flow + 7.3));
+  vec2 r = vec2(fbm(p * scale + 1.7 * q + flow2),
+                fbm(p * scale + 1.7 * q + flow2 + 5.1));
+  float master = clamp(fbm(p * scale + 2.0 * r) * 0.5 + 0.5, 0.0, 1.0);
+
+  // ── Palette veils ──────────────────────────────────────────────────────────
+  // Each active slot weaves its own band through the warped field, tinted with
+  // that slot's gradient (the same oklch boundary colors the blobs use).
+  float totalW = 0.0;
+  vec3  totalColor = vec3(0.0);
+  float softness   = clamp(uBlobSharp * 0.5, 0.04, 0.7); // veil edge width
+  float ctrTighten = 0.7 + 0.6 * uCtr;                   // CTR tightens bands
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi   = float(i);
+    float band = fbm(p * scale + 1.7 * r + vec2(fi * 3.1, fi * 1.7)) * 0.5 + 0.5;
+    band = pow(band, ctrTighten);
+    float w = smoothstep(0.5 - softness, 0.5 + softness, band);
+    // Gradient across the veil: tilt + per-slot edge bias slide lo<->hi color.
+    float blend = clamp(band + uTilt * 0.3 - 0.15 + uSlotEdge[i] * 0.4, 0.0, 1.0);
+    vec3  c = mix(uDegreeRGB[i], uDegreeRGB2[i], blend);
+    float contrib = w * presence;
+    totalColor += c * contrib;
+    totalW     += contrib;
+  }
+  vec3  veilColor = totalW > 0.001 ? totalColor / totalW : vec3(0.0);
+  float coverage  = clamp(totalW, 0.0, 1.0);
+
+  float bScale = uBri * uBriScale;
+  // Luminous ribbons where the master field crests — the aurora's bright streaks.
+  float crest = smoothstep(0.55, 0.95, master);
+
+  // ── Feedback (ping-pong), advected along a turning flow ─────────────────────
+  vec2 flowScroll = vec2(
+    0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
+    0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
+  );
+  float driftAmt = 0.0015 + uAct * 0.002;
+  vec2 driftRaw = vec2(
+    snoise(uvA * 4.0 + flowScroll),
+    snoise(uvA * 4.0 + flowScroll + 100.0)
+  ) * driftAmt;
+  vec2 driftUV = uv + vec2(driftRaw.x / aspect, driftRaw.y);
+  vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
+
+  // Background glow centered at (pos, tilt), chord-tinted, BRI-driven.
+  // tilt=0 maps to top of screen (GL y=1); tilt=1 to bottom (GL y=0).
+  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.5 * aspect, 1.0 - uTilt);
+  float bgDist  = dot(uvA - glowCtr, uvA - glowCtr);
+  float bgGlow  = exp(-bgDist * 2.5) * (uBri + uBandLo * 0.3) * 0.4;
+
+  vec3 bgBase = prev.rgb * uFeedback + veilColor * bgGlow;
+  vec3 base   = mix(bgBase, veilColor, coverage);
+
+  // ── Brightness — same model as the blob view ───────────────────────────────
+  base *= clamp(max(bScale, coverage * 0.55), 0.0, 1.0);
+  float briOver = max(0.0, bScale - 1.0);
+  base += veilColor * briOver * 0.5;
+  // Crest highlight rides on top, scaled by loudness.
+  base += veilColor * crest * coverage * (0.35 + bScale * 0.5);
+
+  // ── Band-driven pulse glows (same soft Gaussian bloom as the blob view) ─────
+  float pulseField = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi    = float(i);
+    float seed  = fi * 2.399;
+    float sigma = (0.13 + presence * 0.09) * aspect;
+    float wP = 0.15 + fi * 0.022;
+    float pP = t * wP + seed + 1.2;
+    vec2  cP = vec2(
+      0.5 * aspect + 0.32 * sin(pP) + 0.09 * sin(t * (0.19 + fi * 0.053) + seed + 3.7),
+      0.5          + 0.32 * cos(pP) + 0.09 * sin(t * (0.24 + fi * 0.043) + seed + 0.9)
+    );
+    vec2  dP = uvA - cP;
+    float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
+    pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
+  }
+  base = mix(base, vec3(1.0, 0.96, 0.92), clamp(pulseField, 0.0, 1.0) * 0.7);
+
+  // ── Chord-change flash: fragmented color burst ──────────────────────────────
+  vec3  flashColor = totalW > 0.001 ? veilColor : vec3(1.0);
+  float flashFrag  = snoiseN(uv * 9.0 + vec2(uTime * 20.0, 0.0))
+                   * snoiseN(uv * 3.5 + vec2(0.0, uTime * 13.0));
+  base += flashColor * uPulse * flashFrag * 0.65;
+  base += vec3(uPulse * 0.035);
+
+  // ── Film grain ──────────────────────────────────────────────────────────────
+  base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
+        * (0.03 + uAct * 0.045);
+
+  outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
+}`;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { AudioFrame } from "../analysis/audio-analyzer.js";
@@ -363,12 +558,14 @@ export class AudioRendererGL {
   private _pulseReactivityVal = 1.0;
   private _briScaleVal = 1.5;
   private readonly _gl: WebGL2RenderingContext;
+  // Compiled programs, keyed by `${style}:${nHues}` (e.g. "blobs:7", "aurora:5").
   private readonly _progCache: Map<
-    number,
+    string,
     { prog: WebGLProgram; u: UniformMap }
   >;
   private readonly _vao: WebGLVertexArrayObject;
 
+  private _style = "blobs";
   private _activeN: number;
   private _prog: WebGLProgram;
   private _u: UniformMap;
@@ -406,7 +603,7 @@ export class AudioRendererGL {
     this._activeN = 7;
     const p7 = this._compile(makeFragSrc(7));
     const u7 = this._cacheUniforms(p7);
-    this._progCache.set(7, { prog: p7, u: u7 });
+    this._progCache.set(this._progKey("blobs", 7), { prog: p7, u: u7 });
     this._prog = p7;
     this._u = u7;
 
@@ -483,23 +680,57 @@ export class AudioRendererGL {
 
   /**
    * Switch to a shader compiled for N hue sectors (compiles on first use).
-   * Reallocates the RGB buffer to match.
+   * Reallocates the per-slot buffers to match.
    */
   setN(n: number): void {
     if (n === this._activeN) return;
-    this._activeN = n;
-    if (!this._progCache.has(n)) {
-      const prog = this._compile(makeFragSrc(n));
+    this._activate(this._style, n);
+  }
+
+  /**
+   * Switch the visual style ("blobs" | "aurora"). Compiles the matching program
+   * on first use; both styles share the exact same uniform set, so all params
+   * (palette, brightness, feedback, …) carry over and keep updating live.
+   */
+  setStyle(style: string): void {
+    if (style === this._style) return;
+    this._activate(style, this._activeN);
+  }
+
+  private _progKey(style: string, n: number): string {
+    return `${style}:${n}`;
+  }
+
+  private _fragFor(style: string, n: number): string {
+    return style === "aurora" ? makeAuroraFragSrc(n) : makeFragSrc(n);
+  }
+
+  /**
+   * Make (style, n) the active program: compile+cache on first use, swap the
+   * program/uniform handles, reallocate per-slot buffers if n changed, and
+   * re-push every param uniform (uniforms are per-program, so a fresh program
+   * starts at defaults until we set them).
+   */
+  private _activate(style: string, n: number): void {
+    const key = this._progKey(style, n);
+    if (!this._progCache.has(key)) {
+      const prog = this._compile(this._fragFor(style, n));
       const u = this._cacheUniforms(prog);
-      this._progCache.set(n, { prog, u });
+      this._progCache.set(key, { prog, u });
     }
-    const entry = this._progCache.get(n)!;
+    const entry = this._progCache.get(key)!;
     this._prog = entry.prog;
     this._u = entry.u;
-    this._degreeRGBBuf = new Float32Array(n * 3);
-    this._degreeRGB2Buf = new Float32Array(n * 3);
-    this._slotWeights = new Float32Array(n);
-    this._slotEdgeBuf = new Float32Array(n);
+    this._style = style;
+
+    if (n !== this._activeN) {
+      this._activeN = n;
+      this._degreeRGBBuf = new Float32Array(n * 3);
+      this._degreeRGB2Buf = new Float32Array(n * 3);
+      this._slotWeights = new Float32Array(n);
+      this._slotEdgeBuf = new Float32Array(n);
+    }
+
     const gl = this._gl;
     gl.useProgram(this._prog);
     gl.uniform2f(this._u.uRes, this._w, this._h);

@@ -955,6 +955,14 @@ export const SCHEMA = {
   },
 
   // ── visual synthesis (stage 4 — blob renderer) ─────────────
+  "audio.visualStyle": {
+    kind: "enum",
+    default: "blobs",
+    options: ["blobs", "aurora"] as const,
+    label: "Style",
+    group: "visualSynthesis",
+    hint: "Blobs = liquid metaball clouds; Aurora = flowing marbled veils. Same palette + brightness, different form.",
+  },
   "audio.feedback": {
     kind: "number",
     default: 0.92,
