@@ -398,7 +398,7 @@ body {
 }
 
 .group__chevron::after {
-  content: "▾";
+  content: "\25BE"; /* ▾ — escaped so it can't mojibake if the CSS is served without a UTF-8 charset */
   font-size: 10px;
   color: var(--text-muted);
   display: inline-block;
@@ -464,7 +464,7 @@ body {
 }
 
 .section-hdr__chevron::after {
-  content: "▾";
+  content: "\25BE"; /* ▾ — escaped, see .group__chevron */
   font-size: 11px;
   display: inline-block;
   transition: transform 0.18s ease;

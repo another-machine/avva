@@ -4,7 +4,7 @@
  * Schema-driven configuration UI. One page, three query-param views:
  *   ?view=analysis  →  VIDEO | AUDIO   (analysis panels, side by side)
  *   ?view=synth     →  SOUND | VISUAL  (synthesis panels)
- *   ?view=global    →  HARMONY + SETTINGS JSON (copy / push)
+ *   ?view=global    →  SOURCES + HARMONY | SETTINGS JSON (copy / push)
  * Default view is "analysis".
  *
  * NOTE: this ?view= namespace is the *controller page's* and is unrelated to the
@@ -274,7 +274,7 @@ function _spRow(label: string, ctrl: HTMLElement): HTMLElement {
 // ── VIDEO source / view / synth-toggle sections ───────────────────────────────
 
 function buildSourceSection(): HTMLElement {
-  const { section: srcSec, body: srcBody } = _spSection("SOURCE");
+  const { section: srcSec, body: srcBody } = _spSection("VIDEO");
   const UI_KINDS = ["camera", "file", "screen", "url"] as const;
   const getUiKind = () => store.get("source.kind") as (typeof UI_KINDS)[number];
 
@@ -409,7 +409,7 @@ function buildViewSection(): HTMLElement {
 // ── AUDIO source (listen input) — dropdown ────────────────────────────────────
 
 function buildListenSourceSection(): HTMLElement {
-  const { section, body } = _spSection("SOURCE");
+  const { section, body } = _spSection("AUDIO");
   const field = SCHEMA["listen.source"] as { options: readonly string[] };
   const sel = document.createElement("select");
   sel.className = "sp-select";
@@ -596,7 +596,8 @@ function makePanel(name: string, side: string): { panel: HTMLElement; body: HTML
 
 /**
  * Video / Audio analysis panel — identical structure so they read side by side:
- *   notes → chroma/signal/scene → source → calibration → analysis.
+ *   notes → chroma/signal/scene → view (video only) → calibration → analysis.
+ * Source pickers were relocated to the GLOBAL view (above HARMONY).
  */
 function buildAnalysisPanel(side: "video" | "audio"): HTMLElement {
   const { panel, body } = makePanel(side === "video" ? "VIDEO" : "AUDIO", side);
@@ -617,11 +618,8 @@ function buildAnalysisPanel(side: "video" | "audio"): HTMLElement {
       : mountAudioAnalysisMonitorCore(monHost),
   );
 
-  // 3. SOURCE
-  const sourceSections =
-    side === "video"
-      ? [buildSourceSection(), buildViewSection()]
-      : [buildListenSourceSection()];
+  // 3. VIEW (video display/viewbox only). Source pickers live in the GLOBAL view.
+  const sourceSections = side === "video" ? [buildViewSection()] : [];
 
   // 4. CALIBRATION (video filters | audio 8-band EQ)
   const calib = el("div", "ctrl-cards");
@@ -662,10 +660,14 @@ function buildSynthPanel(side: "sound" | "visual"): HTMLElement {
   return panel;
 }
 
-/** Global view — Harmony panel. */
+/** Global view — Sources (video / audio) stacked above Harmony. */
 function buildHarmonyPanel(): HTMLElement {
-  const { panel, body } = makePanel("HARMONY", "harmony");
-  body.appendChild(buildHarmonySection());
+  const { panel, body } = makePanel("SOURCES + HARMONY", "harmony");
+  body.append(
+    buildSourceSection(),       // VIDEO source (kind/file/url/speed + conditional rows)
+    buildListenSourceSection(), // AUDIO listen input
+    buildHarmonySection(),
+  );
   return panel;
 }
 
