@@ -24,6 +24,7 @@ type Sdp = { type: RTCSdpType; sdp: string };
 type SignalMsg =
   | { kind: "hello"; from: string }
   | { kind: "ready"; from: string }
+  | { kind: "idle"; from: string; to: string }
   | { kind: "offer"; from: string; to: string; sdp: Sdp }
   | { kind: "answer"; from: string; to: string; sdp: Sdp }
   | { kind: "ice"; from: string; to: string; candidate: RTCIceCandidateInit }
@@ -63,7 +64,13 @@ export function startBroadcaster(
   }
 
   async function handleHello(listenerId: string): Promise<void> {
-    if (!currentStream) return;
+    if (!currentStream) {
+      // We're here but have nothing to send yet (e.g. the synth is off). Tell
+      // the listener so it can show an accurate status rather than looking like
+      // no broadcaster exists at all.
+      send({ kind: "idle", from: myId, to: listenerId });
+      return;
+    }
     // Tear down any previous peer for this listener so we always negotiate fresh.
     const prev = peers.get(listenerId);
     if (prev) {
@@ -163,7 +170,9 @@ export interface ListenerOptions {
   /** Called with the first received MediaStream. */
   onStream: (stream: MediaStream) => void;
   /** Called when the peer connection state changes (connecting/connected/failed). */
-  onState?: (state: "searching" | "connecting" | "connected" | "failed") => void;
+  onState?: (
+    state: "searching" | "idle" | "connecting" | "connected" | "failed",
+  ) => void;
 }
 
 export function startListener(opts: ListenerOptions): ListenerBridge {
@@ -175,7 +184,9 @@ export function startListener(opts: ListenerOptions): ListenerBridge {
   let connected = false;
   let helloTimer: ReturnType<typeof setInterval> | null = null;
 
-  function setState(s: "searching" | "connecting" | "connected" | "failed"): void {
+  function setState(
+    s: "searching" | "idle" | "connecting" | "connected" | "failed",
+  ): void {
     opts.onState?.(s);
   }
 
@@ -261,6 +272,9 @@ export function startListener(opts: ListenerOptions): ListenerBridge {
     } else if (m.kind === "ready" && !connected) {
       // Broadcaster announced — kick off a hello immediately.
       sayHello();
+    } else if (m.kind === "idle" && m.to === myId && !connected) {
+      // A broadcaster exists but isn't publishing audio yet (synth off).
+      setState("idle");
     } else if (m.kind === "bye" && m.from === broadcasterId) {
       if (pc) {
         pc.close();

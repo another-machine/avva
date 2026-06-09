@@ -129,6 +129,138 @@ function _slotVisualOrder(palette: Palette | null): number[] {
   return order;
 }
 
+// ── Note grid (shared by audio-detected + synth-generated) ────────────────────
+
+const NOTE_NAMES_12 = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
+interface NoteInfoLite {
+  chromatic: number;
+  octave: number;
+  name: string;
+}
+
+export interface NoteGridRenderer {
+  el: HTMLElement;
+  readonly built: boolean;
+  /** Build the DOM + lookup once from a note table. Idempotent. */
+  build(noteInfo: NoteInfoLite[]): void;
+  /** Paint cell opacity from values indexed parallel to the built noteInfo. */
+  paint(values: Float32Array | null): void;
+}
+
+/**
+ * Reusable 5-octave × 12 note grid. Both the audio analyzer's *detected* notes
+ * and the synth's *generated* notes render through this, built from the same
+ * note ordering so the two grids line up cell-for-cell for comparison.
+ */
+export function createNoteGrid(): NoteGridRenderer {
+  const el = mk("div", "note-grid");
+  let built = false;
+  let cells: HTMLElement[] = [];
+  let lookup: Int16Array | null = null;
+
+  function build(noteInfo: NoteInfoLite[]): void {
+    if (built || !noteInfo.length) return;
+    built = true;
+    el.innerHTML = "";
+    cells = [];
+    const octaves = [...new Set(noteInfo.map((n) => n.octave))].sort((a, b) => b - a);
+
+    const hdrRow = mk("div", "note-grid__hdr");
+    hdrRow.appendChild(mk("span", "note-grid__hdr-lbl", ""));
+    for (const name of NOTE_NAMES_12) hdrRow.appendChild(mk("span", "note-grid__hdr-lbl", name));
+    el.appendChild(hdrRow);
+
+    lookup = new Int16Array(octaves.length * 12).fill(-1);
+    for (let oi = 0; oi < octaves.length; oi++) {
+      const oct = octaves[oi];
+      const rowEl = mk("div", "note-grid__row");
+      rowEl.appendChild(mk("span", "note-grid__oct", String(oct)));
+      for (let pc = 0; pc < 12; pc++) {
+        const idx = noteInfo.findIndex((n) => n.octave === oct && n.chromatic === pc);
+        lookup[oi * 12 + pc] = idx;
+        const cell = mk("div", "note-grid__cell");
+        if (idx >= 0) cell.title = `${noteInfo[idx].name}${oct}`;
+        rowEl.appendChild(cell);
+        cells.push(cell);
+      }
+      el.appendChild(rowEl);
+    }
+  }
+
+  function paint(values: Float32Array | null): void {
+    if (!built || !lookup) return;
+    for (let i = 0; i < cells.length; i++) {
+      const idx = lookup[i];
+      const v = idx >= 0 && values ? (values[idx] ?? 0) : 0;
+      cells[i].style.opacity = String(0.06 + v * 0.94);
+    }
+  }
+
+  return {
+    el,
+    get built() { return built; },
+    build,
+    paint,
+  };
+}
+
+/**
+ * Synthetic note table for the synth-notes grid, ordered so index
+ * (octave - octL) * 12 + pitchClass matches the synth.noteGrid telemetry array.
+ */
+function synthNoteInfo(octL: number, octH: number): NoteInfoLite[] {
+  const info: NoteInfoLite[] = [];
+  for (let o = octL; o <= octH; o++) {
+    for (let pc = 0; pc < 12; pc++) {
+      info.push({ chromatic: pc, octave: o, name: NOTE_NAMES_12[pc] });
+    }
+  }
+  return info;
+}
+
+/** Audio panel — notes the analyzer DETECTED from listening. */
+export function mountDetectedNotesMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
+  host.className = "monitor note-monitor";
+  const grid = createNoteGrid();
+  host.append(mk("div", "sig__hdr", "DETECTED NOTES"), grid.el);
+
+  let latest: TelemetryMsg | null = null;
+  function paint() {
+    requestAnimationFrame(paint);
+    const audio = latest?.audio;
+    if (!audio) return;
+    if (audio.noteInfo?.length) grid.build(audio.noteInfo);
+    grid.paint(audio.notes ?? null);
+  }
+  requestAnimationFrame(paint);
+  return { onMsg(msg) { latest = msg; } };
+}
+
+/** Video panel — notes the synth is GENERATING from the video input (ground truth). */
+export function mountSynthNotesMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
+  host.className = "monitor note-monitor";
+  const grid = createNoteGrid();
+  host.append(mk("div", "sig__hdr", "GENERATED NOTES"), grid.el);
+
+  let latest: TelemetryMsg | null = null;
+  function paint() {
+    requestAnimationFrame(paint);
+    const synth = latest?.synth;
+    const ready =
+      synth?.noteGrid &&
+      synth.noteGridOctL !== undefined &&
+      synth.noteGridOctH !== undefined;
+    if (ready && !grid.built) {
+      grid.build(synthNoteInfo(synth!.noteGridOctL!, synth!.noteGridOctH!));
+    }
+    // noteGrid is omitted when the synth is off → paint(null) clears the grid.
+    grid.paint(synth?.noteGrid ?? null);
+  }
+  requestAnimationFrame(paint);
+  return { onMsg(msg) { latest = msg; } };
+}
+
 // ── Stage 1 — Video Analysis ──────────────────────────────────────────────────
 
 export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
@@ -279,7 +411,9 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   return {
     onMsg(msg) {
       latest = msg;
-      if (msg.video) {
+      // Push history only when this frame actually carried fresh video data, so
+      // a merged frame whose video came from an earlier message doesn't re-push.
+      if (msg.video && (msg as { _freshVideo?: boolean })._freshVideo !== false) {
         const L = CONFIG.sparkLen;
         const push = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
         push(briHist,  msg.video.bri);
@@ -342,10 +476,8 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
 
 // ── Stage 3 — Audio Analysis ──────────────────────────────────────────────────
 
-export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
+export function mountAudioAnalysisMonitorCore(host: HTMLElement): { onMsg(msg: TelemetryMsg): void } {
   host.className = "monitor";
-
-  const NOTE_NAMES_12 = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 
   // HEARD CHROMA header + chord value
   const chromaHdr = mk("div", "panel__label", "HEARD CHROMA");
@@ -422,13 +554,6 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   const posRow3 = mk("div", "sig__row sig__row--pos");
   posRow3.append(mk("span", "sig__lbl", "POS"), posTrack3, posVal3);
 
-  // 60-note grid
-  const gridLabel = mk("div", "sig__hdr", "NOTES");
-  const noteGrid = mk("div", "note-grid");
-  let noteGridBuilt = false;
-  let noteCells: HTMLElement[] = [];
-  let noteLookup: Int16Array | null = null;
-
   host.append(
     chromaHdr, chordVal, huebar, slotHist, slotHistLabels,
     mk("div", "sig__divider"),
@@ -437,8 +562,6 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     sceneHdr,
     mBri.row, mFlux.row, mSpr.row, mCtr.row, mTilt.row, mSat3.row,
     posRow3,
-    mk("div", "sig__divider"),
-    gridLabel, noteGrid,
   );
 
   const briHist3: number[] = [], fluxHist3: number[] = [],
@@ -446,46 +569,11 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
         satHist3: number[] = [];
   let latestMsg: TelemetryMsg | null = null;
 
-  function _buildNoteGrid(noteInfo: { chromatic: number; octave: number; name: string }[]): void {
-    if (noteGridBuilt) return;
-    noteGridBuilt = true;
-    noteGrid.innerHTML = "";
-    noteCells = [];
-    const octaves = [...new Set(noteInfo.map((n) => n.octave))].sort((a, b) => b - a);
-
-    // Header row: empty label cell + 12 note names
-    const hdrRow = mk("div", "note-grid__hdr");
-    hdrRow.appendChild(mk("span", "note-grid__hdr-lbl", ""));
-    for (const name of NOTE_NAMES_12) {
-      hdrRow.appendChild(mk("span", "note-grid__hdr-lbl", name));
-    }
-    noteGrid.appendChild(hdrRow);
-
-    noteLookup = new Int16Array(octaves.length * 12).fill(-1);
-    for (let oi = 0; oi < octaves.length; oi++) {
-      const oct = octaves[oi];
-      const rowEl = mk("div", "note-grid__row");
-      rowEl.appendChild(mk("span", "note-grid__oct", String(oct)));
-      for (let pc = 0; pc < 12; pc++) {
-        const idx = noteInfo.findIndex((n) => n.octave === oct && n.chromatic === pc);
-        noteLookup[oi * 12 + pc] = idx;
-        const cell = mk("div", "note-grid__cell");
-        if (idx >= 0) cell.title = `${noteInfo[idx].name}${oct}`;
-        rowEl.appendChild(cell);
-        noteCells.push(cell);
-      }
-      noteGrid.appendChild(rowEl);
-    }
-  }
-
   function paint() {
     requestAnimationFrame(paint);
     if (!latestMsg?.audio) return;
     const audio = latestMsg.audio;
-    const vu = latestMsg.visualUniforms;
     const pct = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
-
-    if (!noteGridBuilt && audio.noteInfo?.length) _buildNoteGrid(audio.noteInfo);
 
     // Marker position: weighted circular mean of palette slot centers in
     // PERCEPTUAL hue space, using the chord-template slot weights. We can't
@@ -525,15 +613,6 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
 
     // Signal quality
     mSat3.fill.style.width = pct(audio.sat ?? 0); mSat3.val.textContent = ((audio.sat ?? 0) * 100).toFixed(0);
-
-    // Note grid
-    if (noteGridBuilt && noteLookup && audio.notes) {
-      for (let i = 0; i < noteCells.length; i++) {
-        const noteIdx = noteLookup[i];
-        const v = noteIdx >= 0 ? (audio.notes[noteIdx] ?? 0) : 0;
-        noteCells[i].style.opacity = String(0.06 + v * 0.94);
-      }
-    }
 
     // Slot score histogram (same inverted-mask technique as Stage 1 huehist)
     if (audio.slots && slotHistBars.length === audio.slots.length) {
@@ -584,7 +663,9 @@ export function mountAudioAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
   return {
     onMsg(msg) {
       latestMsg = msg;
-      if (msg.audio) {
+      // Push history only when this frame actually carried fresh audio data, so
+      // a merged frame whose audio came from an earlier message doesn't re-push.
+      if (msg.audio && (msg as { _freshAudio?: boolean })._freshAudio !== false) {
         const L = CONFIG.sparkLen;
         const p3 = (a: number[], v: number) => { a.push(v); if (a.length > L) a.shift(); };
         p3(briHist3,  msg.audio.bri);

@@ -53,116 +53,149 @@ body {
 
 /* ── WS form ──────────────────────────────────────────────────────────────── */
 
-.ws-form {
+/* Relay form (Global view): URL input + connect button side by side. */
+.relay-row {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  align-items: center;
 }
-
-.ws-form input[type="url"] {
+.relay-row .sp-input {
   flex: 1;
   min-width: 0;
-  background: var(--bg);
-  border: none;
-  color: var(--text-dim);
-  font-size: 10px;
-  font-family: monospace;
-  padding: 5px 8px;
 }
-.ws-form input[type="url"]:focus {
-  outline: none;
+.relay-row .action-btn {
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 3px 14px;
+}
+.relay-row .action-btn.active {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── Layout: nav + view panels ────────────────────────────────────────────── */
+
+.ctrl-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* View tabs (analysis | synth | global) */
+.ctrl-nav {
+  flex-shrink: 0;
+  display: flex;
+  gap: 1px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.ctrl-nav__tab {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 9px 18px;
+  transition: color 0.1s;
+}
+.ctrl-nav__tab:hover {
+  color: var(--text);
+}
+.ctrl-nav__tab.active {
   color: var(--text);
 }
 
-.ws-form button {
-  font-size: 9px;
-  font-family: monospace;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  background: none;
-  border: none;
-  border-left: 1px solid var(--border);
-  padding: 2px 7px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.1s, border-color 0.1s;
-}
-.ws-form button:hover {
-  color: var(--accent);
-}
-.ws-form button.active {
-  color: var(--danger);
-}
-
-/* ── Settings panel (panel 0) ─────────────────────────────────────────────── */
-
-.ctrl-main {
+/* Active view: panels side by side, filling remaining height */
+.ctrl-views {
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-.settings-panel {
-  display: flex;
-  flex-direction: row;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  transition: width 0.18s ease;
-  width: calc(220px + 28px);
-  overflow: hidden;
+/* Per-side accent — drives panel header rule, group headers, range outputs */
+.ctrl-panel[data-side="video"] {
+  --stage-accent: oklch(0.72 0.18 200);
+  --stage-accent-dim: oklch(0.72 0.18 200 / 0.12);
+}
+.ctrl-panel[data-side="audio"] {
+  --stage-accent: oklch(0.74 0.17 230);
+  --stage-accent-dim: oklch(0.74 0.17 230 / 0.12);
+}
+.ctrl-panel[data-side="sound"] {
+  --stage-accent: oklch(0.75 0.18 145);
+  --stage-accent-dim: oklch(0.75 0.18 145 / 0.12);
+}
+.ctrl-panel[data-side="visual"] {
+  --stage-accent: oklch(0.7 0.18 300);
+  --stage-accent-dim: oklch(0.7 0.18 300 / 0.12);
+}
+.ctrl-panel[data-side="harmony"] {
+  --stage-accent: oklch(0.78 0.15 90);
+  --stage-accent-dim: oklch(0.78 0.15 90 / 0.12);
+}
+.ctrl-panel[data-side="json"] {
+  --stage-accent: oklch(0.7 0.02 250);
+  --stage-accent-dim: oklch(0.7 0.02 250 / 0.12);
 }
 
-.settings-panel.collapsed {
-  width: 28px;
-}
-
-.settings-panel__strip {
-  width: 28px;
-  flex-shrink: 0;
+.ctrl-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 8px 0 8px;
-  gap: 10px;
   border-right: 1px solid var(--border);
-  background: var(--surface);
+  overflow: hidden;
+}
+.ctrl-panel:last-child {
+  border-right: none;
 }
 
-.sp-toggle {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 10px;
-  cursor: pointer;
-  padding: 4px;
-  line-height: 1;
-  transition: color 0.1s;
-}
-.sp-toggle:hover { color: var(--text); }
-
-.sp-strip-label {
-  font-size: 10px;
-  font-weight: 700;
-  font-family: monospace;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid var(--accent);
-  width: 18px;
-  height: 18px;
+.ctrl-panel__hdr {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  border-top: 2px solid var(--stage-accent, var(--accent));
+  user-select: none;
 }
-
-.settings-panel__body {
-  width: 220px;
-  flex-shrink: 0;
+.ctrl-panel__name {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--stage-accent, var(--text-dim));
+}
+.ctrl-panel__body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+
+/* Stack panels vertically on narrow screens */
+@media (max-width: 700px) {
+  .ctrl-views {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .ctrl-panel {
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
 }
 
 /* ── Settings panel sections ─────────────────────────────────────────────── */
@@ -274,99 +307,62 @@ body {
   min-width: 0;
 }
 
-/* ── Four-column stage body ───────────────────────────────────────────────── */
+/* ── Cards container + notes monitor ──────────────────────────────────────── */
 
-.ctrl-body {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(240px, 1fr));
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-@media (max-width: 1100px) {
-  .ctrl-body {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-@media (max-width: 700px) {
-  .ctrl-body {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ── Stage column ─────────────────────────────────────────────────────────── */
-
-/* Stage accent colors — applied to num badge + top border of header */
-[data-stage="videoAnalysis"]  { --stage-accent: oklch(0.72 0.18 200); --stage-accent-dim: oklch(0.72 0.18 200 / 0.12); }
-[data-stage="audioAnalysis"]  { --stage-accent: oklch(0.72 0.18 200); --stage-accent-dim: oklch(0.72 0.18 200 / 0.12); }
-[data-stage="soundSynthesis"] { --stage-accent: oklch(0.75 0.18 145); --stage-accent-dim: oklch(0.75 0.18 145 / 0.12); }
-[data-stage="visualSynthesis"]{ --stage-accent: oklch(0.70 0.18 300); --stage-accent-dim: oklch(0.70 0.18 300 / 0.12); }
-
-.stage-col {
-  height: 100%;
+.ctrl-cards {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
-  overflow: hidden;
-}
-.stage-col:last-child {
-  border-right: none;
 }
 
-.stage-col__hdr {
+/* The notes monitor sits flush above the chroma/signal/scene monitor. */
+.note-monitor {
   flex-shrink: 0;
+}
+
+/* ── Global view: settings JSON ───────────────────────────────────────────── */
+
+.json-note {
+  padding: 10px 12px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.json-area {
+  flex: 1;
+  min-height: 220px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: var(--bg);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  white-space: pre;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.json-area:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.json-btns {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--surface);
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
-  border-top: 2px solid var(--stage-accent, var(--accent));
-  user-select: none;
 }
-
-.stage-col__num {
+.json-status {
   font-size: 10px;
-  font-weight: 700;
   font-family: monospace;
-  color: var(--stage-accent, var(--accent));
-  background: var(--stage-accent-dim, var(--accent-dim));
-  border: 1px solid var(--stage-accent, var(--accent));
-  border-radius: 0;
-  padding: 1px 5px;
-  flex-shrink: 0;
-}
-
-.stage-col__name {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
   color: var(--text-dim);
-  flex: 1;
-  text-transform: uppercase;
-}
-
-.stage-col__arrow {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.stage-col__monitor {
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: #111;
-}
-
-.stage-col__controls {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  margin-left: auto;
 }
 
 /* ── Group section ────────────────────────────────────────────────────────── */
@@ -579,7 +575,9 @@ body {
   pointer-events: none;
   opacity: 0;
   transform: translateY(2px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
 }
 .row__label[data-hint]:hover::after,
 .row__label[data-hint]:focus-visible::after {
@@ -716,7 +714,9 @@ body {
   min-height: 28px;
   width: 100%;
   text-align: center;
-  transition: color 0.1s, border-color 0.1s;
+  transition:
+    color 0.1s,
+    border-color 0.1s;
 }
 .action-btn:hover {
   color: var(--text);
@@ -754,7 +754,9 @@ body {
   --accent-l: 0.65;
   --accent-c: 0.15;
   --accent-h: 200;
-  --color-accent: oklch(var(--accent-l, 0.65) var(--accent-c, 0.15) var(--accent-h, 200));
+  --color-accent: oklch(
+    var(--accent-l, 0.65) var(--accent-c, 0.15) var(--accent-h, 200)
+  );
   --color-white: #fff;
 
   --font-mono: "IBM Plex Mono", monospace;
@@ -1282,7 +1284,8 @@ body {
 
 .monitor .score-bar__fill {
   position: absolute;
-  left: 0; top: 0;
+  left: 0;
+  top: 0;
   height: 100%;
   width: 0%;
   transition: width 0.08s linear;
@@ -1416,4 +1419,3 @@ input[type="range"]::-moz-range-thumb {
   flex: 1;
   min-width: 0;
 }
-

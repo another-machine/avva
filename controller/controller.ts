@@ -1,12 +1,18 @@
 /**
  * controller/controller.ts
  *
- * Schema-driven settings controller. Generates a full control panel from
- * SCHEMA metadata — add a field to schema.ts and it appears here automatically.
+ * Schema-driven configuration UI. One page, three query-param views:
+ *   ?view=analysis  →  VIDEO | AUDIO   (analysis panels, side by side)
+ *   ?view=synth     →  SOUND | VISUAL  (synthesis panels)
+ *   ?view=global    →  HARMONY + SETTINGS JSON (copy / push)
+ * Default view is "analysis".
  *
- * Sync: BroadcastChannel always (same-origin). WebSocket relay optional for
- * cross-device use: open  http://<host>:5173/controller/?relay=ws://<host>:3001
- * or paste a relay URL into the connect form and hit Connect.
+ * NOTE: this ?view= namespace is the *controller page's* and is unrelated to the
+ * instrument app's ?view=loop|va|av (src/main.ts) — separate docs.
+ *
+ * Add a field to schema.ts and it appears in the relevant panel automatically.
+ * Sync: BroadcastChannel always (same-origin); WebSocket relay optional via the
+ * Global view's relay form or ?relay=ws://<host>:3001.
  */
 
 import { store } from "../src/store/store.js";
@@ -17,12 +23,14 @@ import {
   type SourceKind,
 } from "../src/store/schema.js";
 import { startBroadcastSync, startWebSocketSync } from "../src/store/sync.js";
-import { TelemetryReceiver } from "../src/store/telemetry.js";
+import { TelemetryReceiver, type TelemetryMsg } from "../src/store/telemetry.js";
 import {
   mountVideoAnalysisMonitor,
+  mountAudioAnalysisMonitorCore,
   mountSoundSynthesisMonitor,
-  mountAudioAnalysisMonitor,
   mountVisualSynthesisMonitor,
+  mountDetectedNotesMonitor,
+  mountSynthNotesMonitor,
 } from "./monitors.js";
 import { buildTriadsForMode, type ScaleMode } from "../src/harmony/music.js";
 
@@ -32,135 +40,86 @@ const ASSET_FILES = Object.keys(
   import.meta.glob("/assets/*", { eager: false }),
 ).map((p) => p.replace(/^\/assets\//, ""));
 
-// ── Stage → schema group mapping ─────────────────────────────────────────────
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"] as const;
 
-const STAGE_GROUPS: Record<string, string[]> = {
-  videoAnalysis:   ["calibration", "analysis"],
-  soundSynthesis:  ["synth", "bass", "mid", "treble", "pluck", "effects"],
-  audioAnalysis:   ["audioAnalysis"],
-  visualSynthesis: ["visualSynthesis"],
+// Keys rendered by hand in a section builder — skipped by the auto-gen cards so
+// they don't appear twice.
+const HANDLED_KEYS = new Set<SchemaKey>(["listen.source"]);
+
+// Nicer card titles than group.toUpperCase() for a couple of groups.
+const GROUP_TITLES: Partial<Record<string, string>> = {
+  audioEq: "EQ",
+  audioAnalysis: "ANALYSIS",
 };
 
-// ── Boot BroadcastChannel sync ────────────────────────────────────────────────
+// ── Tiny DOM helper ───────────────────────────────────────────────────────────
+
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  cls?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
 
 startBroadcastSync();
 
-// ── Telemetry monitors ────────────────────────────────────────────────────────
-
-const videoMon  = mountVideoAnalysisMonitor(document.getElementById("mon-video")!);
-const synthMon  = mountSoundSynthesisMonitor(document.getElementById("mon-synth")!);
-const audioMon  = mountAudioAnalysisMonitor(document.getElementById("mon-audio")!);
-const visualMon = mountVisualSynthesisMonitor(document.getElementById("mon-visual")!);
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _lastMsg: any = null;
-
-new TelemetryReceiver((msg) => {
-  _lastMsg = msg as any;
-  videoMon.onMsg(msg);
-  synthMon.onMsg(msg);
-  audioMon.onMsg(msg);
-  visualMon.onMsg(msg);
-});
-
-// Press D to copy a compact diagnostic JSON blob — paste into Claude instead of screenshots.
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "d" && e.key !== "D") return;
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-  const m = _lastMsg as any;
-  if (!m) return;
-  const v = m.video;
-  const a = m.audio;
-  const blob = {
-    vid: v ? {
-      bri: Math.round((v.bri ?? 0) * 100),
-      flux: Math.round((v.flux ?? 0) * 100),
-      spr: Math.round((v.spread ?? 0) * 100),
-      ctr: Math.round((v.contrast ?? 0) * 100),
-      tilt: Math.round((v.tilt ?? 0) * 100),
-      pos: Math.round(((v.pos ?? 0.5) - 0.5) * 200),
-      hue: Math.round(v.hue ?? 0),
-      sat: Math.round((v.sat ?? 0) * 100),
-    } : null,
-    aud: a ? {
-      bri: Math.round((a.bri ?? 0) * 100),
-      flux: Math.round((a.act ?? 0) * 100),
-      spr: Math.round((a.spread ?? 0) * 100),
-      ctr: Math.round((a.ctr ?? 0) * 100),
-      tilt: Math.round((a.tilt ?? 0.5) * 100),
-      pos: Math.round(((a.pos ?? 0.5) - 0.5) * 200),
-      hue: Math.round(a.hue ?? 0),
-    } : null,
-    chord: a?.chord?.label ?? "—",
-    synth: m.synth?.running ? "on" : "off",
-    note: m.synth?.note ?? null,
+// ── WebSocket relay (cross-device sync) ──────────────────────────────────────
+// Module-scoped so it auto-connects on EVERY view — the nav tabs are full-page
+// links, so the connection must be re-established on each load. The Global view's
+// RELAY form binds to this same connection and mirrors its state.
+const relay = (() => {
+  let stop: (() => void) | null = null;
+  let url = "";
+  const listeners = new Set<() => void>();
+  const notify = () => { for (const fn of listeners) fn(); };
+  return {
+    get connected() { return stop !== null; },
+    get url() { return url; },
+    connect(next: string) {
+      stop?.();
+      stop = null;
+      const u = next.trim();
+      if (!u) { notify(); return; }
+      try { new URL(u); } catch { return; }
+      stop = startWebSocketSync(u);
+      url = u;
+      try { sessionStorage.setItem("avva.relay", u); } catch { /* ignore */ }
+      notify();
+    },
+    disconnect() {
+      stop?.();
+      stop = null;
+      try { sessionStorage.removeItem("avva.relay"); } catch { /* ignore */ }
+      notify();
+    },
+    onChange(fn: () => void) { listeners.add(fn); },
   };
-  const json = JSON.stringify(blob);
-  navigator.clipboard.writeText(json).then(() => {
-    console.log("AVVA diag:", json);
-  }).catch(() => {
-    console.log("AVVA diag:", json);
-  });
-});
+})();
 
-// ── Optional WS relay from URL param ─────────────────────────────────────────
-
-const wsUrlInput = document.getElementById("ws-url") as HTMLInputElement;
-const wsConnectBtn = document.getElementById("ws-connect") as HTMLButtonElement;
-
-let stopWs: (() => void) | null = null;
-
-function connectWs(url: string): void {
-  stopWs?.();
-  stopWs = null;
-  if (!url.trim()) return;
-  try { new URL(url); } catch { return; }
-  stopWs = startWebSocketSync(url);
-  wsConnectBtn.classList.add("active");
-  wsUrlInput.value = url;
-  try { sessionStorage.setItem("avva.relay", url); } catch { /* ignore */ }
-}
-
-function disconnectWs(): void {
-  stopWs?.();
-  stopWs = null;
-  wsConnectBtn.classList.remove("active");
-  try { sessionStorage.removeItem("avva.relay"); } catch { /* ignore */ }
-}
-
-const initialRelay =
-  new URLSearchParams(location.search).get("relay") ??
-  (() => { try { return sessionStorage.getItem("avva.relay"); } catch { return null; } })();
-if (initialRelay) {
-  wsUrlInput.value = initialRelay;
-  connectWs(initialRelay);
-}
-
-wsConnectBtn.addEventListener("click", () => { stopWs ? disconnectWs() : connectWs(wsUrlInput.value.trim()); });
-wsUrlInput.addEventListener("keydown", (e) => { if (e.key === "Enter") connectWs(wsUrlInput.value.trim()); });
-
-// ── Build UI ──────────────────────────────────────────────────────────────────
-
-buildSettingsPanel(document.getElementById("settings-body")!);
-
-// Panel 0 collapse toggle
+// Auto-connect from ?relay= or the saved URL — independent of the active view.
 {
-  const panel = document.getElementById("settings-panel")!;
-  const btn   = document.getElementById("sp-toggle")!;
-  const LS_KEY = "avva.ctrl.settings.open";
-  const isOpen = () => !panel.classList.contains("collapsed");
-  const setOpen = (open: boolean) => {
-    panel.classList.toggle("collapsed", !open);
-    btn.textContent = open ? "◀" : "▶";
-    try { localStorage.setItem(LS_KEY, open ? "1" : "0"); } catch { /* */ }
-  };
-  btn.addEventListener("click", () => setOpen(!isOpen()));
-  // Restore from localStorage (default: open)
-  try {
-    const saved = localStorage.getItem(LS_KEY);
-    if (saved === "0") setOpen(false);
-  } catch { /* */ }
+  const initial =
+    new URLSearchParams(location.search).get("relay") ??
+    (() => { try { return sessionStorage.getItem("avva.relay"); } catch { return null; } })();
+  if (initial) relay.connect(initial);
 }
+
+type View = "analysis" | "synth" | "global";
+const VALID_VIEWS: View[] = ["analysis", "synth", "global"];
+const _viewParam = new URLSearchParams(location.search).get("view") ?? "";
+const VIEW: View = (VALID_VIEWS as string[]).includes(_viewParam)
+  ? (_viewParam as View)
+  : "analysis";
+
+// Monitors for the active view register here; the telemetry receiver fans each
+// frame out to all of them. Views that aren't active are never built.
+const activeMonitors: { onMsg(msg: TelemetryMsg): void }[] = [];
 
 // ── Collapse animation helper ────────────────────────────────────────────────
 // grid-template-rows animation is unreliable; measure actual px height instead.
@@ -171,7 +130,6 @@ function setBodyHeight(
   animate: boolean,
 ): void {
   if (!animate) {
-    // Set instantly — suppress transition so initial state doesn't animate in
     bodyEl.style.transition = "none";
     bodyEl.style.height = collapse ? "0px" : "";
     requestAnimationFrame(() => {
@@ -182,12 +140,10 @@ function setBodyHeight(
     return;
   }
   if (collapse) {
-    // Snapshot rendered height → reflow → animate to 0
     bodyEl.style.height = bodyEl.scrollHeight + "px";
     bodyEl.offsetHeight; // force reflow
     bodyEl.style.height = "0px";
   } else {
-    // Animate from 0 → measured content height, then clear to allow reflow
     bodyEl.style.height = bodyEl.scrollHeight + "px";
     bodyEl.addEventListener(
       "transitionend",
@@ -227,6 +183,7 @@ function makeGroupCard(
   group: string,
   onReset: () => void,
   buildBody: (bodyEl: HTMLElement) => void,
+  title: string = group.toUpperCase(),
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "group";
@@ -235,7 +192,7 @@ function makeGroupCard(
   const header = document.createElement("div");
   header.className = "group__header";
   const h2 = document.createElement("h2");
-  h2.textContent = group.toUpperCase();
+  h2.textContent = title;
   const chevron = document.createElement("span");
   chevron.className = "group__chevron";
   chevron.setAttribute("aria-hidden", "true");
@@ -267,44 +224,29 @@ function makeGroupCard(
   return section;
 }
 
-
-// Auto-generated groups — each stage column gets its schema groups
-const CTL_IDS: Record<string, string> = {
-  videoAnalysis: "ctl-video",
-  soundSynthesis: "ctl-synth",
-  audioAnalysis: "ctl-audio",
-  visualSynthesis: "ctl-visual",
-};
-
-for (const [stageId, groups] of Object.entries(STAGE_GROUPS)) {
-  const targetEl = document.getElementById(CTL_IDS[stageId]!);
-  if (!targetEl) continue;
-
+/** Append one collapsible card per schema group into `target`. */
+function appendGroupCards(target: HTMLElement, groups: string[]): void {
   for (const group of groups) {
-    // source group is handled by buildSourceGroup — skip auto-generation
-    if (group === "source") continue;
-
     const keys = (Object.keys(SCHEMA) as SchemaKey[]).filter(
-      (k) => SCHEMA[k].group === group,
+      (k) =>
+        SCHEMA[k].group === group &&
+        (SCHEMA[k].kind as string) !== "json" &&
+        !HANDLED_KEYS.has(k),
     );
     if (!keys.length) continue;
-
     const card = makeGroupCard(
       group,
       () => store.resetGroup(group),
       (body) => {
-        for (const key of keys) {
-          const field = SCHEMA[key];
-          if ((field.kind as string) === "json") continue;
-          body.appendChild(buildRow(key));
-        }
+        for (const key of keys) body.appendChild(buildRow(key));
       },
+      GROUP_TITLES[group] ?? group.toUpperCase(),
     );
-    targetEl.appendChild(card);
+    target.appendChild(card);
   }
 }
 
-// ── Settings panel (panel 0) ─────────────────────────────────────────────────
+// ── Settings-panel section helpers (relocated from the old sidebar) ───────────
 
 function _spSection(label: string): { section: HTMLElement; body: HTMLElement } {
   const section = document.createElement("div");
@@ -329,10 +271,9 @@ function _spRow(label: string, ctrl: HTMLElement): HTMLElement {
   return row;
 }
 
-function buildSettingsPanel(container: HTMLElement): void {
-  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"] as const;
+// ── VIDEO source / view / synth-toggle sections ───────────────────────────────
 
-  // ── SOURCE ────────────────────────────────────────────────────────────────
+function buildSourceSection(): HTMLElement {
   const { section: srcSec, body: srcBody } = _spSection("SOURCE");
   const UI_KINDS = ["camera", "file", "screen", "url"] as const;
   const getUiKind = () => store.get("source.kind") as (typeof UI_KINDS)[number];
@@ -388,15 +329,15 @@ function buildSettingsPanel(container: HTMLElement): void {
   rateInput.step = String(rateField.step);
   rateInput.value = String(store.get("source.playbackRate"));
   const rateOut = document.createElement("output");
-  rateOut.textContent = fmtNum(store.get("source.playbackRate") as number, rateField.step) + "\u00d7";
+  rateOut.textContent = fmtNum(store.get("source.playbackRate") as number, rateField.step) + "×";
   rateInput.addEventListener("input", () => {
     const v = Number(rateInput.value);
-    rateOut.textContent = fmtNum(v, rateField.step) + "\u00d7";
+    rateOut.textContent = fmtNum(v, rateField.step) + "×";
     store.set("source.playbackRate", v);
   });
   store.subscribeKey("source.playbackRate", (v) => {
     rateInput.value = String(v);
-    rateOut.textContent = fmtNum(v as number, rateField.step) + "\u00d7";
+    rateOut.textContent = fmtNum(v as number, rateField.step) + "×";
   });
   rateWrap.append(rateInput, rateOut);
   const rateRow = _spRow("Speed", rateWrap);
@@ -410,9 +351,10 @@ function buildSettingsPanel(container: HTMLElement): void {
   };
   updateSourceVis();
   store.subscribeKey("source.kind", updateSourceVis);
-  container.appendChild(srcSec);
+  return srcSec;
+}
 
-  // ── VIEW ──────────────────────────────────────────────────────────────────
+function buildViewSection(): HTMLElement {
   const { section: viewSec, body: viewBody } = _spSection("VIEW");
   const viewBtns = document.createElement("div");
   viewBtns.className = "ctrl ctrl--enum";
@@ -461,9 +403,10 @@ function buildSettingsPanel(container: HTMLElement): void {
     vboxGrid.appendChild(cell);
   }
   viewBody.appendChild(_spRow("Viewbox", vboxGrid));
-  container.appendChild(viewSec);
+  return viewSec;
+}
 
-  // ── SYNTH ─────────────────────────────────────────────────────────────────
+function buildSynthToggleSection(): HTMLElement {
   const { section: synthSec, body: synthBody } = _spSection("SYNTH");
   const synthBtn = document.createElement("button");
   const synthOn = store.get("synth.enabled") as boolean;
@@ -478,9 +421,31 @@ function buildSettingsPanel(container: HTMLElement): void {
   synthWrap.className = "ctrl ctrl--bool";
   synthWrap.appendChild(synthBtn);
   synthBody.appendChild(_spRow("Enable", synthWrap));
-  container.appendChild(synthSec);
+  return synthSec;
+}
 
-  // ── HARMONY ───────────────────────────────────────────────────────────────
+// ── AUDIO source (listen input) — dropdown ────────────────────────────────────
+
+function buildListenSourceSection(): HTMLElement {
+  const { section, body } = _spSection("SOURCE");
+  const field = SCHEMA["listen.source"] as { options: readonly string[] };
+  const sel = document.createElement("select");
+  sel.className = "sp-select";
+  for (const opt of field.options) {
+    const o = document.createElement("option");
+    o.value = opt; o.textContent = opt;
+    sel.appendChild(o);
+  }
+  sel.value = String(store.get("listen.source"));
+  sel.addEventListener("change", () => store.set("listen.source", sel.value as never));
+  store.subscribeKey("listen.source", (v) => { sel.value = String(v); });
+  body.appendChild(_spRow("Listen input", sel));
+  return section;
+}
+
+// ── HARMONY section ───────────────────────────────────────────────────────────
+
+function buildHarmonySection(): HTMLElement {
   const { section: harmSec, body: harmBody } = _spSection("HARMONY");
 
   const rootSelect = document.createElement("select");
@@ -556,7 +521,6 @@ function buildSettingsPanel(container: HTMLElement): void {
     const root = store.get("harmony.root") as string;
     const scale = store.get("harmony.scale") as ScaleMode;
     const triads = buildTriadsForMode(root, scale);
-    // I III V IV VII II VI — strong degrees first, I always first
     const order = [0, 2, 4, 3, 6, 1, 5];
     store.set("harmony.palette", order.map((i) => triads[i]).join(", "));
   });
@@ -598,105 +562,174 @@ function buildSettingsPanel(container: HTMLElement): void {
   czWrap.append(czInput, czOut);
   harmBody.appendChild(_spRow("X-zone", czWrap));
 
-  container.appendChild(harmSec);
+  return harmSec;
 }
 
-// ── Custom source group (legacy — no longer used, kept for safety) ────────────
+// ── WebSocket relay form (relocated to the Global view) ───────────────────────
 
-function buildSourceGroup(container: HTMLElement): void {
-  let sectionBody!: HTMLElement;
-  const section = makeGroupCard(
-    "source",
-    () => store.resetGroup("source"),
-    (body) => {
-      sectionBody = body;
-    },
+function buildWsRelaySection(): HTMLElement {
+  const { section, body } = _spSection("RELAY");
+  const urlInput = document.createElement("input");
+  urlInput.type = "url";
+  urlInput.className = "sp-input";
+  urlInput.placeholder = "ws://192.168.x.x:3001";
+  urlInput.spellcheck = false;
+  const connectBtn = document.createElement("button");
+  connectBtn.className = "action-btn";
+
+  // Bind the form to the module-level relay so its state survives view switches.
+  const sync = () => {
+    if (relay.url && document.activeElement !== urlInput) urlInput.value = relay.url;
+    connectBtn.classList.toggle("active", relay.connected);
+    connectBtn.textContent = relay.connected ? "Disconnect" : "Connect";
+  };
+  connectBtn.addEventListener("click", () =>
+    relay.connected ? relay.disconnect() : relay.connect(urlInput.value.trim()),
+  );
+  urlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") relay.connect(urlInput.value.trim());
+  });
+  relay.onChange(sync);
+  sync();
+
+  const row = document.createElement("div");
+  row.className = "relay-row";
+  row.append(urlInput, connectBtn);
+  body.appendChild(row);
+  return section;
+}
+
+// ── Panels ────────────────────────────────────────────────────────────────────
+
+function makePanel(name: string, side: string): { panel: HTMLElement; body: HTMLElement } {
+  const panel = el("section", "ctrl-panel");
+  panel.dataset.side = side;
+  const hdr = el("header", "ctrl-panel__hdr");
+  hdr.append(el("span", "ctrl-panel__name", name));
+  panel.appendChild(hdr);
+  const body = el("div", "ctrl-panel__body");
+  panel.appendChild(body);
+  return { panel, body };
+}
+
+/**
+ * Video / Audio analysis panel — identical structure so they read side by side:
+ *   notes → chroma/signal/scene → source → calibration → analysis.
+ */
+function buildAnalysisPanel(side: "video" | "audio"): HTMLElement {
+  const { panel, body } = makePanel(side === "video" ? "VIDEO" : "AUDIO", side);
+
+  // 1. NOTES (video = synth-generated ground truth; audio = analyzer-detected)
+  const notesHost = el("div");
+  activeMonitors.push(
+    side === "video"
+      ? mountSynthNotesMonitor(notesHost)
+      : mountDetectedNotesMonitor(notesHost),
   );
 
-  // ─ Kind selector ─────────────────────────────────────────────────────────
-  const UI_KINDS = ["camera", "file", "screen", "url"] as const;
-  const getUiKind = () => store.get("source.kind") as (typeof UI_KINDS)[number];
+  // 2. chroma / signal / scene
+  const monHost = el("div");
+  activeMonitors.push(
+    side === "video"
+      ? mountVideoAnalysisMonitor(monHost)
+      : mountAudioAnalysisMonitorCore(monHost),
+  );
 
-  const kindRow = document.createElement("div");
-  kindRow.className = "row";
-  const kindLabel = document.createElement("label");
-  kindLabel.className = "row__label";
-  kindLabel.textContent = "Source";
-  const kindCtrl = document.createElement("div");
-  kindCtrl.className = "ctrl ctrl--enum";
-  for (const kind of UI_KINDS) {
-    const btn = document.createElement("button");
-    btn.className = "seg-btn" + (getUiKind() === kind ? " active" : "");
-    btn.textContent = kind;
-    btn.addEventListener("click", () =>
-      store.set("source.kind", kind as SourceKind),
-    );
-    kindCtrl.appendChild(btn);
-  }
-  kindRow.append(kindLabel, kindCtrl);
-  sectionBody.appendChild(kindRow);
+  // 3. SOURCE
+  const sourceSections =
+    side === "video"
+      ? [buildSourceSection(), buildViewSection()]
+      : [buildListenSourceSection()];
 
-  // ─ URL input (shown only for url) ────────────────────────────────────────
-  const urlRow = buildRow("source.url");
-  sectionBody.appendChild(urlRow);
+  // 4. CALIBRATION (video filters | audio 8-band EQ)
+  const calib = el("div", "ctrl-cards");
+  appendGroupCards(calib, side === "video" ? ["calibration"] : ["audioEq"]);
 
-  // ─ File dropdown (shown only for file) ───────────────────────────────────
-  const fileRow = document.createElement("div");
-  fileRow.className = "row";
-  const fileLabel = document.createElement("label");
-  fileLabel.className = "row__label";
-  fileLabel.textContent = "Video file";
-  const fileCtrl = document.createElement("div");
-  fileCtrl.className = "ctrl ctrl--select";
-  const fileSelect = document.createElement("select");
-  const emptyOpt = document.createElement("option");
-  emptyOpt.value = "";
-  emptyOpt.textContent = "— select —";
-  fileSelect.appendChild(emptyOpt);
-  for (const f of ASSET_FILES) {
-    const opt = document.createElement("option");
-    opt.value = `/assets/${f}`;
-    opt.textContent = f;
-    fileSelect.appendChild(opt);
-  }
-  const curFile = store.get("source.file");
-  if (curFile) fileSelect.value = String(curFile);
-  fileSelect.addEventListener("change", () => {
-    store.set("source.kind", "file" as SourceKind);
-    store.set("source.file", fileSelect.value);
-  });
-  store.subscribeKey("source.file", (v) => {
-    fileSelect.value = String(v);
-  });
-  fileCtrl.appendChild(fileSelect);
-  fileRow.append(fileLabel, fileCtrl);
-  sectionBody.appendChild(fileRow);
+  // 5. ANALYSIS controls
+  const analysis = el("div", "ctrl-cards");
+  appendGroupCards(analysis, side === "video" ? ["analysis"] : ["audioAnalysis"]);
 
-  // ─ Camera facing (shown only for camera) ─────────────────────────────────
-  const cameraRow = buildRow("source.preferCamera");
-  sectionBody.appendChild(cameraRow);
+  body.append(notesHost, monHost, ...sourceSections, calib, analysis);
+  return panel;
+}
 
-  // ─ Playback rate (shown for file/url) ────────────────────────────────────
-  const rateRow = buildRow("source.playbackRate");
-  sectionBody.appendChild(rateRow);
+/** Sound / Visual synthesis panel. */
+function buildSynthPanel(side: "sound" | "visual"): HTMLElement {
+  const { panel, body } = makePanel(side === "sound" ? "SOUND" : "VISUAL", side);
+  // The master synth enable lives above the Sound panel's content.
+  if (side === "sound") body.appendChild(buildSynthToggleSection());
+  const monHost = el("div");
+  activeMonitors.push(
+    side === "sound"
+      ? mountSoundSynthesisMonitor(monHost)
+      : mountVisualSynthesisMonitor(monHost),
+  );
+  const cards = el("div", "ctrl-cards");
+  appendGroupCards(
+    cards,
+    side === "sound"
+      ? ["synth", "bass", "mid", "treble", "pluck", "effects"]
+      : ["visualSynthesis"],
+  );
+  body.append(monHost, cards);
+  return panel;
+}
 
-  // ─ Visibility logic ───────────────────────────────────────────────────────
-  const updateVisibility = () => {
-    const kind = getUiKind();
-    for (const btn of kindCtrl.querySelectorAll<HTMLButtonElement>(
-      ".seg-btn",
-    )) {
-      btn.classList.toggle("active", btn.textContent === kind);
+/** Global view — Harmony panel. */
+function buildHarmonyPanel(): HTMLElement {
+  const { panel, body } = makePanel("HARMONY", "harmony");
+  body.appendChild(buildHarmonySection());
+  return panel;
+}
+
+/** Global view — full settings JSON (copy / push) + relay form. */
+function buildGlobalJsonPanel(): HTMLElement {
+  const { panel, body } = makePanel("SETTINGS JSON", "json");
+
+  const note = el(
+    "div",
+    "json-note",
+    "Everything needed to restore this state. Device calibration (video filters + audio EQ) is saved locally and deliberately excluded — copying or pushing never carries or clobbers it.",
+  );
+
+  const ta = el("textarea", "json-area") as HTMLTextAreaElement;
+  ta.spellcheck = false;
+  const seed = () => {
+    if (document.activeElement !== ta) {
+      ta.value = JSON.stringify(store.exportPortable(), null, 2);
     }
-    urlRow.style.display = kind === "url" ? "" : "none";
-    fileRow.style.display = kind === "file" ? "" : "none";
-    cameraRow.style.display = kind === "camera" ? "" : "none";
-    rateRow.style.display = kind !== "camera" ? "" : "none";
   };
-  updateVisibility();
-  store.subscribeKey("source.kind", updateVisibility);
+  seed();
+  // Keep fresh as values change live (e.g. from another tab) unless being edited.
+  store.subscribe(() => seed());
 
-  container.appendChild(section);
+  const status = el("span", "json-status");
+
+  const copyBtn = el("button", "action-btn", "Copy");
+  copyBtn.addEventListener("click", () => {
+    const text = JSON.stringify(store.exportPortable(), null, 2);
+    navigator.clipboard
+      .writeText(text)
+      .then(() => { status.textContent = "Copied"; })
+      .catch(() => { status.textContent = "Copy failed"; });
+  });
+
+  const pushBtn = el("button", "action-btn", "Push");
+  pushBtn.addEventListener("click", () => {
+    try {
+      const parsed = JSON.parse(ta.value);
+      const { applied } = store.importPortable(parsed);
+      status.textContent = `Pushed ${applied} key${applied === 1 ? "" : "s"}`;
+    } catch {
+      status.textContent = "Invalid JSON";
+    }
+  });
+
+  const btnRow = el("div", "json-btns");
+  btnRow.append(copyBtn, pushBtn, status);
+
+  body.append(note, ta, btnRow, buildWsRelaySection());
+  return panel;
 }
 
 // ── Row / control builders ────────────────────────────────────────────────────
@@ -711,22 +744,19 @@ function buildRow(key: SchemaKey): HTMLElement {
   const label = document.createElement("label");
   label.className = "row__label";
   label.textContent = field.label;
-  // Render hint as a hover popover (CSS-styled tooltip) instead of an
-  // always-visible second line. Keeps row density tight in tier panels.
   const hintText =
     "hint" in field && typeof (field as { hint?: string }).hint === "string"
       ? (field as { hint: string }).hint
       : null;
   if (hintText) {
     label.dataset.hint = hintText;
-    label.title = hintText; // OS fallback + screen-reader accessibility
+    label.title = hintText;
   }
   row.appendChild(label);
 
   const ctrl = buildControl(key);
   row.appendChild(ctrl);
 
-  // Reflect external changes (BroadcastChannel / WebSocket) back into the control
   if (field.kind !== "action") {
     store.subscribeKey(key, (value) => syncControl(ctrl, key, value));
   }
@@ -760,7 +790,6 @@ function buildControl(key: SchemaKey): HTMLElement {
       store.set(key, v as never);
     });
 
-    // Double-click resets to schema default
     input.addEventListener("dblclick", () => store.reset(key));
 
     wrap.appendChild(input);
@@ -847,7 +876,7 @@ function syncControl(ctrl: HTMLElement, key: SchemaKey, value: unknown): void {
   if (field.kind === "number") {
     const input = ctrl.querySelector<HTMLInputElement>("input");
     const out = ctrl.querySelector<HTMLOutputElement>("output");
-    const unitStr = field.unit ? ` ${field.unit}` : "";
+    const unitStr = field.unit ? ` ${field.unit}` : "";
     if (input) input.value = String(value);
     if (out) out.textContent = fmtNum(value as number, field.step) + unitStr;
     return;
@@ -877,7 +906,6 @@ function syncControl(ctrl: HTMLElement, key: SchemaKey, value: unknown): void {
 
   if (field.kind === "string") {
     const input = ctrl.querySelector<HTMLInputElement>("input");
-    // Don't clobber while the user is typing
     if (input && document.activeElement !== input) input.value = String(value);
   }
 }
@@ -907,4 +935,100 @@ document.addEventListener("click", (e) => {
   if (!btn) return;
   const key = btn.dataset.actionKey as SchemaKey | undefined;
   if (key && ACTION_HANDLERS[key]) ACTION_HANDLERS[key]!();
+});
+
+// ── View router ───────────────────────────────────────────────────────────────
+
+function buildNav(): void {
+  const nav = document.getElementById("ctrl-nav")!;
+  const tabs: [View, string][] = [
+    ["analysis", "ANALYSIS"],
+    ["synth", "SYNTH"],
+    ["global", "GLOBAL"],
+  ];
+  for (const [v, label] of tabs) {
+    const a = el("a", "ctrl-nav__tab" + (v === VIEW ? " active" : ""), label);
+    const sp = new URLSearchParams(location.search);
+    sp.set("view", v);
+    a.href = `?${sp.toString()}${location.hash}`;
+    nav.appendChild(a);
+  }
+}
+
+function buildActiveView(): void {
+  const views = document.getElementById("ctrl-views")!;
+  views.dataset.view = VIEW;
+  if (VIEW === "analysis") {
+    views.append(buildAnalysisPanel("video"), buildAnalysisPanel("audio"));
+  } else if (VIEW === "synth") {
+    views.append(buildSynthPanel("sound"), buildSynthPanel("visual"));
+  } else {
+    views.append(buildHarmonyPanel(), buildGlobalJsonPanel());
+  }
+}
+
+buildNav();
+buildActiveView();
+
+// ── Telemetry fan-out ─────────────────────────────────────────────────────────
+// Merge partial frames from any number of producer windows (?view=va sends
+// video+synth, ?view=av sends audio+visual) so every active monitor stays
+// live. The _fresh* flags mark which stage advanced this frame so history
+// sparklines push once per real producer frame, not once per merge.
+interface MergedMsg extends TelemetryMsg {
+  _freshVideo?: boolean;
+  _freshAudio?: boolean;
+}
+const _merged: MergedMsg = { t: 0, fps: 0 };
+let _lastMsg: MergedMsg | null = null;
+
+new TelemetryReceiver((msg) => {
+  for (const k of Object.keys(msg) as (keyof TelemetryMsg)[]) {
+    const v = msg[k];
+    if (v !== undefined) (_merged as unknown as Record<string, unknown>)[k] = v;
+  }
+  _merged._freshVideo = msg.video !== undefined;
+  _merged._freshAudio = msg.audio !== undefined;
+  _lastMsg = _merged;
+  for (const m of activeMonitors) m.onMsg(_merged);
+});
+
+// Press D to copy a compact diagnostic JSON blob — paste into Claude instead of screenshots.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "d" && e.key !== "D") return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  const m = _lastMsg;
+  if (!m) return;
+  const v = m.video;
+  const a = m.audio;
+  const blob = {
+    vid: v ? {
+      bri: Math.round((v.bri ?? 0) * 100),
+      flux: Math.round((v.flux ?? 0) * 100),
+      spr: Math.round((v.spread ?? 0) * 100),
+      ctr: Math.round((v.contrast ?? 0) * 100),
+      tilt: Math.round((v.tilt ?? 0) * 100),
+      pos: Math.round(((v.pos ?? 0.5) - 0.5) * 200),
+      hue: Math.round(v.hue ?? 0),
+      sat: Math.round((v.sat ?? 0) * 100),
+    } : null,
+    aud: a ? {
+      bri: Math.round((a.bri ?? 0) * 100),
+      flux: Math.round((a.act ?? 0) * 100),
+      spr: Math.round((a.spread ?? 0) * 100),
+      ctr: Math.round((a.ctr ?? 0) * 100),
+      tilt: Math.round((a.tilt ?? 0.5) * 100),
+      pos: Math.round(((a.pos ?? 0.5) - 0.5) * 200),
+      hue: Math.round(a.hue ?? 0),
+    } : null,
+    chord: a?.chord?.label ?? "—",
+    synth: m.synth?.running ? "on" : "off",
+    note: m.synth?.note ?? null,
+  };
+  const json = JSON.stringify(blob);
+  navigator.clipboard.writeText(json).then(() => {
+    console.log("AVVA diag:", json);
+  }).catch(() => {
+    console.log("AVVA diag:", json);
+  });
 });

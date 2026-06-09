@@ -12,6 +12,7 @@
  */
 
 import { store } from "../store/store.js";
+import { AUDIO_EQ_KEYS } from "../store/schema.js";
 import { legacyConfig as CONFIG } from "../store/legacy-config.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
@@ -37,6 +38,8 @@ let audioRenderer: AudioRendererGL | null = null;
 let palette: Palette;
 let telemetry: TelemetrySender | null = null;
 let listener: ListenerBridge | null = null;
+let _srcNode: MediaStreamAudioSourceNode | null = null;
+let _micStream: MediaStream | null = null;
 let _running = false;
 
 function _buildPalette(): Palette {
@@ -55,11 +58,85 @@ function _buildPalette(): Palette {
 function _wireStream(stream: MediaStream): void {
   if (!actx || !audioAnalyzer) return;
   const src = actx.createMediaStreamSource(stream);
-  src.connect(audioAnalyzer.analyser);
+  src.connect(audioAnalyzer.input);
   // Stereo source for pos (L/R balance) analysis. The analyzer's
   // connectStereo creates its own splitter, so this is independent of the
   // mono path above.
   audioAnalyzer.connectStereo(src);
+  _srcNode = src;
+}
+
+// Tear down whatever source is currently feeding the analyzer (WebRTC listener,
+// mic, or both) so a new source can be wired cleanly. Disconnecting _srcNode
+// drops it from both the analyser and the stereo splitter in one call.
+function _teardownSource(): void {
+  if (listener) {
+    listener.close();
+    listener = null;
+  }
+  if (_srcNode) {
+    try { _srcNode.disconnect(); } catch { /* already gone */ }
+    _srcNode = null;
+  }
+  if (_micStream) {
+    for (const t of _micStream.getTracks()) t.stop();
+    _micStream = null;
+  }
+}
+
+// Acquire and wire the audio source selected by `listen.source` (broadcast | mic),
+// tearing down any previous source first. Safe to call repeatedly (live switch).
+async function _activateSource(): Promise<void> {
+  if (!actx || !audioAnalyzer) return;
+  _teardownSource();
+
+  const gate = document.getElementById("gate");
+  const err = document.getElementById("err");
+  const kind = (store.get("listen.source") as string) || "broadcast";
+
+  if (kind === "mic") {
+    if (err) err.textContent = "Requesting microphone…";
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        // Disable processing so the analyzer sees the raw signal.
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      // A live switch could have changed the source again mid-await.
+      if ((store.get("listen.source") as string) !== "mic") {
+        for (const t of stream.getTracks()) t.stop();
+        return;
+      }
+      _micStream = stream;
+      _wireStream(stream);
+      if (err) err.textContent = "";
+      gate?.classList.add("hide");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message || e.name : String(e);
+      if (err) err.textContent = "Mic error: " + msg;
+      gate?.classList.remove("hide");
+    }
+    return;
+  }
+
+  // broadcast: receive the synth master output over the WebRTC bridge.
+  listener = startListener({
+    onStream: (stream) => {
+      _wireStream(stream);
+      gate?.classList.add("hide");
+    },
+    onState: (s) => {
+      if (!err) return;
+      if (s === "searching") err.textContent = "Waiting for a broadcaster tab…";
+      else if (s === "idle") err.textContent = "Broadcaster found — turn the synth ON in the source tab.";
+      else if (s === "connecting") err.textContent = "Connecting…";
+      else if (s === "connected") err.textContent = "";
+      else if (s === "failed") err.textContent = "Connection failed. Refresh both tabs.";
+    },
+  });
 }
 
 function _applyRendererStoreValues(r: AudioRendererGL): void {
@@ -119,20 +196,17 @@ async function _begin(): Promise<void> {
   store.subscribeKey("audio.pulseReactivity", (v) => audioRenderer?.setPulseReactivity(v as number));
   store.subscribeKey("audio.briScale", (v) => audioRenderer?.setBriScale(v as number));
 
-  // ── Start WebRTC listener ────────────────────────────────────────────────
-  const errEl = document.getElementById("err");
-  listener = startListener({
-    onStream: (stream) => {
-      _wireStream(stream);
-      document.getElementById("gate")?.classList.add("hide");
-    },
-    onState: (s) => {
-      if (!errEl) return;
-      if (s === "searching") errEl.textContent = "Waiting for a broadcaster tab…";
-      else if (s === "connecting") errEl.textContent = "Connecting…";
-      else if (s === "connected") errEl.textContent = "";
-      else if (s === "failed") errEl.textContent = "Connection failed. Refresh both tabs.";
-    },
+  // ── 8-band pre-analysis EQ (device-local calibration) ────────────────────
+  AUDIO_EQ_KEYS.forEach((k, i) => {
+    audioAnalyzer!.setEqGain(i, store.get(k) as number);
+    store.subscribeKey(k, (v) => audioAnalyzer?.setEqGain(i, v as number));
+  });
+
+  // ── Acquire the selected audio source (broadcast | mic) ──────────────────
+  await _activateSource();
+  // Live-switch when the controller (or another tab) changes listen.source.
+  store.subscribeKey("listen.source", () => {
+    void _activateSource();
   });
 
   (window as any)._avva = { audioAnalyzer, audioRenderer, palette, store, listener };
@@ -147,7 +221,7 @@ function tick(t: number): void {
     telemetry?.send({
       t,
       fps: 60, // approximate; we're not measuring in this view
-      sourceLabel: listener?.connected ? "webrtc" : "—",
+      sourceLabel: _micStream ? "mic" : listener?.connected ? "webrtc" : "—",
       resLabel: "—",
       audio: audioFrame,
       visualUniforms: vis,
@@ -156,11 +230,28 @@ function tick(t: number): void {
   requestAnimationFrame(tick);
 }
 
+function _syncGateLabel(): void {
+  const btn = document.getElementById("go");
+  if (!btn) return;
+  btn.textContent =
+    (store.get("listen.source") as string) === "mic"
+      ? "Click to use mic"
+      : "Click to listen";
+}
+
 export function mountVisualizeView(): void {
-  document.body.className = "loop visualize";
+  document.body.className = "loop av";
   document.body.innerHTML = VIS_HTML;
   audioCanvas = document.getElementById("av-canvas") as HTMLCanvasElement;
 
+  _syncGateLabel();
+  store.subscribeKey("listen.source", _syncGateLabel);
+
   const goBtn = document.getElementById("go") as HTMLButtonElement | null;
-  goBtn?.addEventListener("click", () => void _begin());
+  goBtn?.addEventListener("click", () => {
+    // Before first start → boot everything. After that (e.g. retry after a mic
+    // permission error) → just re-acquire the source under a fresh gesture.
+    if (_running) void _activateSource();
+    else void _begin();
+  });
 }

@@ -15,6 +15,15 @@ export interface TelemetryMsg {
     running: boolean;
     keyLabel?: string;
     note?: { label: string; slotIndex: number } | null;
+    /**
+     * Ground-truth grid of notes the synth is generating, indexed
+     * (octave - noteGridOctL) * 12 + pitchClass, value 0..1. Omitted when the
+     * synth is off. Rendered in the controller's Video panel against the audio
+     * analyzer's detected-notes grid.
+     */
+    noteGrid?: Float32Array;
+    noteGridOctL?: number;
+    noteGridOctH?: number;
   };
   synthControls?: SynthControls;
   visualUniforms?: VisualUniforms;

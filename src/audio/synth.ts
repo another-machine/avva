@@ -35,6 +35,18 @@ const VOICE_GLIDE_SPREAD = [0.88, 1.0, 1.18, 0.94, 1.09] as const;
 
 const N_PLUCKS = 3;
 
+// ── Synth-notes telemetry grid ─────────────────────────────────
+// The synth knows exactly which (pitch-class, octave) notes it generates —
+// true ground truth, broadcast to the controller's Video panel so it lines up
+// against the audio analyzer's *detected* note grid. Octave range mirrors the
+// audio analyzer default (audioAnalysis.octL/octH = 2..6) so the two grids
+// align cell-for-cell.
+export const SYNTH_NOTE_GRID_OCT_L = 2;
+export const SYNTH_NOTE_GRID_OCT_H = 6;
+const NOTE_GRID_LEN = (SYNTH_NOTE_GRID_OCT_H - SYNTH_NOTE_GRID_OCT_L + 1) * 12;
+// Per-voice gains run ~0..0.25; scale into 0..1 for display.
+const NOTE_GRID_GAIN_NORM = 4;
+
 // ── Internal types ────────────────────────────────────────────
 
 interface TierVoice {
@@ -160,6 +172,7 @@ export class Synth {
   running: boolean;
   lastNote: { label: string; slotIndex: number; pitchClasses: number[] } | null;
   private _lastControls: SynthControls | null;
+  private readonly _noteGrid: Float32Array = new Float32Array(NOTE_GRID_LEN);
   private _prevRootFreq: number;
   private _lastCarrierTypes: string[];
   private _periodicWaves: Map<string, PeriodicWave>;
@@ -363,6 +376,28 @@ export class Synth {
     return this._lastControls;
   }
 
+  /**
+   * Ground-truth grid of the notes the synth is currently generating, indexed
+   * (octave - SYNTH_NOTE_GRID_OCT_L) * 12 + pitchClass, value 0..1. Null when
+   * the synth is stopped. Recomputed each update().
+   */
+  get lastNoteGrid(): Float32Array | null {
+    return this.running ? this._noteGrid : null;
+  }
+
+  /** Fold one generated voice (freq Hz, linear gain) into the note grid. */
+  private _addGridNote(freq: number, gain: number): void {
+    if (!(freq > 0) || gain <= 0) return;
+    // Invert _pcToFreq: semitones above C0 (A4 = pc9 oct4 = 57).
+    const abs = 57 + Math.round(12 * Math.log2(freq / 440));
+    const octave = Math.floor(abs / 12);
+    if (octave < SYNTH_NOTE_GRID_OCT_L || octave > SYNTH_NOTE_GRID_OCT_H) return;
+    const pc = ((abs % 12) + 12) % 12;
+    const i = (octave - SYNTH_NOTE_GRID_OCT_L) * 12 + pc;
+    const v = clamp01(gain * NOTE_GRID_GAIN_NORM);
+    if (v > this._noteGrid[i]) this._noteGrid[i] = v;
+  }
+
   // ── Per-frame update ────────────────────────────────────────
 
   update({
@@ -531,6 +566,9 @@ export class Synth {
       }
     }
 
+    // Rebuild the ground-truth note grid from this frame's generated voices.
+    this._noteGrid.fill(0);
+
     this._tiers.forEach(({ voices }, ti) => {
       const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
@@ -574,6 +612,7 @@ export class Synth {
             (1 - bf2) *
             (note._palettePrimary.gain ?? 1);
           fm.setGain(triadGain, tierTau);
+          this._addGridNote(targetFreq, triadGain);
           fm.setIndex(tierIndex[ti], tierSlowTau);
           const bassExtraDrift = ti === 0 ? 0.02 : 0;
           const targetRatio =
@@ -595,13 +634,10 @@ export class Synth {
               if (si < secPCs.length) {
                 const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
                 fm.glideTo(sf, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
-                fm.setGain(
-                  tierBase *
-                    voiceWeights[[0, 2][ei]] *
-                    bf2 *
-                    (secSlot.gain ?? 1),
-                  tierTau,
-                );
+                const sg =
+                  tierBase * voiceWeights[[0, 2][ei]] * bf2 * (secSlot.gain ?? 1);
+                fm.setGain(sg, tierTau);
+                this._addGridNote(sf, sg);
                 fm.setIndex(tierIndex[ti] * 0.65, tierSlowTau);
                 fm.setRatio(ratioBase, tierSlowTau);
                 handled = true;
@@ -612,10 +648,10 @@ export class Synth {
               if (xi < pcs.length) {
                 const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
                 fm.glideTo(ef, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
-                fm.setGain(
-                  tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25),
-                  tierTau,
-                );
+                const xg =
+                  tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25);
+                fm.setGain(xg, tierTau);
+                this._addGridNote(ef, xg);
                 fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), tierSlowTau);
                 fm.setRatio(ratioBase, tierSlowTau);
                 handled = true;
@@ -681,6 +717,7 @@ export class Synth {
     }
     this._cancelParam(this._sub!.gain.gain, now);
     this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tierTaus[0]);
+    this._addGridNote(subFreq, safeLo * 0.15);
 
     this._lastControls = {
       slotLabel: primarySlot.chord.label,

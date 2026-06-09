@@ -11,6 +11,7 @@
 import {
   SCHEMA,
   SCHEMA_VERSION,
+  isLocalKey,
   type SchemaKey,
   type Settings,
 } from "./schema.js";
@@ -98,7 +99,14 @@ export class Store {
   private writeTimer: number | null = null;
 
   constructor() {
-    this.state = { ...defaults(), ...readLocalStorage(), ...readHash() };
+    // Layer order: defaults ← localStorage ← URL hash. The hash is a shareable
+    // link and must never carry device-local calibration, so strip local keys
+    // from it (localStorage, applied first, keeps this device's calibration).
+    const hash = readHash();
+    for (const k of Object.keys(hash) as SchemaKey[]) {
+      if (isLocalKey(k)) delete (hash as Record<string, unknown>)[k];
+    }
+    this.state = { ...defaults(), ...readLocalStorage(), ...hash };
   }
 
   get<K extends SchemaKey>(key: K): Settings[K] {
@@ -108,6 +116,47 @@ export class Store {
   /** Read multiple keys at once. */
   snapshot(): Settings {
     return { ...this.state };
+  }
+
+  /**
+   * Portable settings: diff-from-defaults EXCLUDING device-local keys
+   * (calibration, audio EQ). This is what the Global view shows/copies and
+   * what the shareable URL hash carries — so a shared/pushed state never
+   * carries or clobbers another device's calibration.
+   */
+  exportPortable(): Partial<Settings> {
+    const out: Partial<Settings> = {};
+    for (const key of Object.keys(SCHEMA) as SchemaKey[]) {
+      if (isLocalKey(key)) continue;
+      const def = SCHEMA[key].default;
+      const cur = this.state[key];
+      const same =
+        typeof def === "object"
+          ? JSON.stringify(def) === JSON.stringify(cur)
+          : Object.is(def, cur);
+      if (!same) (out as Record<string, unknown>)[key] = cur;
+    }
+    return out;
+  }
+
+  /**
+   * Apply a portable settings object (pasted into the Global view and pushed).
+   * Validates via `sanitize`, drops any device-local keys, then applies
+   * atomically with origin "local" so the change broadcasts live to every
+   * open tab/instrument. Returns how many keys were applied.
+   */
+  importPortable(raw: unknown): { applied: number } {
+    const clean = sanitize(raw);
+    const patches: Patch[] = [];
+    for (const [k, v] of Object.entries(clean) as [
+      SchemaKey,
+      Settings[SchemaKey],
+    ][]) {
+      if (isLocalKey(k)) continue;
+      patches.push({ key: k, value: v, origin: "local" });
+    }
+    this.applyPatches(patches);
+    return { applied: patches.length };
   }
 
   /**
@@ -204,7 +253,8 @@ export class Store {
 
   private writeHash(): void {
     try {
-      const diff = this.diffFromDefaults();
+      // Shareable link → portable diff only (no device-local calibration/EQ).
+      const diff = this.exportPortable();
       if (Object.keys(diff).length === 0) {
         if (location.hash)
           history.replaceState(null, "", location.pathname + location.search);

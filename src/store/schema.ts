@@ -24,6 +24,13 @@ interface FieldBase<T> {
   group: string;
   hint?: string;
   unit?: string;
+  /**
+   * Device-local field: persisted to localStorage so it survives reloads on
+   * this machine, but excluded from the portable settings JSON and the
+   * shareable URL hash — so a state shared/pushed from another device never
+   * carries or clobbers this device's calibration. See store.exportPortable().
+   */
+  local?: boolean;
 }
 
 interface NumberField extends FieldBase<number> {
@@ -61,6 +68,7 @@ export interface ActionField {
   label: string;
   group: string;
   hint?: string;
+  local?: boolean;
 }
 
 export type Field =
@@ -260,7 +268,9 @@ export const SCHEMA = {
     hint: "Frames of history shown in sparklines",
   },
 
-  // ── calibration ────────────────────────────────────────────
+  // ── calibration (device-local: video) ──────────────────────
+  // These tune the input *before* analysis on this device. They persist to
+  // localStorage but are excluded from the portable JSON / shared URL.
   "calibration.brightness": {
     kind: "number",
     default: 1.0,
@@ -269,6 +279,7 @@ export const SCHEMA = {
     step: 0.05,
     label: "Brightness",
     group: "calibration",
+    local: true,
   },
   "calibration.contrast": {
     kind: "number",
@@ -278,6 +289,7 @@ export const SCHEMA = {
     step: 0.05,
     label: "Contrast",
     group: "calibration",
+    local: true,
   },
   "calibration.saturation": {
     kind: "number",
@@ -287,6 +299,7 @@ export const SCHEMA = {
     step: 0.05,
     label: "Saturation",
     group: "calibration",
+    local: true,
   },
   "calibration.hueRotate": {
     kind: "number",
@@ -297,8 +310,22 @@ export const SCHEMA = {
     label: "Hue rotate",
     unit: "°",
     group: "calibration",
+    local: true,
     hint: "CSS hue-rotate applied to video before analysis — shifts all colours around the wheel",
   },
+
+  // ── audio EQ (device-local: 8-band pre-analysis calibration) ─
+  // Peaking biquads inserted before the audio analyser. Boost/cut a band to
+  // tune what the analyzer hears (mic colouration, room, broadcast). Device-
+  // local: persisted to localStorage, excluded from the portable JSON / URL.
+  "audioEq.b0": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "60 Hz", group: "audioEq", local: true },
+  "audioEq.b1": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "150 Hz", group: "audioEq", local: true },
+  "audioEq.b2": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "400 Hz", group: "audioEq", local: true },
+  "audioEq.b3": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "1 kHz", group: "audioEq", local: true },
+  "audioEq.b4": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "2.4 kHz", group: "audioEq", local: true },
+  "audioEq.b5": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "4 kHz", group: "audioEq", local: true },
+  "audioEq.b6": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "8 kHz", group: "audioEq", local: true },
+  "audioEq.b7": { kind: "number", default: 0, min: -12, max: 12, step: 0.5, unit: "dB", label: "12 kHz", group: "audioEq", local: true },
   // ── harmony ────────────────────────────────────────────────
   "harmony.root": {
     kind: "string",
@@ -858,6 +885,14 @@ export const SCHEMA = {
   },
 
   // ── audio analyzer (stage 3) ───────────────────────────────
+  "listen.source": {
+    kind: "enum",
+    default: "broadcast",
+    options: ["broadcast", "mic"] as const,
+    label: "Listen input",
+    group: "audioAnalysis",
+    hint: "Audio source for the LISTEN window (?view=av). broadcast = synth audio relayed from a loop or ?view=va tab in the SAME browser; mic = this device's microphone. Switching takes effect live.",
+  },
   "audioAnalysis.gateExp": {
     kind: "number",
     default: 50,
@@ -1013,6 +1048,31 @@ export const SCHEMA = {
 } as const satisfies Record<string, Field>;
 
 export type SchemaKey = keyof typeof SCHEMA;
+
+/** Keys tagged `local: true` — device-local, never exported in the portable JSON. */
+export const LOCAL_KEYS: ReadonlySet<SchemaKey> = new Set(
+  (Object.keys(SCHEMA) as SchemaKey[]).filter(
+    (k) => (SCHEMA[k] as Field).local === true,
+  ),
+);
+
+export function isLocalKey(k: SchemaKey): boolean {
+  return LOCAL_KEYS.has(k);
+}
+
+/** Ordered EQ keys + their peaking-filter centre frequencies (Hz). */
+export const AUDIO_EQ_KEYS = [
+  "audioEq.b0",
+  "audioEq.b1",
+  "audioEq.b2",
+  "audioEq.b3",
+  "audioEq.b4",
+  "audioEq.b5",
+  "audioEq.b6",
+  "audioEq.b7",
+] as const satisfies readonly SchemaKey[];
+
+export const AUDIO_EQ_FREQS = [60, 150, 400, 1000, 2400, 4000, 8000, 12000];
 
 // Widen literal defaults to their semantic type so the store accepts any
 // in-range value, not just the literal default.

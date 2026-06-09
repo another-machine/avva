@@ -24,6 +24,7 @@
  */
 
 import { Palette, type ChordTemplate } from "../harmony/palette.js";
+import { AUDIO_EQ_FREQS } from "../store/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -130,8 +131,11 @@ export interface NoteInfo {
 export class AudioAnalyzer {
   palette: Palette;
   readonly analyser: AnalyserNode;
+  /** EQ head — connect input sources here (feeds the 8-band EQ → analyser). */
+  readonly input: AudioNode;
 
   private readonly _actx: AudioContext;
+  private readonly _eq: BiquadFilterNode[];
   private readonly _attack: number;
   private readonly _release: number;
   private readonly _gateExp: number;
@@ -175,6 +179,26 @@ export class AudioAnalyzer {
     this.analyser = audioContext.createAnalyser();
     this.analyser.fftSize = opts.fftSize ?? 32768;
     this.analyser.smoothingTimeConstant = opts.smoothing ?? 0.85;
+
+    // ── 8-band pre-analysis EQ (device-local calibration) ──────
+    // input → peaking(b0) → … → peaking(b7) → analyser. At 0 dB the chain is
+    // transparent; gains are driven live by the audioEq.* store keys via
+    // setEqGain(). This shapes what the analyser hears, not the audio output.
+    this.input = audioContext.createGain();
+    this._eq = AUDIO_EQ_FREQS.map((f) => {
+      const b = audioContext.createBiquadFilter();
+      b.type = "peaking";
+      b.frequency.value = f;
+      b.Q.value = 1.0;
+      b.gain.value = 0;
+      return b;
+    });
+    let eqPrev: AudioNode = this.input;
+    for (const b of this._eq) {
+      eqPrev.connect(b);
+      eqPrev = b;
+    }
+    eqPrev.connect(this.analyser);
 
     this._attack = opts.attack ?? 0.25;
     this._release = opts.release ?? 0.06;
@@ -252,9 +276,15 @@ export class AudioAnalyzer {
     };
   }
 
-  /** Connect any AudioNode as the analyser's input. */
+  /** Connect any AudioNode as the analyser's input (through the EQ). */
   connect(node: AudioNode): void {
-    node.connect(this.analyser);
+    node.connect(this.input);
+  }
+
+  /** Set one EQ band's gain in dB (0 = flat). Band index 0..7. */
+  setEqGain(band: number, db: number): void {
+    const b = this._eq[band];
+    if (b) b.gain.value = db;
   }
 
   /** Connect a stereo source for L/R balance analysis (pos axis). */

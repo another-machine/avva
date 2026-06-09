@@ -1,9 +1,14 @@
 import { store } from "../store/store.js";
+import { AUDIO_EQ_KEYS } from "../store/schema.js";
 import { legacyConfig as CONFIG } from "../store/legacy-config.js";
 import { VideoSource } from "../input/video-source.js";
 import { Analyzer } from "../analysis/analyzer.js";
 import { Calibration } from "../controls/calibration.js";
-import { Synth } from "../audio/synth.js";
+import {
+  Synth,
+  SYNTH_NOTE_GRID_OCT_L,
+  SYNTH_NOTE_GRID_OCT_H,
+} from "../audio/synth.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
@@ -31,9 +36,32 @@ const LOOP_HTML = /* html */ `
   </div>
 `;
 
+// va view (video → audio only). Same camera pane + analysis overlays as the
+// loop, but no visualizer pane — the blob renderer lives in the listener window.
+const SOURCE_HTML = /* html */ `
+  <div id="stage">
+    <div class="pane pane--cam">
+      <video id="vid" playsinline muted></video>
+      <canvas id="heat" class="canvas-layer"></canvas>
+      <canvas id="tilt" class="canvas-layer"></canvas>
+      <canvas id="mask" class="canvas-layer"></canvas>
+    </div>
+  </div>
+  <div id="gate" class="hide">
+    <h1 class="gate__title">AVVA</h1>
+    <div class="gate__err" id="err" role="alert"></div>
+    <button class="gate__btn" id="go">Retry</button>
+  </div>
+`;
+
 // ── Module state ──────────────────────────────────────────────────────────────
 
 const state = { fps: 0, frames: 0, fpsT: 0, lastT: 0 };
+
+// When false (?view=va) this window runs the video→audio half of the loop
+// only: camera + analysis + synth + WebRTC broadcast, with no local audio
+// analyzer or blob renderer. The listener window (?view=av) draws those.
+let _renderVisuals = true;
 
 let videoEl: HTMLVideoElement;
 let audioCanvas: HTMLCanvasElement;
@@ -245,19 +273,24 @@ async function begin(): Promise<void> {
     },
   });
 
-  audioRenderer = new AudioRendererGL(audioCanvas, palette.slotHues, {
-    feedback: CONFIG.feedback,
-    noiseScale: CONFIG.blobWarp,
-  });
-  audioRenderer.setN(palette.slots.length);
-  // Sync all visual synthesis store values — subscribeKey doesn't fire on init
-  audioRenderer.setBlobSpeed(store.get("audio.blobSpeed") as number);
-  audioRenderer.setBlobDrive(store.get("audio.blobDrive") as number);
-  audioRenderer.setShiftSpeed(store.get("audio.shiftSpeed") as number);
-  audioRenderer.setBlobSize(store.get("audio.blobSize") as number);
-  audioRenderer.setBlobSharp(store.get("audio.blobSharp") as number);
-  audioRenderer.setPulseReactivity(store.get("audio.pulseReactivity") as number);
-  audioRenderer.setBriScale(store.get("audio.briScale") as number);
+  // Source mode skips the local blob renderer (stage 4) entirely — the
+  // listener window owns the audio→visual side. All audio.* subscriptions
+  // below are null-safe (audioRenderer?.…), so they no-op here harmlessly.
+  if (_renderVisuals) {
+    audioRenderer = new AudioRendererGL(audioCanvas, palette.slotHues, {
+      feedback: CONFIG.feedback,
+      noiseScale: CONFIG.blobWarp,
+    });
+    audioRenderer.setN(palette.slots.length);
+    // Sync all visual synthesis store values — subscribeKey doesn't fire on init
+    audioRenderer.setBlobSpeed(store.get("audio.blobSpeed") as number);
+    audioRenderer.setBlobDrive(store.get("audio.blobDrive") as number);
+    audioRenderer.setShiftSpeed(store.get("audio.shiftSpeed") as number);
+    audioRenderer.setBlobSize(store.get("audio.blobSize") as number);
+    audioRenderer.setBlobSharp(store.get("audio.blobSharp") as number);
+    audioRenderer.setPulseReactivity(store.get("audio.pulseReactivity") as number);
+    audioRenderer.setBriScale(store.get("audio.briScale") as number);
+  }
 
   document.getElementById("gate")?.classList.add("hide");
 
@@ -268,8 +301,15 @@ async function begin(): Promise<void> {
   // ── Controller subscriptions ────────────────────────────────────────────────
 
   store.subscribeKey("synth.enabled", (v) => {
-    if (v && !synth.running) synth.start();
-    else if (!v && synth.running) synth.stop();
+    if (v && !synth.running) {
+      synth.start();
+      // Wire the broadcast tap (and local analyzer) right here, off the enable
+      // event, instead of waiting for the rAF pipeline tick. rAF is paused while
+      // this tab is backgrounded — which it usually is when the synth gets
+      // enabled from the controller/LISTEN tab — so the tick-driven tap would
+      // never run and the broadcaster would sit there publishing nothing.
+      maybeTapSynth();
+    } else if (!v && synth.running) synth.stop();
   });
 
   store.subscribeKey("synth.masterGain", (v) => {
@@ -488,18 +528,33 @@ async function begin(): Promise<void> {
 }
 
 function maybeTapSynth(): void {
-  if (audioAnalyzer || !synth.running || !synth._actx || !synth._master) return;
+  // Fully wired already? (full loop = analyzer + broadcast; source = broadcast only)
+  if (broadcastStreamNode && (audioAnalyzer || !_renderVisuals)) return;
+  if (!synth.running || !synth._actx || !synth._master) return;
   if (!palette) return;
-  audioAnalyzer = new AudioAnalyzer({
-    audioContext: synth._actx,
-    palette,
-  });
-  synth._master.connect(audioAnalyzer.analyser);
-  if (synth._limiter) audioAnalyzer.connectStereo(synth._limiter);
+
+  // Local audio analysis (stages 3+4) runs only in full-loop mode. In source
+  // mode the listener window analyzes the broadcast stream instead.
+  if (_renderVisuals && !audioAnalyzer) {
+    audioAnalyzer = new AudioAnalyzer({
+      audioContext: synth._actx,
+      palette,
+    });
+    synth._master.connect(audioAnalyzer.input);
+    if (synth._limiter) audioAnalyzer.connectStereo(synth._limiter);
+
+    // 8-band pre-analysis EQ (device-local calibration). Created once with the
+    // analyzer; gains track the audioEq.* store keys live.
+    AUDIO_EQ_KEYS.forEach((k, i) => {
+      audioAnalyzer!.setEqGain(i, store.get(k) as number);
+      store.subscribeKey(k, (v) => audioAnalyzer?.setEqGain(i, v as number));
+    });
+  }
 
   // Expose the synth's master output as a MediaStream for any listener tabs
   // that have started a WebRTC bridge (visualize-view). Tap from _limiter so
   // the broadcast carries the same final-stage signal that hits the speakers.
+  // Both modes broadcast — this is the only audio path out of a source window.
   if (broadcaster && !broadcastStreamNode) {
     const tapSource: AudioNode = synth._limiter ?? synth._master;
     const dest = synth._actx.createMediaStreamDestination();
@@ -535,7 +590,13 @@ function tick(t: number): void {
       resLabel: _resLabel,
       video: frame?.out,
       histBins: frame?.histBins,
-      synth: { running: synth.running, note: synth.lastNote ?? null },
+      synth: {
+        running: synth.running,
+        note: synth.lastNote ?? null,
+        noteGrid: synth.lastNoteGrid ?? undefined,
+        noteGridOctL: SYNTH_NOTE_GRID_OCT_L,
+        noteGridOctH: SYNTH_NOTE_GRID_OCT_H,
+      },
       synthControls: synth.lastControls ?? undefined,
       audio: audioFrame ?? undefined,
       visualUniforms: vis ?? undefined,
@@ -547,9 +608,10 @@ function tick(t: number): void {
 
 // ── Mount ─────────────────────────────────────────────────────────────────────
 
-export function mountLoopView(): void {
-  document.body.className = "loop";
-  document.body.innerHTML = LOOP_HTML;
+export function mountLoopView(opts: { renderVisuals?: boolean } = {}): void {
+  _renderVisuals = opts.renderVisuals !== false;
+  document.body.className = _renderVisuals ? "loop" : "loop va";
+  document.body.innerHTML = _renderVisuals ? LOOP_HTML : SOURCE_HTML;
 
   store.set("synth.enabled", false);
   void begin();

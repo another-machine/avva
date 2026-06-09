@@ -4,69 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0e0e0e" />
-    <title>AVVA · Controller</title>
+    <title>AVVA · Config</title>
     <link rel="stylesheet" href="/controller/controller.css" />
   </head>
   <body>
     <div class="ctrl-main">
-      <!-- Panel 0: global settings (collapsible) -->
-      <div class="settings-panel" id="settings-panel">
-        <div class="settings-panel__strip">
-          <button class="sp-toggle" id="sp-toggle" title="Toggle settings">◀</button>
-          <span class="sp-strip-label">0</span>
-        </div>
-        <div class="settings-panel__body" id="settings-body">
-          <div class="ws-form" id="ws-form">
-            <input
-              id="ws-url"
-              type="url"
-              placeholder="ws://192.168.x.x:3001"
-              spellcheck="false"
-              autocomplete="off"
-            />
-            <button id="ws-connect">⇄</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Panels 1–4: reordered 1|3|2|4 so input/output analysis sit adjacent -->
-      <div class="ctrl-body">
-        <section class="stage-col" data-stage="videoAnalysis">
-          <header class="stage-col__hdr">
-            <span class="stage-col__num">1</span>
-            <span class="stage-col__name">VIDEO ANALYSIS</span>
-          </header>
-          <div class="stage-col__monitor" id="mon-video"></div>
-          <div class="stage-col__controls" id="ctl-video"></div>
-        </section>
-
-        <section class="stage-col" data-stage="audioAnalysis">
-          <header class="stage-col__hdr">
-            <span class="stage-col__num">3</span>
-            <span class="stage-col__name">AUDIO ANALYSIS</span>
-          </header>
-          <div class="stage-col__monitor" id="mon-audio"></div>
-          <div class="stage-col__controls" id="ctl-audio"></div>
-        </section>
-
-        <section class="stage-col" data-stage="soundSynthesis">
-          <header class="stage-col__hdr">
-            <span class="stage-col__num">2</span>
-            <span class="stage-col__name">SOUND SYNTHESIS</span>
-          </header>
-          <div class="stage-col__monitor" id="mon-synth"></div>
-          <div class="stage-col__controls" id="ctl-synth"></div>
-        </section>
-
-        <section class="stage-col" data-stage="visualSynthesis">
-          <header class="stage-col__hdr">
-            <span class="stage-col__num">4</span>
-            <span class="stage-col__name">VISUAL SYNTHESIS</span>
-          </header>
-          <div class="stage-col__monitor" id="mon-visual"></div>
-          <div class="stage-col__controls" id="ctl-visual"></div>
-        </section>
-      </div>
+      <!-- View tabs: analysis | synth | global (built in controller.ts) -->
+      <nav class="ctrl-nav" id="ctrl-nav"></nav>
+      <!-- Active view's panels mount here, selected by ?view= -->
+      <div class="ctrl-views" id="ctrl-views"></div>
     </div>
 
     <script type="module" src="/controller/controller.ts"></script>
