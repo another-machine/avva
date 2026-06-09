@@ -40,6 +40,7 @@ let telemetry: TelemetrySender | null = null;
 let listener: ListenerBridge | null = null;
 let _srcNode: MediaStreamAudioSourceNode | null = null;
 let _micStream: MediaStream | null = null;
+let _streamSink: HTMLAudioElement | null = null;
 let _running = false;
 
 function _buildPalette(): Palette {
@@ -57,6 +58,17 @@ function _buildPalette(): Palette {
 
 function _wireStream(stream: MediaStream): void {
   if (!actx || !audioAnalyzer) return;
+  // Chrome quirk: a REMOTE WebRTC MediaStream delivers no samples into a Web
+  // Audio graph (the analyser reads silence) unless the stream is also attached
+  // to an HTMLMediaElement. A muted <audio> sink "pulls" the stream so the
+  // analyser actually receives data. (Local mic streams don't need this, which
+  // is why mic visualized but broadcast didn't.)
+  const sink = new Audio();
+  sink.srcObject = stream;
+  sink.muted = true; // audio is already audible from the source tab; don't double it
+  void sink.play().catch(() => {});
+  _streamSink = sink;
+
   const src = actx.createMediaStreamSource(stream);
   src.connect(audioAnalyzer.input);
   // Stereo source for pos (L/R balance) analysis. The analyzer's
@@ -77,6 +89,11 @@ function _teardownSource(): void {
   if (_srcNode) {
     try { _srcNode.disconnect(); } catch { /* already gone */ }
     _srcNode = null;
+  }
+  if (_streamSink) {
+    try { _streamSink.pause(); } catch { /* */ }
+    _streamSink.srcObject = null;
+    _streamSink = null;
   }
   if (_micStream) {
     for (const t of _micStream.getTracks()) t.stop();
