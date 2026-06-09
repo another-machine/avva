@@ -406,24 +406,6 @@ function buildViewSection(): HTMLElement {
   return viewSec;
 }
 
-function buildSynthToggleSection(): HTMLElement {
-  const { section: synthSec, body: synthBody } = _spSection("SYNTH");
-  const synthBtn = document.createElement("button");
-  const synthOn = store.get("synth.enabled") as boolean;
-  synthBtn.className = "toggle" + (synthOn ? " on" : "");
-  synthBtn.textContent = synthOn ? "ON" : "OFF";
-  synthBtn.addEventListener("click", () => store.set("synth.enabled", !store.get("synth.enabled") as never));
-  store.subscribeKey("synth.enabled", (v) => {
-    synthBtn.classList.toggle("on", !!v);
-    synthBtn.textContent = v ? "ON" : "OFF";
-  });
-  const synthWrap = document.createElement("div");
-  synthWrap.className = "ctrl ctrl--bool";
-  synthWrap.appendChild(synthBtn);
-  synthBody.appendChild(_spRow("Enable", synthWrap));
-  return synthSec;
-}
-
 // ── AUDIO source (listen input) — dropdown ────────────────────────────────────
 
 function buildListenSourceSection(): HTMLElement {
@@ -656,8 +638,6 @@ function buildAnalysisPanel(side: "video" | "audio"): HTMLElement {
 /** Sound / Visual synthesis panel. */
 function buildSynthPanel(side: "sound" | "visual"): HTMLElement {
   const { panel, body } = makePanel(side === "sound" ? "SOUND" : "VISUAL", side);
-  // The master synth enable lives above the Sound panel's content.
-  if (side === "sound") body.appendChild(buildSynthToggleSection());
   const monHost = el("div");
   activeMonitors.push(
     side === "sound"
@@ -671,6 +651,13 @@ function buildSynthPanel(side: "sound" | "visual"): HTMLElement {
       ? ["synth", "bass", "mid", "treble", "pluck", "effects"]
       : ["visualSynthesis"],
   );
+  if (side === "sound") {
+    // Master synth ON/OFF goes at the top of the SYNTH card (above Gain) instead
+    // of a separate section, so the monitor's chord row stays flush with the top
+    // of the panel and lines up with the VISUAL panel's chord row.
+    const synthBody = cards.querySelector('[data-group="synth"] .group__body');
+    synthBody?.prepend(buildRow("synth.enabled"));
+  }
   body.append(monHost, cards);
   return panel;
 }
