@@ -128,11 +128,25 @@ void main() {
   float tSpeed = uBlobSpeed + uAct * uBlobDrive;
   float t = uTime * (tSpeed + uPulse * uShiftSpeed);
 
-  // Organic edge warp — small noise displacement before distance test
+  // Global rotation sense, free-running. dir = sin(uTime*dirRate) is the SIGNED
+  // angular speed; swirl is its integral, so an orbit phase of (swirl * rate)
+  // winds one way for ~39s (≈ a full turn), slows, then unwinds the other way.
+  // Peak speed matches the old constant orbit; only the direction reverses.
+  float dirRate = 0.08;
+  float swirl   = -cos(uTime * dirRate) / dirRate;
+
+  // Organic edge warp — small noise displacement before distance test.
+  // Animate the warp noise on a small circular path instead of scrolling it
+  // along one axis: the old t*0.09 on x made the blob's surface texture
+  // ripple steadily leftward, which reads as the whole cloud streaming
+  // right-to-left. Orbiting the offset keeps the shimmer with no net direction.
   float warpAmt = uBlobWarp + uAct * 0.014;
+  vec2 warpFlow = vec2(cos(t * 0.10), sin(t * 0.10)) * 1.2;
+  // Sample in aspect-corrected uvA space so the warp cells are isotropic on
+  // wide displays (uv space stretches them ~aspect× horizontally).
   vec2 uvW = uvA + vec2(
-    snoise(uv * 2.8 + vec2(t * 0.09, 0.0)),
-    snoise(uv * 2.8 + vec2(0.0, t * 0.09 + 5.7))
+    snoise(uvA * 2.8 + warpFlow),
+    snoise(uvA * 2.8 + warpFlow + 5.7)
   ) * warpAmt;
 
   // ── Metaball accumulation ────────────────────────────────────────────────
@@ -158,20 +172,31 @@ void main() {
     float orbitA = 0.22 + uSpread * 0.20;
     float orbitB = orbitA * 0.83;
 
-    // Blob A — primary, slow Lissajous + secondary wobble
+    // Blob A — true circle ON SCREEN. Screen position = uvA * H (uniform), so the
+    // x and y orbit AMPLITUDES must be equal in uvA space to look circular. The
+    // old orbitA*aspect on x (but plain orbitA on y) stretched the orbit into
+    // a horizontal ellipse ~aspect× wide — the real source of the right-to-left
+    // drift. Aspect stays only on the CENTER (0.5*aspect) to keep it centered.
+    // wA bumped so a full loop takes ~25s and the curl is visible while watching.
+    float wA = 0.24 + fi * 0.030;
+    float pA = swirl * wA + seed;
     vec2 cA = vec2(
-      posShift + 0.5 * aspect + orbitA * aspect * sin(t * (0.088 + fi * 0.019) + seed)
-                              + 0.07 * aspect * sin(t * (0.23  + fi * 0.041) + seed + 2.4),
-      0.5 + tiltOffset        + orbitA * sin(t * (0.11  + fi * 0.013) + seed + 1.7)
-                              + 0.07 * sin(t * (0.19  + fi * 0.031) + seed + 4.1)
+      posShift + 0.5 * aspect + orbitA * sin(pA)
+                              + 0.07 * sin(t * (0.23 + fi * 0.041) + seed + 2.4),
+      0.5 + tiltOffset        + orbitA * cos(pA)
+                              + 0.07 * sin(t * (0.19 + fi * 0.031) + seed + 4.1)
     );
 
-    // Blob B — secondary, offset phase so they separate and merge
+    // Blob B — circular too, counter-rotating (note the -cos) at a different
+    // rate, so the pair sweeps around and through each other. No aspect on the
+    // amplitudes here either, for the same reason.
+    float wB = 0.20 + fi * 0.034;
+    float pB = swirl * wB + seed + 3.1;
     vec2 cB = vec2(
-      posShift + 0.5 * aspect + orbitB * aspect * sin(t * (0.13  + fi * 0.023) + seed + 3.1)
-                              + 0.06 * aspect * sin(t * (0.31  + fi * 0.017) + seed + 0.8),
-      0.5 + tiltOffset        + orbitB * sin(t * (0.073 + fi * 0.029) + seed + 5.2)
-                              + 0.06 * sin(t * (0.27  + fi * 0.037) + seed + 2.0)
+      posShift + 0.5 * aspect + orbitB * sin(pB)
+                              + 0.06 * sin(t * (0.31 + fi * 0.017) + seed + 0.8),
+      0.5 + tiltOffset        - orbitB * cos(pB)
+                              + 0.06 * sin(t * (0.27 + fi * 0.037) + seed + 2.0)
     );
 
     float rB = r * 0.72;
@@ -186,8 +211,11 @@ void main() {
     // at high tilt (treble-dominant), noise provides base organic movement.
     // Edge bias slides the blob's gradient toward whichever side of the
     // slot's hue arc the heard chroma is closest to (per-slot signed shift).
+    // Orbit the color-noise offset (not a linear x-scroll) so the gradient
+    // inside each blob shimmers in place instead of drifting right-to-left.
+    vec2 colorFlow = vec2(cos(t * 0.03), sin(t * 0.03)) * 0.7;
     float blend = clamp(
-      snoise(uvW * 1.8 + vec2(fi * 7.31 + t * 0.02, fi * 2.17)) * 0.5 + 0.5
+      snoise(uvW * 1.8 + vec2(fi * 7.31, fi * 2.17) + colorFlow) * 0.5 + 0.5
         + uTilt * 0.3 - 0.15
         + uSlotEdge[i] * 0.4,
       0.0, 1.0);
@@ -200,11 +228,28 @@ void main() {
   float newAmount = smoothstep(1.2 - effectiveSharp, 1.2 + effectiveSharp, totalField);
 
   // ── Feedback (ping-pong) ─────────────────────────────────────────────────
+  // Advect the persistent buffer along a turning flow. What reads as "the flow"
+  // is the noise pattern sliding, and its direction is the VELOCITY of flowScroll
+  // (its tangent), not its position. So to make the drift visibly turn, the
+  // heading must sweep through all directions over seconds, not minutes.
+  // Small amplitude × higher frequency keeps the drift speed (~0.06) the same
+  // while rotating the heading roughly once every ~15s. Slightly different freqs
+  // per axis (incommensurate) make it precess and wander instead of looping.
+  vec2 flowScroll = vec2(
+    0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
+    0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
+  );
   float driftAmt = 0.0015 + uAct * 0.002;
-  vec2 driftUV = uv + vec2(
-    snoise(uv * 4.0 + vec2(uTime * 0.06, 0.0)),
-    snoise(uv * 4.0 + vec2(uTime * 0.06 + 100.0, 0.0))
+  // Sample noise in aspect-corrected uvA space (isotropic cells), and divide the
+  // x displacement by aspect so a unit of drift moves the same number of PHYSICAL
+  // pixels horizontally as vertically. driftUV is in uv space, where x spans the
+  // full width — without /aspect, on a 2.85:1 display the feedback smears stretch
+  // ~2.85x horizontally. That anisotropy was the right-to-left streaking.
+  vec2 driftRaw = vec2(
+    snoise(uvA * 4.0 + flowScroll),
+    snoise(uvA * 4.0 + flowScroll + 100.0)
   ) * driftAmt;
+  vec2 driftUV = uv + vec2(driftRaw.x / aspect, driftRaw.y);
   vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
 
   // Background glow — centered at (pos, tilt), chord-tinted, BRI-driven
@@ -234,12 +279,17 @@ void main() {
     float seed = fi * 2.399; // golden-angle offset — different from main blobs
     // σ controls glow radius; larger → wider, softer bloom
     float sigma = (0.13 + presence * 0.09) * aspect;
-    // Independent Lissajous path (different freqs + phase from main blobs)
+    // Circular (quadrature) orbit, no aspect on the AMPLITUDE — same un-stretch
+    // fix as the main blobs. The old 0.32*aspect on x (plain 0.32 on y), plus a
+    // slower x frequency, made these big blooms sweep nearly the full screen
+    // width horizontally — the main piece of the residual right-to-left.
+    float wP = 0.15 + fi * 0.022;
+    float pP = swirl * wP + seed + 1.2;
     vec2 cP = vec2(
-      0.5 * aspect + 0.32 * aspect * sin(t * (0.071 + fi * 0.027) + seed + 1.2)
-                   + 0.09 * aspect * sin(t * (0.19  + fi * 0.053) + seed + 3.7),
-      0.5           + 0.32           * sin(t * (0.094 + fi * 0.021) + seed + 4.6)
-                   + 0.09           * sin(t * (0.24  + fi * 0.043) + seed + 0.9)
+      0.5 * aspect + 0.32 * sin(pP)
+                   + 0.09 * sin(t * (0.19 + fi * 0.053) + seed + 3.7),
+      0.5          + 0.32 * cos(pP)
+                   + 0.09 * sin(t * (0.24 + fi * 0.043) + seed + 0.9)
     );
     vec2 dP = uvW - cP;
     float g = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
