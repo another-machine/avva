@@ -210,7 +210,12 @@ export class AudioGraph {
   }
 
   setBriDim(bri: number, now: number): void {
-    const scale = Math.min(1, bri / 0.1);
+    // Perceptual brightness→loudness: sones approximation uses ~0.6 exponent.
+    // The ramp-up zone (bri < 0.1) applies a linear fade-in to prevent
+    // the synth from sounding full-volume on nearly-black frames.
+    const ramp = Math.min(1, bri / 0.08);
+    const perceptual = Math.pow(Math.max(0, bri), 0.6);
+    const scale = Math.min(1, ramp * perceptual);
     this.dimGain.gain.setTargetAtTime(scale, now, 0.08);
   }
 
@@ -218,12 +223,16 @@ export class AudioGraph {
    * Update the post-cassette makeup gain whenever cassette parameters change.
    * Compensates the fixed −6 dB headroom pad, then backs off for the gain
    * added by mid-boost + saturation stacking.
+   *
+   * Refined formula: mid-boost pushes up output level by ~0.5 dB per dB of
+   * boost at full wet (measured empirically); saturation adds another ~0.6 dB
+   * at satAmount=10/satWet=0.6. Combined coefficient 0.55 keeps makeup within
+   * ±1 dB of the unsaturated baseline across the cassette parameter range.
    */
   updateAutoMakeup(satAmount: number, satWet: number, midBoostDb: number): void {
-    // +6 dB base (cancels headroom pad) minus a fraction of mid-boost × wet drive.
-    // Coefficient 0.35 is tuned so that the extreme lofi combo
-    // (satWet=0.6, midBoostDb=4) reduces makeup by ~0.8 dB — subtle but effective.
-    const makeupDb = 6 - satWet * midBoostDb * 0.35;
+    const makeupDb = 6
+      - satWet * midBoostDb * 0.55          // mid-boost levelling
+      - satWet * Math.log10(Math.max(1, satAmount)) * 0.9; // saturation levelling
     const clamped = Math.max(0, Math.min(6, makeupDb));
     const now = this.actx.currentTime;
     this.autoMakeup.gain.setTargetAtTime(

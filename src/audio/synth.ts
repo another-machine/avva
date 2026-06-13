@@ -177,6 +177,13 @@ export class Synth {
   private _ksVoiceClock = 0;
   private _ksNextAllowed = 0; // AudioContext time before next KS trigger
 
+  // Hysteresis state for layer crossfade weights — prevents oscillation at
+  // borderline scenes. Each committed value only updates when the raw weight
+  // moves more than LAYER_DEADBAND away from the current committed value.
+  private _ksWeightC      = 0;
+  private _noiseWeightC   = 0;
+  private _shimmerWeightC = 0;
+
   /** Called with limiter metrics at ~10 Hz when the worklet limiter is active. */
   onLimiterMetrics: ((m: LimiterMetrics) => void) | null = null;
 
@@ -822,10 +829,14 @@ export class Synth {
     //   KS strings:       FLUX × CTR       — percussive/busy/high-contrast
     //   Noise resonators: SPR × (1−CTR)    — diffuse/spread/muted-contrast
     //   Shimmer:          TILT_high×(1−FLUX) — bright-topped calm scenes
-    const ksWeight      = clamp01(safeFlux * safeContrast);
-    const noiseWeight   = clamp01(safeSpread * (1 - safeContrast));
+    // Deadband hysteresis prevents oscillation at borderline scenes.
     const tiltHigh      = clamp01((safeTilt - 0.5) * 2);
-    const shimmerWeight = clamp01(tiltHigh * (1 - safeFlux));
+    this._ksWeightC      = applyDeadband(clamp01(safeFlux * safeContrast),       this._ksWeightC);
+    this._noiseWeightC   = applyDeadband(clamp01(safeSpread * (1 - safeContrast)), this._noiseWeightC);
+    this._shimmerWeightC = applyDeadband(clamp01(tiltHigh * (1 - safeFlux)),     this._shimmerWeightC);
+    const ksWeight      = this._ksWeightC;
+    const noiseWeight   = this._noiseWeightC;
+    const shimmerWeight = this._shimmerWeightC;
 
     // Noise resonator: update chord frequencies + weight
     if (this._noiseLayer) {
@@ -1380,6 +1391,15 @@ export class Synth {
 }
 
 // ── Module helpers ────────────────────────────────────────────
+
+// Deadband for layer-weight hysteresis — raw weight must exceed this distance
+// from the committed value before the committed value is updated. Prevents
+// oscillation at borderline scenes (e.g. FLUX≈0.5 on a flickering shot).
+const LAYER_DEADBAND = 0.08;
+
+function applyDeadband(raw: number, committed: number): number {
+  return Math.abs(raw - committed) > LAYER_DEADBAND ? raw : committed;
+}
 
 function clamp01(x: number): number {
   return Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0;
