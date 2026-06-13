@@ -29,10 +29,11 @@ export class PresetController {
   private _applying = false;
 
   constructor() {
-    // Listen for scene preset selection
-    store.subscribeKey("synth.scenePreset", (v, origin) => {
+    // Listen for scene preset selection.
+    // Origin is intentionally NOT filtered here — the preset selector lives in
+    // the controller window, so changes arrive at the loop window as "broadcast".
+    store.subscribeKey("synth.scenePreset", (v) => {
       if (this._applying) return;
-      if (origin === "broadcast" || origin === "ws") return;
       const key = v as string;
       if (key !== "custom" && SCENE_PRESETS[key]) {
         this._applyPreset(key);
