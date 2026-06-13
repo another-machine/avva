@@ -1,15 +1,17 @@
 /**
- * src/audio/synth.ts  (v0.7)
+ * src/audio/synth.ts  (v0.8)
  *
  * 2-operator FM synthesizer driven by AVVA analysis output.
  *
  *   15 PAD voices  +  3 PLUCK voices  +  1 SUB-BASS oscillator
- *   → per-voice panners → master gain → delay send → compressor
+ *   → per-tier buses (with HP/LP slotting) → AudioGraph master chain
  *
- * See legacy synth.js for full architecture comments.
+ * Signal routing lives in AudioGraph (graph.ts); Synth owns voice creation
+ * and per-frame parameter updates.
  */
 
 import { FMVoice } from "./fm-voice.js";
+import { AudioGraph } from "./graph.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
@@ -156,17 +158,14 @@ export interface SynthControls {
 export class Synth {
   private _cfg: LegacyConfig;
 
-  _actx: AudioContext | null;
-  _master: GainNode | null;
+  private _graph: AudioGraph | null;
+  _cassette: CassetteChain | null;
 
   private _tiers: Tier[];
   private _plucks: PluckVoice[];
   private _sub: SubBass | null;
   private _delay: Delay | null;
   private _tremolo: Tremolo | null;
-  private _masterPanner: StereoPannerNode | null;
-  private _limiter: WaveShaperNode | null;
-  _cassette: CassetteChain | null;
 
   palette: Palette | null;
   running: boolean;
@@ -185,16 +184,13 @@ export class Synth {
 
   constructor(config: LegacyConfig) {
     this._cfg = config;
-    this._actx = null;
-    this._master = null;
+    this._graph = null;
+    this._cassette = null;
     this._tiers = [];
     this._plucks = [];
     this._sub = null;
     this._delay = null;
     this._tremolo = null;
-    this._masterPanner = null;
-    this._limiter = null;
-    this._cassette = null;
     this.palette = null;
     this.running = false;
     this.lastNote = null;
@@ -210,81 +206,71 @@ export class Synth {
     this._tapeDelayDampBase = 6000;
   }
 
+  // ── Accessors ──────────────────────────────────────────────
+  get _actx(): AudioContext | null { return this._graph?.actx ?? null; }
+  /** The AudioGraph — use for bus-level control and tap wiring. */
+  get graph(): AudioGraph | null { return this._graph; }
+  /** Pre-cassette tap node — stage-3 audio analyzer connects here. */
+  get analysisTap(): GainNode | null { return this._graph?.analysisTap ?? null; }
+  /** Final output node — broadcast and stereo analysis tap from here. */
+  get outputNode(): GainNode | null { return this._graph?.output ?? null; }
+  /** @deprecated Use analysisTap + outputNode. Kept for transition. */
+  get _master(): GainNode | null { return this._graph?.masterTrim ?? null; }
+  /** @deprecated Use outputNode. Kept for transition. */
+  get _limiter(): GainNode | null { return this._graph?.output ?? null; }
+
   // ── Lifecycle ──────────────────────────────────────────────
 
   start(): void {
-    if (this._actx) {
-      this._actx.resume();
+    if (this._graph) {
+      this._graph.actx.resume();
       this.running = true;
       return;
     }
 
-    this._actx = new AudioContext();
+    const graph = new AudioGraph();
+    this._graph = graph;
+    const ac = graph.actx;
 
-    const comp = this._actx.createDynamicsCompressor();
-    comp.threshold.value = -24;
-    comp.ratio.value = 6;
-    comp.attack.value = 0.001;
-    comp.release.value = 0.25;
+    // Apply user gain from config (schema drives this before start())
+    graph.setMasterGain(this._cfg.masterGain ?? 0.28);
 
-    this._master = this._actx.createGain();
-    this._master.gain.value = this._cfg.masterGain ?? 0.28;
-    this._master.connect(comp);
-
-    const masterPanner = this._actx.createStereoPanner();
-    masterPanner.pan.value = 0;
-    comp.connect(masterPanner);
-    this._masterPanner = masterPanner;
-
-    const limiter = this._actx.createWaveShaper();
-    const N = 2048;
-    const curve = new Float32Array(N);
-    const drive = 1.5;
-    const norm = Math.tanh(drive);
-    for (let i = 0; i < N; i++) {
-      const x = (i / (N - 1)) * 2 - 1;
-      curve[i] = Math.tanh(x * drive) / norm;
-    }
-    limiter.curve = curve;
-    limiter.oversample = "4x";
-    this._limiter = limiter;
-
-    // Cassette chain sits between masterPanner and limiter
-    const cassette = this._buildCassetteChain(this._actx, masterPanner);
-    cassette.masterLP.connect(limiter);
-    limiter.connect(this._actx.destination);
+    // Cassette chain: headroomPad → chain → autoMakeup
+    const cassette = this._buildCassetteChain(ac, graph.headroomPad);
+    cassette.masterLP.connect(graph.autoMakeup);
     this._cassette = cassette;
 
-    // Sub-bass
-    const subOsc = this._actx.createOscillator();
-    const subGain = this._actx.createGain();
+    // Sub-bass → subBus
+    const subOsc = ac.createOscillator();
+    const subGain = ac.createGain();
     subOsc.type = "sine";
     subOsc.frequency.value = 110;
     subGain.gain.value = 0;
     subOsc.connect(subGain);
-    subGain.connect(this._master);
+    subGain.connect(graph.subBus);
     subOsc.start();
     this._sub = { osc: subOsc, gain: subGain };
 
-    // Delay send
-    const delayInput = this._actx.createGain();
+    // Delay send: tap from analysisTap (pre-cassette), return to autoMakeup
+    // (post-cassette). This keeps delay echo from doubling into the cassette.
+    const delayInput = ac.createGain();
     delayInput.gain.value = 1.0;
-    const delayNode = this._actx.createDelay(3.0);
+    const delayNode = ac.createDelay(3.0);
     delayNode.delayTime.value = 0.32;
-    const delayLpf = this._actx.createBiquadFilter();
+    const delayLpf = ac.createBiquadFilter();
     delayLpf.type = "lowpass";
     delayLpf.frequency.value = 3800;
-    const delayFeedback = this._actx.createGain();
+    const delayFeedback = ac.createGain();
     delayFeedback.gain.value = 0.05;
-    const delayWet = this._actx.createGain();
+    const delayWet = ac.createGain();
     delayWet.gain.value = 0;
-    this._master.connect(delayInput);
+    graph.analysisTap.connect(delayInput);
     delayInput.connect(delayNode);
     delayNode.connect(delayLpf);
     delayLpf.connect(delayFeedback);
     delayFeedback.connect(delayInput);
     delayLpf.connect(delayWet);
-    delayWet.connect(comp);
+    delayWet.connect(graph.autoMakeup);
     this._delay = {
       input: delayInput,
       node: delayNode,
@@ -292,48 +278,51 @@ export class Synth {
       wet: delayWet,
     };
 
-    // Tremolo LFO
-    const tremoloLfo = this._actx.createOscillator();
-    const tremoloDepth = this._actx.createGain();
+    // Tremolo LFO — modulates graph.tremoloSum.gain so it has its own
+    // dedicated AudioParam and doesn't fight bri-dim or user-gain writes.
+    const tremoloLfo = ac.createOscillator();
+    const tremoloDepth = ac.createGain();
     tremoloLfo.type = "sine";
     tremoloLfo.frequency.value = 6.0;
     tremoloDepth.gain.value = 0;
     tremoloLfo.connect(tremoloDepth);
-    tremoloDepth.connect(this._master.gain);
+    tremoloDepth.connect(graph.tremoloSum.gain);
     tremoloLfo.start();
     this._tremolo = { lfo: tremoloLfo, depth: tremoloDepth };
 
-    // Pluck voices
+    // Pluck voices → pluckBus
     this._plucks = Array.from({ length: N_PLUCKS }, () => {
-      const fm = new FMVoice(this._actx!, this._actx!.createGain(), {
+      const fm = new FMVoice(ac, ac.createGain(), {
         ratio: this._cfg.fmPluckRatio ?? 2,
         index: 1.0,
       });
-      const panner = this._actx!.createStereoPanner();
+      const panner = ac.createStereoPanner();
       panner.pan.value = 0;
       fm.outGain.disconnect();
       fm.outGain.connect(panner);
-      panner.connect(this._master!);
+      panner.connect(graph.pluckBus);
       return { fm, panner, nextAllowed: 0 };
     });
 
-    // Tier pad voices
+    // Tier buses: bass → bassBus, mid → midBus, treble → trebleBus
+    const TIER_BUSES = [graph.bassBus, graph.midBus, graph.trebleBus] as const;
     this._tiers = [];
     for (let ti = 0; ti < 3; ti++) {
       const ratioBase = TIER_RATIO[ti];
+      const tierBus = TIER_BUSES[ti];
       const voices: TierVoice[] = [];
       for (let vi = 0; vi < 5; vi++) {
-        const fm = new FMVoice(this._actx, this._master, {
+        const fm = new FMVoice(ac, tierBus, {
           ratio: ratioBase,
           index: 0.4,
         });
         const basePan =
           vi < 3 ? TIER_BASE_PAN[ti][vi] : TIER_BASE_PAN_EXT[ti][vi - 3];
-        const panner = this._actx.createStereoPanner();
+        const panner = ac.createStereoPanner();
         panner.pan.value = basePan * 0.25;
         fm.outGain.disconnect();
         fm.outGain.connect(panner);
-        panner.connect(this._master);
+        panner.connect(tierBus);
         voices.push({
           fm,
           panner,
@@ -356,9 +345,19 @@ export class Synth {
     this.running = true;
   }
 
+  /** Update user-controlled master gain (call instead of writing _master.gain directly). */
+  setMasterGain(v: number): void {
+    this._graph?.setMasterGain(v);
+  }
+
+  /** Per-frame bri-dim: scales master down when scene is very dark. */
+  setBriDim(bri: number, now: number): void {
+    this._graph?.setBriDim(bri, now);
+  }
+
   stop(): void {
-    if (!this._actx) return;
-    this._actx.suspend();
+    if (!this._graph) return;
+    this._graph.actx.suspend();
     this.running = false;
     this.lastNote = null;
   }
@@ -412,7 +411,8 @@ export class Synth {
     lo,
   }: AnalysisOut): void {
     const palette = this.palette;
-    if (!this.running || !palette) return;
+    if (!this.running || !palette || !this._graph) return;
+    const graph = this._graph;
 
     const safeHue = Number.isFinite(hue) ? hue : 0;
     const safeBri = Number.isFinite(bri) ? Math.max(0, bri) : 0;
@@ -475,7 +475,7 @@ export class Synth {
     // ── Glide spread ─────────────────────────────────────────────
     const glideSpread = this._cfg.glideSpread ?? 1.0;
 
-    this._panTo(this._masterPanner!.pan, (safePos - 0.5) * 1.4, slowTau, now);
+    this._panTo(graph.masterPanner.pan, (safePos - 0.5) * 1.4, slowTau, now);
 
     const vt = safeTilt * 2;
     const trebleW = vt <= 1 ? (1 - vt) * safeBri : 0;
@@ -490,6 +490,16 @@ export class Synth {
     const voiceWeights = [1.0, thirdW, fifthW];
 
     const widthScale = 0.25 + safeSpread * (this._cfg.fmStereoWidth ?? 0.75);
+
+    // Constant-power voice normalization: prevents a 5-voice lush chord from
+    // being ~2× louder than a 1-voice sparse scene. Compute once from the
+    // shared voice weights that apply to all three tiers.
+    // seventhW/ninthW weights are computed below but their contribution here
+    // uses the same thresholds from sat — approximate with current values.
+    const _seventhWApprox = clamp01((safeSat - 0.35) / 0.35);
+    const _ninthWApprox = clamp01((safeSat - 0.65) / 0.3);
+    const activeVoiceW = 1.0 + thirdW + fifthW + _seventhWApprox * 0.45 + _ninthWApprox * 0.25;
+    const cpNorm = 1.0 / Math.sqrt(Math.max(1, activeVoiceW));
 
     const idxBase = this._cfg.fmIndexBase ?? 0.15;
     const idxScale = this._cfg.fmIndexScale ?? 2.4;
@@ -580,7 +590,8 @@ export class Synth {
       const tierBase =
         Math.max(0, tierSignals[ti] * 0.25) *
         artEnv *
-        this._waveGainComp(tierCarrierTypes[ti]);
+        this._waveGainComp(tierCarrierTypes[ti]) *
+        cpNorm;
 
       voices.forEach(({ fm, panner, ratioBase }, vi) => {
         if (vi < 3) {
@@ -1025,11 +1036,13 @@ export class Synth {
     preLP.Q.value = 0.7;
 
     // Mid-presence boost: adds cassette body/crunch around 1.2 kHz
+    // Q widened to 1.4 (from 0.9) so the boost is gentler and less prone to
+    // mud-stacking at high levels.
     const midBoost = actx.createBiquadFilter();
     midBoost.type = "peaking";
     midBoost.frequency.value = 1200;
     midBoost.gain.value = 3;
-    midBoost.Q.value = 0.9;
+    midBoost.Q.value = 1.4;
 
     // Parallel tape saturation (dry/wet blend so clean transients survive)
     const tapeSat = Synth._makeTapeSat(actx, 8);
@@ -1162,37 +1175,58 @@ export class Synth {
     };
   }
 
-  /** Live-update cassette parameters. `satAmount` recreates the waveshaper curve. */
+  /** Live-update cassette parameters. Uses setTargetAtTime for smooth transitions. */
   setCassetteParams(p: CassetteParams): void {
     const c = this._cassette;
-    if (!c || !this._actx) return;
-    if (p.midBoostDb !== undefined) c.midBoost.gain.value = p.midBoostDb;
+    const ac = this._graph?.actx;
+    if (!c || !ac) return;
+    const now = ac.currentTime;
+    const tau = 0.05;
+
+    if (p.midBoostDb !== undefined)
+      c.midBoost.gain.setTargetAtTime(p.midBoostDb, now, tau);
     if (p.masterLPHz !== undefined) this._masterLPHzBase = p.masterLPHz;
     if (p.satWet !== undefined) {
-      c.satWet.gain.value = Math.max(0, Math.min(1, p.satWet));
-      c.satDry.gain.value = Math.max(0, Math.min(1, 1 - p.satWet));
+      const wet = Math.max(0, Math.min(1, p.satWet));
+      c.satWet.gain.setTargetAtTime(wet, now, tau);
+      c.satDry.gain.setTargetAtTime(1 - wet, now, tau);
     }
     if (p.satAmount !== undefined) {
-      const newSat = Synth._makeTapeSat(this._actx, p.satAmount);
-      try {
-        c.tapeSat.disconnect();
-      } catch {
-        /* no-op */
-      }
-      c.midBoost.connect(newSat);
-      newSat.connect(c.satWet);
-      (c as { tapeSat: WaveShaperNode }).tapeSat = newSat;
+      // Brief fade-out on satWet to reduce the click from node-swap, then restore.
+      const newSat = Synth._makeTapeSat(ac, p.satAmount);
+      c.satWet.gain.setTargetAtTime(0, now, 0.01);
+      setTimeout(() => {
+        if (!this._cassette) return;
+        try { c.tapeSat.disconnect(); } catch { /* no-op */ }
+        c.midBoost.connect(newSat);
+        newSat.connect(c.satWet);
+        (c as { tapeSat: WaveShaperNode }).tapeSat = newSat;
+        const wetTarget = Math.max(0, Math.min(1, p.satWet ?? c.satWet.gain.value));
+        c.satWet.gain.setTargetAtTime(wetTarget, ac.currentTime, 0.03);
+      }, 30);
     }
     if (p.tapeDelayMs !== undefined)
-      c.tapeDelay.delayTime.value = p.tapeDelayMs / 1000;
-    if (p.tapeDelayFb !== undefined) c.tapeDelayFb.gain.value = p.tapeDelayFb;
+      c.tapeDelay.delayTime.setTargetAtTime(p.tapeDelayMs / 1000, now, tau);
+    if (p.tapeDelayFb !== undefined)
+      c.tapeDelayFb.gain.setTargetAtTime(p.tapeDelayFb, now, tau);
     if (p.tapeDelayWet !== undefined)
-      c.tapeDelayWet.gain.value = p.tapeDelayWet;
-    if (p.reverbWet !== undefined) c.reverbWet.gain.value = p.reverbWet;
-    if (p.noiseGain !== undefined) c.noiseGain.gain.value = p.noiseGain;
-    if (p.wowDepthCents !== undefined) c.wowDepth.gain.value = p.wowDepthCents;
+      c.tapeDelayWet.gain.setTargetAtTime(p.tapeDelayWet, now, tau);
+    if (p.reverbWet !== undefined)
+      c.reverbWet.gain.setTargetAtTime(p.reverbWet, now, tau);
+    if (p.noiseGain !== undefined)
+      c.noiseGain.gain.setTargetAtTime(p.noiseGain, now, tau);
+    if (p.wowDepthCents !== undefined)
+      c.wowDepth.gain.setTargetAtTime(p.wowDepthCents, now, tau);
     if (p.flutterDepthCents !== undefined)
-      c.flutterDepth.gain.value = p.flutterDepthCents;
+      c.flutterDepth.gain.setTargetAtTime(p.flutterDepthCents, now, tau);
+
+    // Update auto-makeup whenever gain-affecting params change
+    if (p.satAmount !== undefined || p.satWet !== undefined || p.midBoostDb !== undefined) {
+      const satAmount = p.satAmount ?? 8;
+      const satWet = p.satWet ?? c.satWet.gain.value;
+      const midBoostDb = p.midBoostDb !== undefined ? p.midBoostDb : c.midBoost.gain.value;
+      this._graph?.updateAutoMakeup(satAmount, satWet, midBoostDb);
+    }
   }
 }
 
