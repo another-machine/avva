@@ -111,10 +111,17 @@ export class FMVoice {
   /**
    * Trigger a one-shot pluck.
    * Modulation depth envelope decays faster than amplitude — classic DX7 arc.
+   *
+   * Retrigger safety: a 3ms crossfade silences any in-progress decay before
+   * the new note starts. This prevents the click that occurs when
+   * cancelScheduledValues + setValueAtTime(0) instantly yanks a mid-decay
+   * amplitude to zero.
    */
   pluck(fc: number, opts: PluckOptions = {}): void {
     if (!Number.isFinite(fc) || fc <= 0) return;
     const now = this._actx.currentTime;
+    const XFADE = 0.003; // 3ms — inaudible delay, eliminates retrigger click
+    const t = now + XFADE;
     const fm = fc * this.ratio;
     this._fc = fc;
 
@@ -124,20 +131,27 @@ export class FMVoice {
     const indexPeak = opts.indexPeak ?? this.index * 4;
     const attackTau = opts.attackTau ?? 0.003;
 
+    // Hold current amplitude, fade to ~0 over 3ms so any in-progress decay
+    // doesn't produce a discontinuity when the frequency snaps to the new pitch.
+    this._cancel(this.outGain.gain, now);
+    this.outGain.gain.setTargetAtTime(0, now, 0.001);
+
+    // Frequency snaps at time t (near-zero amplitude → phase glitch is silent).
     this.carrier.frequency.cancelScheduledValues(now);
     this.modulator.frequency.cancelScheduledValues(now);
-    this.carrier.frequency.setValueAtTime(fc, now);
-    this.modulator.frequency.setValueAtTime(fm, now);
+    this.carrier.frequency.setValueAtTime(fc, t);
+    this.modulator.frequency.setValueAtTime(fm, t);
 
+    // FM index envelope — starts from 0 at t.
     this.modGain.gain.cancelScheduledValues(now);
-    this.modGain.gain.setValueAtTime(0, now);
-    this.modGain.gain.setTargetAtTime(indexPeak * fm, now, attackTau);
-    this.modGain.gain.setTargetAtTime(0, now + attackTau * 4, modDecayTau);
+    this.modGain.gain.setValueAtTime(0, t);
+    this.modGain.gain.setTargetAtTime(indexPeak * fm, t, attackTau);
+    this.modGain.gain.setTargetAtTime(0, t + attackTau * 4, modDecayTau);
 
-    this.outGain.gain.cancelScheduledValues(now);
-    this.outGain.gain.setValueAtTime(0, now);
-    this.outGain.gain.setTargetAtTime(peak, now, attackTau);
-    this.outGain.gain.setTargetAtTime(0, now + attackTau * 5, ampDecayTau);
+    // Amplitude envelope — starts from 0 at t.
+    this.outGain.gain.setValueAtTime(0, t);
+    this.outGain.gain.setTargetAtTime(peak, t, attackTau);
+    this.outGain.gain.setTargetAtTime(0, t + attackTau * 5, ampDecayTau);
   }
 
   /**
