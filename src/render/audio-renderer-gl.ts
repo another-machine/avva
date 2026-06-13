@@ -88,6 +88,7 @@ uniform float uBlobSize;
 uniform float uBlobSharp;
 uniform float uShiftSpeed;
 uniform float uPulseReactivity;
+uniform float uPhase;
 uniform float uBriScale;
 uniform float uTilt;
 uniform float uPos;
@@ -125,8 +126,11 @@ void main() {
   vec2 uvA = vec2(uv.x * aspect, uv.y);
 
   // Activity speeds everything up; chord-change pulse adds a velocity burst
-  float tSpeed = uBlobSpeed + uAct * uBlobDrive;
-  float t = uTime * (tSpeed + uPulse * uShiftSpeed);
+  // t is a CPU-integrated phase (see render()): steady drift (sped by activity)
+  // plus a *bounded* pulse kick. Integrating per-frame keeps the chord burst
+  // from being multiplied by absolute uTime — which made the spin grow more
+  // violent the longer the app had been running.
+  float t = uPhase;
 
   // Global rotation sense, free-running. dir = sin(uTime*dirRate) is the SIGNED
   // angular speed; swirl is its integral, so an orbit phase of (swirl * rate)
@@ -293,11 +297,21 @@ void main() {
     );
     vec2 dP = uvW - cP;
     float g = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
-    pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
+    // Solid base term so Reactivity reads at its default (1), not only near the
+    // 4 max — the old (uBri*uCtr + uTilt*0.3) gate went ~dead when CTR was low.
+    pulseField += g * presence * (0.45 + uBri * uCtr * 0.6 + uTilt * 0.25) * uPulseReactivity;
   }
-  float pStr = clamp(pulseField, 0.0, 1.0) * 0.7;
-  vec3 pOv = mix(2.0 * base * blobColor, 1.0 - 2.0 * (1.0 - base) * (1.0 - blobColor), step(0.5, base));
-  base = mix(base, pOv, pStr);
+  // Soft saturation (not a hard clamp): gentle onset so low Reactivity already
+  // reads, smooth roll-off at high Reactivity instead of a flat-topped disc.
+  float pStr = (1.0 - exp(-pulseField * 2.0)) * 0.85;
+  // Reactivity burns the chord colour in rather than flashing white. Multiply
+  // gives a rich tinted body; color-burn deepens & saturates the energetic core.
+  // Both are darkening blends (result <= base), so nothing lifts toward white.
+  vec3 pg    = clamp(blobColor, 0.0, 1.0);
+  vec3 pMul  = base * pg;
+  vec3 pBurn = clamp(1.0 - (1.0 - base) / max(pg, vec3(0.04)), 0.0, 1.0);
+  vec3 pRich = mix(pMul, pBurn, 0.6);
+  base = mix(base, pRich, pStr);
 
   // ── Chord-change pulse: fragmented color burst ───────────────────────────
   base += vec3(uPulse * 0.035);
@@ -341,6 +355,7 @@ uniform float uBlobSize;
 uniform float uBlobSharp;
 uniform float uShiftSpeed;
 uniform float uPulseReactivity;
+uniform float uPhase;
 uniform float uBriScale;
 uniform float uTilt;
 uniform float uPos;
@@ -380,8 +395,11 @@ void main() {
   vec2 uvA = vec2(uv.x * aspect, uv.y);
 
   // Activity speeds the flow; chord-change pulse adds a velocity burst.
-  float tSpeed = uBlobSpeed + uAct * uBlobDrive;
-  float t = uTime * (tSpeed + uPulse * uShiftSpeed);
+  // t is a CPU-integrated phase (see render()): steady drift (sped by activity)
+  // plus a *bounded* pulse kick. Integrating per-frame keeps the chord burst
+  // from being multiplied by absolute uTime — which made the spin grow more
+  // violent the longer the app had been running.
+  float t = uPhase;
 
   // POS shifts the field left/right, TILT up/down (same sense as the blob view).
   vec2 p = uvA;
@@ -390,7 +408,9 @@ void main() {
 
   // SPR sets turbulence scale: focused chord -> broad smooth veils, rich chord
   // -> fine filaments. Size nudges the overall feature scale (bigger = coarser).
-  float scale = mix(1.3, 3.2, uSpread) / max(0.4, uBlobSize * 2.5);
+  // Narrowed around the ~2.25 midpoint (was 1.3..3.2) so the SPR-driven zoom
+  // in/out is gentler — about half the previous swing.
+  float scale = mix(1.8, 2.7, uSpread) / max(0.4, uBlobSize * 2.5);
 
   // Center p before multiplying by scale so zoom origin is screen center, not
   // bottom-left (which is where p=uvA starts). Without this, audio-driven SPR
@@ -423,6 +443,8 @@ void main() {
   // that slot's gradient (the same oklch boundary colors the blobs use).
   float totalW = 0.0;
   vec3  totalColor = vec3(0.0);
+  vec3  ambColor   = vec3(0.0);   // chord-average hue, independent of the bands
+  float ambW       = 0.0;
   float softness   = clamp(uBlobSharp * 0.5, 0.04, 0.7); // veil edge width
   float ctrTighten = 0.7 + 0.6 * uCtr;                   // CTR tightens bands
   for (int i = 0; i < N_HUES; i++) {
@@ -438,8 +460,15 @@ void main() {
     float contrib = w * presence;
     totalColor += c * contrib;
     totalW     += contrib;
+    ambColor   += c * presence;   // band-independent — defined everywhere
+    ambW       += presence;
   }
-  vec3  veilColor = totalW > 0.001 ? totalColor / totalW : vec3(0.0);
+  // Overall chord tint. Used as the colour the spaces *between* veils fade to,
+  // instead of pure black — so a low softness (razor-sharp w) gives crisp veils
+  // cut against a dim hue rather than the harsh black boundaries we'd get if the
+  // uncovered field collapsed to vec3(0).
+  vec3  chordAvg  = ambW > 0.001 ? ambColor / ambW : vec3(0.0);
+  vec3  veilColor = totalW > 0.001 ? totalColor / totalW : chordAvg;
   float coverage  = clamp(totalW, 0.0, 1.0);
 
   float bScale = uBri * uBriScale;
@@ -470,6 +499,10 @@ void main() {
 
   // ── Brightness — same model as the blob view ───────────────────────────────
   base *= clamp(max(bScale, coverage * 0.55), 0.0, 1.0);
+  // Floor the gaps to a dim chord tint so sharp veil edges read as colour-on-
+  // colour, never colour-on-black. A max (not an add) so it can't build up
+  // through the feedback trail; scaled by loudness so silence still goes dark.
+  base = max(base, chordAvg * (0.04 + bScale * 0.06));
   float briOver = max(0.0, bScale - 1.0);
   base += veilColor * briOver * 0.5;
   // Crest highlight rides on top, scaled by loudness.
@@ -483,19 +516,36 @@ void main() {
     float fi    = float(i);
     float seed  = fi * 2.399;
     float sigma = (0.13 + presence * 0.09) * aspect;
-    float wP = 0.15 + fi * 0.022;
-    float pP = t * wP + seed + 1.2;
-    vec2  cP = vec2(
-      0.5 * aspect + 0.32 * sin(pP) + 0.09 * sin(t * (0.19 + fi * 0.053) + seed + 3.7),
-      0.5          + 0.32 * cos(pP) + 0.09 * sin(t * (0.24 + fi * 0.043) + seed + 0.9)
-    );
+    // Noise-driven wander — not a periodic orbit, so there is no frequency and no
+    // shape. Any sum of sines eventually reads as a (precessing) ellipse; instead
+    // we walk each axis along smooth value-noise advanced by time. Two octaves
+    // give a slow home-drift plus a finer jitter. x and y sample independent
+    // noise lanes (decorrelated → no rotation), and the per-slot lane offset
+    // sends each glow roaming its own part of the frame rather than the centre.
+    float wt = t * 0.16;
+    float lane = seed * 11.3;
+    float nx = snoise(vec2(lane,         wt))           * 0.7
+             + snoise(vec2(lane +  5.0,  wt * 2.7))     * 0.3;
+    float ny = snoise(vec2(lane + 47.0,  wt + 19.0))    * 0.7
+             + snoise(vec2(lane + 53.0,  wt * 2.7 + 31.0)) * 0.3;
+    vec2  cP = vec2(0.5 * aspect + 0.62 * nx, 0.5 + 0.46 * ny);
     vec2  dP = uvA - cP;
     float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
-    pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
+    // Solid base term so Reactivity reads at its default (1), not only near the
+    // 4 max — the old (uBri*uCtr + uTilt*0.3) gate went ~dead when CTR was low.
+    pulseField += g * presence * (0.45 + uBri * uCtr * 0.6 + uTilt * 0.25) * uPulseReactivity;
   }
-  float pStr = clamp(pulseField, 0.0, 1.0) * 0.7;
-  vec3 pOv = mix(2.0 * base * veilColor, 1.0 - 2.0 * (1.0 - base) * (1.0 - veilColor), step(0.5, base));
-  base = mix(base, pOv, pStr);
+  // Soft saturation (not a hard clamp): gentle onset so low Reactivity already
+  // reads, smooth roll-off at high Reactivity instead of a flat-topped disc.
+  float pStr = (1.0 - exp(-pulseField * 2.0)) * 0.85;
+  // Reactivity burns the chord colour in rather than flashing white. Multiply
+  // gives a rich tinted body; color-burn deepens & saturates the energetic core.
+  // Both are darkening blends (result <= base), so nothing lifts toward white.
+  vec3 pg    = clamp(veilColor, 0.0, 1.0);
+  vec3 pMul  = base * pg;
+  vec3 pBurn = clamp(1.0 - (1.0 - base) / max(pg, vec3(0.04)), 0.0, 1.0);
+  vec3 pRich = mix(pMul, pBurn, 0.6);
+  base = mix(base, pRich, pStr);
 
   // ── Chord-change flash: fragmented color burst ──────────────────────────────
   base += vec3(uPulse * 0.035);
@@ -503,6 +553,266 @@ void main() {
   // ── Film grain ──────────────────────────────────────────────────────────────
   base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
         * (0.03 + uAct * 0.045);
+
+  outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
+}`;
+}
+
+// ── Slime fragment shader factory ────────────────────────────────────────────
+// A sibling of Aurora: same uniform set, same domain-warped fBm field, same
+// per-slot palette weave — but the field is read as a *surface* (folded, wet
+// sheet metal / glossy goo) rather than a colored veil. We derive a normal from
+// the field gradient and light it as a polished, highly reflective colored
+// surface: high-contrast studio reflections, sharp Blinn-Phong glints, and a
+// fresnel rim. The chord tints the body one saturated hue (no rainbow film),
+// loudness drives the glints, and the same feedback / pulse / grain plumbing
+// keeps it consistent with the other styles.
+function makeSlimeFragSrc(nHues: number): string {
+  return `#version 300 es
+#define N_HUES ${nHues}
+precision highp float;
+
+in  vec2 vUV;
+out vec4 outColor;
+
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uDegrees[N_HUES];
+uniform vec3  uDegreeRGB[N_HUES];
+uniform float uBri;
+uniform float uSpread;
+uniform float uAct;
+uniform float uBandLo;
+uniform float uPulse;
+uniform float uFeedback;
+uniform float uBlobWarp;
+uniform float uBlobSpeed;
+uniform float uBlobDrive;
+uniform float uBlobSize;
+uniform float uBlobSharp;
+uniform float uShiftSpeed;
+uniform float uPulseReactivity;
+uniform float uPhase;
+uniform float uBriScale;
+uniform float uTilt;
+uniform float uPos;
+uniform float uCtr;
+uniform vec3  uDegreeRGB2[N_HUES];
+uniform float uSlotEdge[N_HUES];
+uniform sampler2D uPrev;
+
+vec2 _h2(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453123) * 2.0 - 1.0;
+}
+
+float snoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = dot(_h2(i),                  f);
+  float b = dot(_h2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+  float c = dot(_h2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+  float d = dot(_h2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * snoise(p); p *= 2.0; a *= 0.5; }
+  return v;
+}
+
+// Domain-warped fBm height field — the molten-metal surface, returned in 0..1.
+// Identical marbled structure to the aurora veils; here it is a displacement we
+// light rather than a color we paint.
+float surfH(vec2 x, vec2 flow, vec2 flow2, float scale) {
+  vec2 q = vec2(fbm(x * scale + flow),
+                fbm(x * scale + flow + 7.3));
+  vec2 r = vec2(fbm(x * scale + 1.7 * q + flow2),
+                fbm(x * scale + 1.7 * q + flow2 + 5.1));
+  float m = fbm(x * scale + 2.0 * r);   // signed marbled field, ~[-1,1]
+  // Ridge the field so it creases along its zero-contours: the gradient flips
+  // sharply at each crease, giving angular folds like crumpled sheet metal
+  // rather than smooth molten swells.
+  return 1.0 - abs(m);
+}
+
+void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+
+  // Activity speeds the flow; chord-change pulse adds a velocity burst.
+  // t is a CPU-integrated phase (see render()): steady drift (sped by activity)
+  // plus a *bounded* pulse kick. Integrating per-frame keeps the chord burst
+  // from being multiplied by absolute uTime — which made the spin grow more
+  // violent the longer the app had been running.
+  float t = uPhase;
+
+  // POS shifts the field left/right, TILT up/down (same sense as the blob view).
+  vec2 p = uvA;
+  p.x -= (uPos - 0.5) * 0.5 * aspect;
+  p.y -= (0.5 - uTilt) * 0.4;
+
+  // SPR sets turbulence scale; Size zooms the goo. Quadratic in Size so low
+  // values match the other styles (the 0.4 floor pins the small end) while high
+  // values pull in hard — Size 0.2 ≈ as before, Size 0.6 is ~3× more zoomed in,
+  // big slow gobs filling the frame.
+  float scale = mix(1.3, 3.2, uSpread) / max(0.4, uBlobSize * uBlobSize * 12.5);
+  vec2 pC = p - vec2(0.5 * aspect, 0.5);
+
+  // Bounded, incommensurate flow offsets (no net drift) — see Aurora notes.
+  float warpAmp = 0.5 + uBlobWarp * 4.0;
+  vec2 flow = vec2(cos(t * 0.10) + 0.5 * sin(t * 0.043),
+                   sin(t * 0.08) + 0.5 * cos(t * 0.037)) * warpAmp;
+  vec2 flow2 = vec2(sin(t * 0.11) + 0.5 * cos(t * 0.037),
+                    cos(t * 0.09) + 0.5 * sin(t * 0.041)) * warpAmp;
+
+  // ── Surface relief → normal ─────────────────────────────────────────────────
+  // Height at p plus two nearby offsets; the gradient is the slope of the metal
+  // sheet. Sharp boosts relief (crisper, more chiselled chrome).
+  float e   = 0.004 + 0.02 / scale;
+  float h0  = surfH(pC, flow, flow2, scale);
+  float hx  = surfH(pC + vec2(e, 0.0), flow, flow2, scale);
+  float hy  = surfH(pC + vec2(0.0, e), flow, flow2, scale);
+  float relief = 1.4 + uBlobSharp * 3.0;
+  vec3  N = normalize(vec3(-(hx - h0) / e * relief,
+                           -(hy - h0) / e * relief, 1.0));
+  vec3  V = vec3(0.0, 0.0, 1.0);
+
+  // ── Chord tint (per-slot band weave, as in Aurora) ──────────────────────────
+  float totalW = 0.0;
+  vec3  totalColor = vec3(0.0);
+  float softness   = clamp(uBlobSharp * 0.5, 0.04, 0.7);
+  float ctrTighten = 0.7 + 0.6 * uCtr;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi   = float(i);
+    // Band displaced by the surface height so the tint flows with the relief.
+    float band = fbm(pC * scale + flow2 + vec2(fi * 3.1, fi * 1.7) + h0 * 1.8) * 0.5 + 0.5;
+    band = pow(band, ctrTighten);
+    float w = smoothstep(0.5 - softness, 0.5 + softness, band);
+    float blend = clamp(band + uTilt * 0.3 - 0.15 + uSlotEdge[i] * 0.4, 0.0, 1.0);
+    vec3  c = mix(uDegreeRGB[i], uDegreeRGB2[i], blend);
+    float contrib = w * presence;
+    totalColor += c * contrib;
+    totalW     += contrib;
+  }
+  // Bare metal (cool steel) where no chord; chord color tints it when present.
+  vec3  chordTint = totalW > 0.001 ? totalColor / totalW : vec3(0.62, 0.64, 0.70);
+  float coverage  = clamp(totalW, 0.0, 1.0);
+
+  float bScale = uBri * uBriScale;
+
+  // ── Metallic shading ────────────────────────────────────────────────────────
+  // Two studio key lights that lean with TILT / POS so the sheen sweeps as the
+  // field moves. High Blinn-Phong exponent reads as polished metal.
+  vec3 L1 = normalize(vec3( 0.55, 0.30 + (uTilt - 0.5) * 0.9, 0.78));
+  vec3 L2 = normalize(vec3(-0.55 + (uPos - 0.5) * 0.7, -0.45, 0.60));
+  vec3 H1 = normalize(L1 + V);
+  vec3 H2 = normalize(L2 + V);
+  float shin = mix(28.0, 230.0, clamp(uBlobSharp, 0.0, 1.0));
+  float s1 = pow(max(dot(N, H1), 0.0), shin);
+  float s2 = pow(max(dot(N, H2), 0.0), shin * 0.45);
+
+  // Mirror environment: a high-contrast studio sampled by the reflected ray —
+  // dark floor, bright sky, and a hot "window" band. The sharp light/dark split
+  // across the folds is what reads as a polished, highly reflective sheet.
+  vec3  R    = reflect(-V, N);
+  float envY = R.y * 0.5 + 0.5;
+  float env  = 0.06 + 0.95 * smoothstep(0.22, 0.80, envY);  // floor → sky
+  env += 0.75 * smoothstep(0.86, 0.95, envY);               // hot window band
+  env  = clamp(env, 0.0, 1.8);
+
+  float fres = pow(1.0 - max(N.z, 0.0), 3.0);
+
+  // Solid colored sheet metal: one saturated chord hue (anodized red tin, etc.),
+  // no rainbow film. The reflection takes on the metal's own color.
+  vec3 metalTint = mix(vec3(0.34, 0.37, 0.46), chordTint, clamp(coverage * 1.6, 0.0, 1.0));
+  float mLum = dot(metalTint, vec3(0.299, 0.587, 0.114));
+  metalTint = clamp(mix(vec3(mLum), metalTint, 1.7), 0.0, 1.0);   // saturate
+
+  // Colored reflection = tint × environment, so bright facets glow in-hue and
+  // shadowed folds go deep. Faint ambient keeps the body from crushing to black.
+  vec3 col = metalTint * (0.14 + env);
+  // Specular streaks along the fold crests — hot, only lightly tinted.
+  vec3 hotGlint = mix(vec3(1.0), metalTint, 0.30);
+  col += hotGlint * s1 * (1.0 + bScale * 0.9);             // hot primary
+  col += metalTint * s2 * (0.6 + bScale * 0.5);            // colored secondary
+  col += fres * mix(vec3(1.0), metalTint, 0.7) * (0.45 + bScale * 0.3);  // rim
+
+  // ── Feedback (ping-pong), advected along a turning flow ─────────────────────
+  vec2 flowScroll = vec2(
+    0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
+    0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
+  );
+  float driftAmt = 0.0015 + uAct * 0.002;
+  vec2 driftRaw = vec2(
+    snoise(uvA * 4.0 + flowScroll),
+    snoise(uvA * 4.0 + flowScroll + 100.0)
+  ) * driftAmt;
+  vec2 driftUV = uv + vec2(driftRaw.x / aspect, driftRaw.y);
+  vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
+
+  // Background glow centered at (pos, tilt), chord-tinted, BRI-driven.
+  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.5 * aspect, 1.0 - uTilt);
+  float bgDist  = dot(uvA - glowCtr, uvA - glowCtr);
+  float bgGlow  = exp(-bgDist * 2.5) * (uBri + uBandLo * 0.3) * 0.4;
+  vec3  bgBase  = prev.rgb * uFeedback + metalTint * bgGlow;
+
+  // Reveal the metal where the chord is present and loud; glints punch through.
+  float surfMask = clamp(coverage, 0.0, 1.0)
+                 * clamp(max(bScale, 0.35 + coverage * 0.45), 0.0, 1.2);
+  vec3 base = mix(bgBase, col, clamp(surfMask, 0.0, 1.0));
+  base += (s1 * (0.5 + bScale * 0.6)) * clamp(coverage + 0.15, 0.0, 1.0);
+
+  // ── Band-driven pulse glows → hot sparks skating over the metal ─────────────
+  float pulseField = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi    = float(i);
+    float seed  = fi * 2.399;
+    float sigma = (0.10 + presence * 0.07) * aspect;
+    // Noise-driven wander — not a periodic orbit, so there is no frequency and no
+    // shape. Any sum of sines eventually reads as a (precessing) ellipse; instead
+    // we walk each axis along smooth value-noise advanced by time. Two octaves
+    // give a slow home-drift plus a finer jitter. x and y sample independent
+    // noise lanes (decorrelated → no rotation), and the per-slot lane offset
+    // sends each glow roaming its own part of the frame rather than the centre.
+    float wt = t * 0.16;
+    float lane = seed * 11.3;
+    float nx = snoise(vec2(lane,         wt))           * 0.7
+             + snoise(vec2(lane +  5.0,  wt * 2.7))     * 0.3;
+    float ny = snoise(vec2(lane + 47.0,  wt + 19.0))    * 0.7
+             + snoise(vec2(lane + 53.0,  wt * 2.7 + 31.0)) * 0.3;
+    vec2  cP = vec2(0.5 * aspect + 0.62 * nx, 0.5 + 0.46 * ny);
+    vec2  dP = uvA - cP;
+    float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
+    // Solid base term so Reactivity reads at its default (1), not only near the
+    // 4 max — the old (uBri*uCtr + uTilt*0.3) gate went ~dead when CTR was low.
+    pulseField += g * presence * (0.45 + uBri * uCtr * 0.6 + uTilt * 0.25) * uPulseReactivity;
+  }
+  // Soft saturation (not a hard clamp): gentle onset so low Reactivity already
+  // reads, smooth roll-off at high Reactivity instead of a flat-topped disc.
+  float pStr = (1.0 - exp(-pulseField * 2.0)) * 0.9;
+  // Reactivity burns the chord colour into the wet sheen rather than flashing
+  // white. Multiply gives a rich tinted body; color-burn deepens & saturates the
+  // energetic core. Both darken (result <= base), so nothing lifts toward white.
+  vec3 pg    = clamp(metalTint, 0.0, 1.0);
+  vec3 pMul  = base * pg;
+  vec3 pBurn = clamp(1.0 - (1.0 - base) / max(pg, vec3(0.04)), 0.0, 1.0);
+  vec3 pRich = mix(pMul, pBurn, 0.6);
+  base = mix(base, pRich, pStr);
+
+  // ── Chord-change flash ──────────────────────────────────────────────────────
+  base += vec3(uPulse * 0.04);
+
+  // ── Fine metallic grain ─────────────────────────────────────────────────────
+  base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
+        * (0.025 + uAct * 0.04);
 
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
@@ -544,6 +854,7 @@ uniform float uBlobSize;
 uniform float uBlobSharp;
 uniform float uShiftSpeed;
 uniform float uPulseReactivity;
+uniform float uPhase;
 uniform float uBriScale;
 uniform float uTilt;
 uniform float uPos;
@@ -554,6 +865,7 @@ uniform sampler2D uPrev;
 uniform float uModeM[N_HUES];
 uniform float uModeN[N_HUES];
 uniform float uModeS;
+uniform float uModeZoom;
 
 vec2 _h2(vec2 p) {
   p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
@@ -573,6 +885,7 @@ float snoise(vec2 p) {
 float snoiseN(vec2 p) { return snoise(p) * 0.5 + 0.5; }
 
 float chladniW(vec2 p, float m, float n) {
+  p = (p - 0.5) * uModeZoom + 0.5;   // Size zooms the figure about the plate centre
   return cos(m * PI * p.x) * cos(n * PI * p.y)
        + uModeS * cos(n * PI * p.x) * cos(m * PI * p.y);
 }
@@ -591,8 +904,11 @@ void main() {
   vec2 uvA = vec2(uv.x * aspect, uv.y);
 
   // Time scaled by speed + activity, same as blobs/aurora — used by pulse bloom
-  float tSpeed = uBlobSpeed + uAct * uBlobDrive;
-  float t = uTime * (tSpeed + uPulse * uShiftSpeed);
+  // t is a CPU-integrated phase (see render()): steady drift (sped by activity)
+  // plus a *bounded* pulse kick. Integrating per-frame keeps the chord burst
+  // from being multiplied by absolute uTime — which made the spin grow more
+  // violent the longer the app had been running.
+  float t = uPhase;
 
   // Trail decay: subtle turning-flow advection (same pattern as blobs)
   vec2 flowScroll = vec2(
@@ -639,19 +955,36 @@ void main() {
     float fi    = float(i);
     float seed  = fi * 2.399;
     float sigma = (0.13 + presence * 0.09) * aspect;
-    float wP = 0.15 + fi * 0.022;
-    float pP = t * wP + seed + 1.2;
-    vec2  cP = vec2(
-      0.5 * aspect + 0.32 * sin(pP) + 0.09 * sin(t * (0.19 + fi * 0.053) + seed + 3.7),
-      0.5          + 0.32 * cos(pP) + 0.09 * sin(t * (0.24 + fi * 0.043) + seed + 0.9)
-    );
+    // Noise-driven wander — not a periodic orbit, so there is no frequency and no
+    // shape. Any sum of sines eventually reads as a (precessing) ellipse; instead
+    // we walk each axis along smooth value-noise advanced by time. Two octaves
+    // give a slow home-drift plus a finer jitter. x and y sample independent
+    // noise lanes (decorrelated → no rotation), and the per-slot lane offset
+    // sends each glow roaming its own part of the frame rather than the centre.
+    float wt = t * 0.16;
+    float lane = seed * 11.3;
+    float nx = snoise(vec2(lane,         wt))           * 0.7
+             + snoise(vec2(lane +  5.0,  wt * 2.7))     * 0.3;
+    float ny = snoise(vec2(lane + 47.0,  wt + 19.0))    * 0.7
+             + snoise(vec2(lane + 53.0,  wt * 2.7 + 31.0)) * 0.3;
+    vec2  cP = vec2(0.5 * aspect + 0.62 * nx, 0.5 + 0.46 * ny);
     vec2  dP = uvA - cP;
     float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
-    pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
+    // Solid base term so Reactivity reads at its default (1), not only near the
+    // 4 max — the old (uBri*uCtr + uTilt*0.3) gate went ~dead when CTR was low.
+    pulseField += g * presence * (0.45 + uBri * uCtr * 0.6 + uTilt * 0.25) * uPulseReactivity;
   }
-  float pStr = clamp(pulseField, 0.0, 1.0) * 0.7;
-  vec3 pOv = mix(2.0 * base * sheenColor, 1.0 - 2.0 * (1.0 - base) * (1.0 - sheenColor), step(0.5, base));
-  base = mix(base, pOv, pStr);
+  // Soft saturation (not a hard clamp): gentle onset so low Reactivity already
+  // reads, smooth roll-off at high Reactivity instead of a flat-topped disc.
+  float pStr = (1.0 - exp(-pulseField * 2.0)) * 0.85;
+  // Reactivity burns the chord colour in rather than flashing white. Multiply
+  // gives a rich tinted body; color-burn deepens & saturates the energetic core.
+  // Both are darkening blends (result <= base), so nothing lifts toward white.
+  vec3 pg    = clamp(sheenColor, 0.0, 1.0);
+  vec3 pMul  = base * pg;
+  vec3 pBurn = clamp(1.0 - (1.0 - base) / max(pg, vec3(0.04)), 0.0, 1.0);
+  vec3 pRich = mix(pMul, pBurn, 0.6);
+  base = mix(base, pRich, pStr);
 
   base += vec3(uPulse * 0.035);
 
@@ -682,6 +1015,7 @@ uniform float uDt;
 uniform float uModeM[N_HUES];
 uniform float uModeN[N_HUES];
 uniform float uModeS;
+uniform float uModeZoom;
 uniform float uDegrees[N_HUES];
 uniform float uBri;
 uniform float uAct;
@@ -698,6 +1032,7 @@ vec2 hash22(vec2 p) {
 }
 
 float chladniW(vec2 p, float m, float n) {
+  p = (p - 0.5) * uModeZoom + 0.5;   // Size zooms the figure about the plate centre
   return cos(m * PI * p.x) * cos(n * PI * p.y)
        + uModeS * cos(n * PI * p.x) * cos(m * PI * p.y);
 }
@@ -715,21 +1050,48 @@ void main() {
   vec2 p = P.xy;
   vec2 v = P.zw;
 
-  // Gradient via central differences
-  float e = 0.0015;
-  float Dp = chladniD(p);
-  vec2 grad = vec2(
-    chladniD(p + vec2(e, 0.0)) - chladniD(p - vec2(e, 0.0)),
-    chladniD(p + vec2(0.0, e)) - chladniD(p - vec2(0.0, e))
-  ) / (2.0 * e);
+  // Stable per-grain randoms — vUV identifies this grain for its whole life.
+  vec2  hA   = hash22(vUV * 71.13 + 3.7);
+  vec2  hB   = hash22(vUV * 53.70 + 19.1);
+  float role = hA.x;                          // chooses the grain's behaviour
+  float st   = 0.40 + 1.4 * hA.y;             // stickiness: some snap, some loaf
+  int   slot = clamp(int(hB.x * float(N_HUES)), 0, N_HUES - 1);
 
-  // Force: descend |D| landscape; BRI scales drive strength
-  float drive = 0.018 * (0.35 + uBri + uAct * uBlobDrive * 0.3);
+  // ~45% of grains are bound to a *single* note: they only align to that note's
+  // own nodal lines, and only while it is sounding. The rest follow the combined
+  // field and hold the main figure. A bound grain whose note is quiet loses its
+  // drive and drifts — the randomness around the form.
+  bool  bound = role < 0.45;
+  float e = 0.0015;
+  float Dp;
+  vec2  grad;
+  float gate = 1.0;
+  if (bound) {
+    float m = uModeM[slot], n = uModeN[slot];
+    Dp = chladniW(p, m, n);
+    grad = vec2(chladniW(p + vec2(e, 0.0), m, n) - chladniW(p - vec2(e, 0.0), m, n),
+                chladniW(p + vec2(0.0, e), m, n) - chladniW(p - vec2(0.0, e), m, n))
+         / (2.0 * e);
+    gate = smoothstep(0.04, 0.30, uDegrees[slot]);   // align only when its note sounds
+  } else {
+    Dp = chladniD(p);
+    grad = vec2(chladniD(p + vec2(e, 0.0)) - chladniD(p - vec2(e, 0.0)),
+                chladniD(p + vec2(0.0, e)) - chladniD(p - vec2(0.0, e)))
+         / (2.0 * e);
+  }
+
+  // Force: descend |D| toward the nodal lines; BRI scales drive. Per-grain
+  // stickiness and the note gate modulate how hard this grain settles.
+  float drive = 0.018 * (0.35 + uBri + uAct * uBlobDrive * 0.3) * st * gate;
   vec2 force = -sign(Dp) * grad * drive;
 
-  // Jitter: thermal noise (ACT) + chord-change scatter (pulse)
-  vec2 rnd = hash22(p * 311.7 + vUV * 97.3 + uTime * 0.1) * 2.0 - 1.0;
-  float jit = uBlobWarp * 8.0 * (0.15 + uAct) + uPulse * uShiftSpeed * 0.02;
+  // Jitter: a small constant shimmer so the figure is never dead-stuck, plus
+  // thermal noise (ACT), chord-change scatter (pulse), and extra roam for grains
+  // that are currently un-driven (their note is quiet) so they visibly wander.
+  vec2  rnd  = hash22(p * 311.7 + vUV * 97.3 + uTime * 0.1) * 2.0 - 1.0;
+  float roam = (1.0 - gate) * 0.011;
+  float jit  = 0.0035 + uBlobWarp * 8.0 * (0.15 + uAct)
+             + uPulse * uShiftSpeed * 0.02 + roam;
 
   float dt = uDt * (0.5 + uBlobSpeed);
   v = v * 0.88 + force + rnd * jit;
@@ -761,6 +1123,7 @@ uniform vec2  uRes;
 uniform float uModeM[N_HUES];
 uniform float uModeN[N_HUES];
 uniform float uModeS;
+uniform float uModeZoom;
 uniform float uDegrees[N_HUES];
 uniform float uSlotEdge[N_HUES];
 uniform vec3  uDegreeRGB[N_HUES];
@@ -776,6 +1139,7 @@ out vec3  vColor;
 out float vGlow;
 
 float chladniW(vec2 p, float m, float n) {
+  p = (p - 0.5) * uModeZoom + 0.5;   // Size zooms the figure about the plate centre
   return cos(m * PI * p.x) * cos(n * PI * p.y)
        + uModeS * cos(n * PI * p.x) * cos(m * PI * p.y);
 }
@@ -786,7 +1150,10 @@ void main() {
   vec2 p = P.xy;
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
   float dpr = max(uRes.y / 1080.0, 0.5);
-  gl_PointSize = clamp((0.6 + uBlobSize * 4.0) * dpr, 1.0, 4.0);
+  // Size sets the grain coarseness: quadratic + a wider clamp so it sweeps from
+  // fine sand at low Size to chunky gravel near 0.6 (the old 1–4px range barely
+  // moved). dpr keeps apparent size constant across resolutions.
+  gl_PointSize = clamp((0.5 + uBlobSize * uBlobSize * 16.0) * dpr, 1.0, 7.0);
 
   // Weighted slot color from local mode contributions (same gradient law as blobs)
   float kSpr = mix(3.0, 1.0, uSpread);
@@ -900,6 +1267,13 @@ export class AudioRendererGL {
   private _slotWeights: Float32Array;
   private _slotEdgeBuf: Float32Array;
   private _pulse = 0;
+  // CPU-integrated animation phase fed to the shaders as uPhase. We accumulate
+  // rate·dt each frame instead of letting the shader multiply absolute time by a
+  // pulse-boosted rate, so the chord-change burst is a bounded kick rather than
+  // a spin that grows with session length. _lastPhaseT is the previous frame's
+  // clock (seconds) used to derive dt.
+  private _animPhase = 0;
+  private _lastPhaseT = 0;
   private readonly _startT: number;
   private _w = 0;
   private _h = 0;
@@ -921,6 +1295,7 @@ export class AudioRendererGL {
   private _tiltSm = 0.5;            // EMA-smoothed tilt (load-bearing: raw tilt thrashes modes)
   private _posSm = 0.5;             // EMA-smoothed pos
   private _modeS = 1.0;             // plate symmetry scalar derived from pos
+  private _modeZoom = 1.0;          // figure zoom about plate centre, from Size
   private _modeM: Float32Array | null = null;  // per-slot m mode order
   private _modeN: Float32Array | null = null;  // per-slot n mode order
   private _lastBri = 0;
@@ -1052,8 +1427,9 @@ export class AudioRendererGL {
   }
 
   private _fragFor(style: string, n: number): string {
-    if (style === "aurora")   return makeAuroraFragSrc(n);
-    if (style === "chladni")  return makeChladniBgFragSrc(n);
+    if (style === "aurora")     return makeAuroraFragSrc(n);
+    if (style === "chladni")    return makeChladniBgFragSrc(n);
+    if (style === "slime")      return makeSlimeFragSrc(n);
     return makeFragSrc(n);
   }
 
@@ -1143,6 +1519,17 @@ export class AudioRendererGL {
 
     const t = (performance.now() - this._startT) / 1000;
 
+    // Integrate the shader animation phase. Rate = steady drift (sped by
+    // activity) + a pulse-driven kick. Because we accumulate rate·dt rather than
+    // multiplying absolute time by the rate, the chord-change burst stays a
+    // bounded nudge (its size is the time-integral of the pulse envelope, ~0.3s
+    // worth) instead of a whip that scales with how long the app has run. dt is
+    // clamped so a backgrounded tab resuming doesn't leap the phase forward.
+    const dt = Math.min(0.1, Math.max(0, t - this._lastPhaseT));
+    this._lastPhaseT = t;
+    const baseRate = this._blobSpeedVal + frame.act * this._blobDriveVal;
+    this._animPhase += dt * (baseRate + this._pulse * this._shiftSpeedVal);
+
     const N = frame.slots.length;
     if (N !== this._activeN) this.setN(N);
 
@@ -1186,6 +1573,7 @@ export class AudioRendererGL {
 
     gl.useProgram(this._prog);
     gl.uniform1f(u.uTime, t);
+    gl.uniform1f(u.uPhase, this._animPhase);
     gl.uniform1fv(u.uDegrees, this._slotWeights);
     gl.uniform3fv(u.uDegreeRGB, this._degreeRGBBuf);
     gl.uniform3fv(u.uDegreeRGB2, this._degreeRGB2Buf);
@@ -1308,6 +1696,7 @@ export class AudioRendererGL {
       "uBlobSharp",
       "uShiftSpeed",
       "uPulseReactivity",
+      "uPhase",
       "uBriScale",
       "uTilt",
       "uPos",
@@ -1319,6 +1708,7 @@ export class AudioRendererGL {
       "uModeM",
       "uModeN",
       "uModeS",
+      "uModeZoom",
       "uPosTex",
       "uSimRes",
       "uDt",
@@ -1589,6 +1979,14 @@ export class AudioRendererGL {
     // Sit on integer plateau for the first 75% of each interval, then glide quickly
     const shift  = kFloor + (kFrac > 0.75 ? (kFrac - 0.75) / 0.25 : 0.0);
 
+    // Size zooms the figure about the plate centre — applied as a centred
+    // coordinate scale in chladniW (uModeZoom), NOT a mode multiply (which would
+    // anchor the zoom at the corner). Bigger Size → smaller factor → a narrower
+    // central window → fewer, larger lobes (zoomed in); smaller Size → finer.
+    // Default (0.2) maps to ~1.0 so existing scenes are unchanged. Drives the
+    // sim, points and sheen alike, so Size reads regardless of gl_PointSize.
+    this._modeZoom = 0.35 / (this._blobSizeVal + 0.15);
+
     for (let i = 0; i < n; i++) {
       const [bm, bn] = CHLADNI_BASE_MODES[i % CHLADNI_BASE_MODES.length];
       this._modeM![i] = Math.max(1.0, bm + shift);
@@ -1616,6 +2014,7 @@ export class AudioRendererGL {
     gl.uniform1fv(su.uModeM,  this._modeM!);
     gl.uniform1fv(su.uModeN,  this._modeN!);
     gl.uniform1f(su.uModeS,   this._modeS);
+    gl.uniform1f(su.uModeZoom, this._modeZoom);
     gl.uniform1fv(su.uDegrees, this._slotWeights);
     gl.uniform1f(su.uBri,     this._lastBri);
     gl.uniform1f(su.uAct,     this._lastAct);
@@ -1641,6 +2040,7 @@ export class AudioRendererGL {
     gl.uniform1fv(this._u.uModeM,  this._modeM!);
     gl.uniform1fv(this._u.uModeN,  this._modeN!);
     gl.uniform1f(this._u.uModeS,   this._modeS);
+    gl.uniform1f(this._u.uModeZoom, this._modeZoom);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._texA!.tex);
@@ -1656,6 +2056,7 @@ export class AudioRendererGL {
     gl.uniform1fv(pu.uModeM,   this._modeM!);
     gl.uniform1fv(pu.uModeN,   this._modeN!);
     gl.uniform1f(pu.uModeS,    this._modeS);
+    gl.uniform1f(pu.uModeZoom, this._modeZoom);
     gl.uniform1fv(pu.uDegrees, this._slotWeights);
     gl.uniform1fv(pu.uDegreeRGB,  this._degreeRGBBuf);
     gl.uniform1fv(pu.uDegreeRGB2, this._degreeRGB2Buf);

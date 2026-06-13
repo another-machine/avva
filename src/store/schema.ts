@@ -1076,10 +1076,10 @@ export const SCHEMA = {
   "audio.visualStyle": {
     kind: "enum",
     default: "blobs",
-    options: ["blobs", "aurora", "chladni"] as const,
+    options: ["blobs", "aurora", "chladni", "slime"] as const,
     label: "Style",
     group: "visualSynthesis",
-    hint: "Blobs = liquid metaballs; Aurora = marbled veils; Chladni = sand on a singing plate — grains gather on the chord's nodal lines.",
+    hint: "Blobs = liquid metaballs; Aurora = marbled veils; Chladni = sand on a singing plate — grains gather on the chord's nodal lines; Slime = glossy folds of wet, reflective colored goo that catch the light.",
   },
   "audio.feedback": {
     kind: "number",
