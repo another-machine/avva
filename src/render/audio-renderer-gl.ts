@@ -392,6 +392,11 @@ void main() {
   // -> fine filaments. Size nudges the overall feature scale (bigger = coarser).
   float scale = mix(1.3, 3.2, uSpread) / max(0.4, uBlobSize * 2.5);
 
+  // Center p before multiplying by scale so zoom origin is screen center, not
+  // bottom-left (which is where p=uvA starts). Without this, audio-driven SPR
+  // changes cause the whole field to zoom from the corner.
+  vec2 pC = p - vec2(0.5 * aspect, 0.5);
+
   // Two wandering flow offsets, one per warp octave — same turning-drift idea as
   // the blob feedback. CRITICAL: these must be bounded oscillations, NOT a linear
   // t-scroll. A term like (... + 0.1*t) added to the sample coord advances the
@@ -407,11 +412,11 @@ void main() {
 
   // Domain-warped fBm — marbled, smoke-like structure. Each octave evolves only
   // through its bounded flow offset, so there is no constant-velocity drift.
-  vec2 q = vec2(fbm(p * scale + flow),
-                fbm(p * scale + flow + 7.3));
-  vec2 r = vec2(fbm(p * scale + 1.7 * q + flow2),
-                fbm(p * scale + 1.7 * q + flow2 + 5.1));
-  float master = clamp(fbm(p * scale + 2.0 * r) * 0.5 + 0.5, 0.0, 1.0);
+  vec2 q = vec2(fbm(pC * scale + flow),
+                fbm(pC * scale + flow + 7.3));
+  vec2 r = vec2(fbm(pC * scale + 1.7 * q + flow2),
+                fbm(pC * scale + 1.7 * q + flow2 + 5.1));
+  float master = clamp(fbm(pC * scale + 2.0 * r) * 0.5 + 0.5, 0.0, 1.0);
 
   // ── Palette veils ──────────────────────────────────────────────────────────
   // Each active slot weaves its own band through the warped field, tinted with
@@ -424,7 +429,7 @@ void main() {
     float presence = uDegrees[i];
     if (presence < 0.005) continue;
     float fi   = float(i);
-    float band = fbm(p * scale + 1.7 * r + vec2(fi * 3.1, fi * 1.7)) * 0.5 + 0.5;
+    float band = fbm(pC * scale + 1.7 * r + vec2(fi * 3.1, fi * 1.7)) * 0.5 + 0.5;
     band = pow(band, ctrTighten);
     float w = smoothstep(0.5 - softness, 0.5 + softness, band);
     // Gradient across the veil: tilt + per-slot edge bias slide lo<->hi color.
