@@ -445,10 +445,21 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
   const mMid  = _meterRow("MID");
   const mTre  = _meterRow("TRE");
 
+  // Limiter meter (LUFS short-term + gain reduction)
+  const limHdr = mk("div", "sig__hdr", "LIMITER");
+  const limRow = mk("div", "sig__row");
+  const lufsLabel = mk("span", "sig__key", "LUFS");
+  const lufsVal = mk("span", "sig__val", "—");
+  const grLabel = mk("span", "sig__key", "GR");
+  const grVal = mk("span", "sig__val", "—");
+  limRow.append(lufsLabel, lufsVal, grLabel, grVal);
+
   host.append(
     statusRow,
     mk("div", "sig__divider"),
     tierHdr, tierSub, mBass.row, mMid.row, mTre.row,
+    mk("div", "sig__divider"),
+    limHdr, limRow,
   );
 
   let latest: TelemetryMsg | null = null;
@@ -456,18 +467,24 @@ export function mountSoundSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tele
   function paint() {
     requestAnimationFrame(paint);
     const sc = latest?.synthControls;
+    const lm = latest?.limiterMetrics;
     const running = latest?.synth?.running ?? false;
 
     sigDot.classList.toggle("is-on", running);
     sigLabel.textContent = sc?.slotLabel ?? (running ? "…" : "—");
 
-    if (!sc) return;
-    const pct = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
+    if (sc) {
+      const pct = (v: number) => `${Math.min(100, v * 100).toFixed(1)}%`;
+      mBass.fill.style.width = pct(sc.bassW);   mBass.val.textContent = (sc.bassW * 100).toFixed(0);
+      mMid.fill.style.width  = pct(sc.midW);    mMid.val.textContent  = (sc.midW * 100).toFixed(0);
+      mTre.fill.style.width  = pct(sc.trebleW); mTre.val.textContent  = (sc.trebleW * 100).toFixed(0);
+    }
 
-    mBass.fill.style.width = pct(sc.bassW);   mBass.val.textContent = (sc.bassW * 100).toFixed(0);
-    mMid.fill.style.width  = pct(sc.midW);    mMid.val.textContent  = (sc.midW * 100).toFixed(0);
-    mTre.fill.style.width  = pct(sc.trebleW); mTre.val.textContent  = (sc.trebleW * 100).toFixed(0);
-
+    if (lm) {
+      lufsVal.textContent = `${lm.lufsShort.toFixed(1)} dB`;
+      grVal.textContent = lm.gr < -0.1 ? `${lm.gr.toFixed(1)} dB` : "0";
+      grVal.style.color = lm.gr < -1 ? "var(--accent)" : "";
+    }
   }
   requestAnimationFrame(paint);
 

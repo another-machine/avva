@@ -76,6 +76,7 @@ let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
 let palette: Palette | null = null;
 let telemetry: TelemetrySender | null = null;
+let _latestLimiterMetrics: { lufsShort: number; gr: number } | null = null;
 let pipeline: Pipeline | null = null;
 let _sourceLabel = "—";
 let _resLabel = "—";
@@ -182,6 +183,9 @@ async function begin(): Promise<void> {
   vidAnalyzer = new Analyzer(CONFIG, calibration);
   synth = new Synth(CONFIG);
   synth.palette = palette;
+  synth.onLimiterMetrics = (m: { lufsShort: number; gr: number }) => { _latestLimiterMetrics = m; };
+  // Preload worklets early so they're ready before first synth.start()
+  void synth.preloadWorklets();
 
   try {
     await videoSource.start();
@@ -618,6 +622,7 @@ function tick(t: number): void {
         noteGridOctH: SYNTH_NOTE_GRID_OCT_H,
       },
       synthControls: synth.lastControls ?? undefined,
+      limiterMetrics: _latestLimiterMetrics ?? undefined,
       audio: audioFrame ?? undefined,
       visualUniforms: vis ?? undefined,
     });

@@ -72,6 +72,14 @@ export class AudioGraph {
   readonly output: GainNode;
 
   private readonly _safetyComp: DynamicsCompressorNode;
+  /** Input/output sandwich around the limiter stage so Phase 2 can swap
+   *  the safety compressor for an AudioWorklet limiter without re-wiring. */
+  private readonly _limiterIn: GainNode;
+  private readonly _limiterOut: GainNode;
+  private _workletLimiter: AudioWorkletNode | null = null;
+
+  /** True once the AudioWorklet lookahead limiter is active. */
+  get workletActive(): boolean { return this._workletLimiter !== null; }
 
   constructor() {
     const ac = new AudioContext();
@@ -152,18 +160,27 @@ export class AudioGraph {
     this.autoMakeup = ac.createGain();
     this.autoMakeup.gain.value = 2.0; // +6 dB
 
-    // Safety compressor — interim until Phase 2 worklet limiter.
-    // Tight threshold (-3 dB) and high ratio (20:1) to catch residual peaks.
+    // Limiter sandwich: autoMakeup → _limiterIn → [limiter] → _limiterOut → masterPanner
+    // Phase 1: safety compressor as the limiter.
+    // Phase 2: swapped to AudioWorklet lookahead limiter via swapToWorkletLimiter().
+    this._limiterIn = ac.createGain();
+    this._limiterIn.gain.value = 1.0;
+    this.autoMakeup.connect(this._limiterIn);
+
     this._safetyComp = ac.createDynamicsCompressor();
     this._safetyComp.threshold.value = -3;
     this._safetyComp.ratio.value = 20;
     this._safetyComp.knee.value = 3;
     this._safetyComp.attack.value = 0.001;
     this._safetyComp.release.value = 0.1;
-    this.autoMakeup.connect(this._safetyComp);
+    this._limiterIn.connect(this._safetyComp);
+
+    this._limiterOut = ac.createGain();
+    this._limiterOut.gain.value = 1.0;
+    this._safetyComp.connect(this._limiterOut);
 
     this.masterPanner = ac.createStereoPanner();
-    this._safetyComp.connect(this.masterPanner);
+    this._limiterOut.connect(this.masterPanner);
 
     this.output = ac.createGain();
     this.output.gain.value = 1.0;
@@ -172,6 +189,19 @@ export class AudioGraph {
   }
 
   // ── Public control API ─────────────────────────────────────
+
+  /**
+   * Replace the safety compressor with an AudioWorklet lookahead limiter.
+   * No-op if the worklet limiter is already active.
+   */
+  swapToWorkletLimiter(workletNode: AudioWorkletNode): void {
+    if (this._workletLimiter) return;
+    this._limiterIn.disconnect(this._safetyComp);
+    this._safetyComp.disconnect(this._limiterOut);
+    this._limiterIn.connect(workletNode);
+    workletNode.connect(this._limiterOut);
+    this._workletLimiter = workletNode;
+  }
 
   setMasterGain(v: number): void {
     const target = Math.max(0, Math.min(2, v));

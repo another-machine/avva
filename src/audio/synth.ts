@@ -12,6 +12,8 @@
 
 import { FMVoice } from "./fm-voice.js";
 import { AudioGraph } from "./graph.js";
+import { loadWorklets, createLimiterNode } from "./worklet-host.js";
+import type { LimiterMetrics } from "./worklet-host.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
@@ -166,6 +168,16 @@ export class Synth {
   private _sub: SubBass | null;
   private _delay: Delay | null;
   private _tremolo: Tremolo | null;
+  private _workletsLoaded = false;
+
+  /** Called with limiter metrics at ~10 Hz when the worklet limiter is active. */
+  onLimiterMetrics: ((m: LimiterMetrics) => void) | null = null;
+
+  // Auto-trim servo: slowly nudges masterTrim toward −16 LUFS when bri is high.
+  // Gated so it only corrects on bright scenes, preserving the bri→loudness shape.
+  private _autoTrimDb = 0; // accumulated correction, ±6 dB range
+  private _lastLufs = -60;
+  private _lastMetricsTime = 0;
 
   palette: Palette | null;
   running: boolean;
@@ -191,6 +203,7 @@ export class Synth {
     this._sub = null;
     this._delay = null;
     this._tremolo = null;
+    this.onLimiterMetrics = null;
     this.palette = null;
     this.running = false;
     this.lastNote = null;
@@ -343,6 +356,10 @@ export class Synth {
     }
 
     this.running = true;
+
+    // Activate worklet limiter asynchronously — graph is already producing
+    // audio via the safety compressor fallback until the swap completes.
+    void this._activateWorkletLimiter();
   }
 
   /** Update user-controlled master gain (call instead of writing _master.gain directly). */
@@ -353,6 +370,64 @@ export class Synth {
   /** Per-frame bri-dim: scales master down when scene is very dark. */
   setBriDim(bri: number, now: number): void {
     this._graph?.setBriDim(bri, now);
+  }
+
+  /**
+   * Preload AudioWorklet modules. Call once on page init so the worklet is
+   * ready before the user enables the synth. Uses a temporary throwaway
+   * AudioContext (to call addModule without starting audio) — actual graph
+   * construction happens in start().
+   */
+  async preloadWorklets(): Promise<void> {
+    if (this._workletsLoaded) return;
+    // AudioWorklet.addModule() needs an AudioContext, but we can use an
+    // OfflineAudioContext for the module load check — the registration is
+    // global per-context, but we just need the module code parsed.
+    // Simpler: create a minimal suspended AudioContext just for loading.
+    const tmp = new AudioContext();
+    const ok = await loadWorklets(tmp);
+    await tmp.close();
+    this._workletsLoaded = ok;
+  }
+
+  /** Activate the worklet limiter on the graph's AudioContext. Called
+   *  internally after start() creates the graph if preloadWorklets succeeded. */
+  private async _activateWorkletLimiter(): Promise<void> {
+    const graph = this._graph;
+    if (!graph || graph.workletActive) return;
+    const ok = await loadWorklets(graph.actx);
+    if (!ok || !this._graph) return;
+    const node = createLimiterNode(graph.actx, (m) => {
+      this._lastLufs = m.lufsShort;
+      this._lastMetricsTime = this._graph?.actx.currentTime ?? 0;
+      this.onLimiterMetrics?.(m);
+    });
+    this._graph.swapToWorkletLimiter(node);
+  }
+
+  /**
+   * Auto-trim servo: called each update() frame. Slowly nudges masterTrim
+   * toward −16 LUFS when bri is high (gated so quiet/dark scenes are untouched).
+   * Correction range: ±6 dB, τ ≈ 8 s.
+   */
+  private _runAutoTrim(safeBri: number, dt: number): void {
+    if (!this._graph || !this._graph.workletActive) return;
+    const TARGET_LUFS = -16;
+    const MAX_CORRECTION_DB = 6;
+    // Only servo when the scene is bright enough to indicate "should be loud"
+    if (safeBri < 0.3) return;
+    const error = TARGET_LUFS - this._lastLufs;
+    // Servo with τ ≈ 8 s: delta per frame = error * dt / 8
+    const delta = error * dt / 8;
+    this._autoTrimDb = Math.max(-MAX_CORRECTION_DB,
+      Math.min(MAX_CORRECTION_DB, this._autoTrimDb + delta));
+    const userGain = this._cfg.masterGain ?? 0.28;
+    const corrFactor = Math.pow(10, this._autoTrimDb / 20);
+    this._graph.masterTrim.gain.setTargetAtTime(
+      Math.max(0, userGain * corrFactor),
+      this._graph.actx.currentTime,
+      0.5,
+    );
   }
 
   stop(): void {
@@ -747,6 +822,8 @@ export class Synth {
       masterPan: (safePos - 0.5) * 1.4,
       pluckFired: false,
     };
+
+    this._runAutoTrim(safeBri, dt);
   }
 
   // ── Private — pluck ─────────────────────────────────────────

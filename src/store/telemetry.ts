@@ -1,6 +1,7 @@
 import type { AnalysisOut } from "../analysis/analyzer.js";
 import type { AudioFrame } from "../analysis/audio-analyzer.js";
 import type { SynthControls } from "../audio/synth.js";
+import type { LimiterMetrics } from "../audio/worklet-host.js";
 import type { VisualUniforms } from "../render/audio-renderer-gl.js";
 
 export interface TelemetryMsg {
@@ -26,6 +27,7 @@ export interface TelemetryMsg {
     noteGridOctH?: number;
   };
   synthControls?: SynthControls;
+  limiterMetrics?: LimiterMetrics;
   visualUniforms?: VisualUniforms;
 }
 
