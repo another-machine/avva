@@ -772,6 +772,25 @@ export const SCHEMA = {
     group: "synth-params",
     hint: "nodes = safe Web Audio node-graph FM; worklet = AudioWorklet FM with index ceiling and per-sample glide. Takes effect on next synth restart.",
   },
+  "synth.scenePreset": {
+    kind: "select",
+    default: "lush" as const,
+    options: [
+      "lush",
+      "cassette-memory",
+      "music-box",
+      "static-field",
+      "glass-air",
+      "wire",
+      "drone",
+      "pulse",
+      "soft-organ",
+      "custom",
+    ] as const,
+    label: "Scene preset",
+    group: "synth",
+    hint: "Unified sound character preset — bundles FM, cassette, and mix settings. Editing any parameter switches to 'custom'.",
+  },
 
   // ── mix bus ────────────────────────────────────────────────
   "mix.subLevel": {

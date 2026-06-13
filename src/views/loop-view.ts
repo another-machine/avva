@@ -14,6 +14,7 @@ import { AudioRendererGL } from "../render/audio-renderer-gl.js";
 import { Palette } from "../harmony/palette.js";
 import { TelemetrySender } from "../store/telemetry.js";
 import { PRESETS, CASSETTE_PRESETS, FM_PRESETS, GLIDE_PRESETS } from "../audio/presets.js";
+import { PresetController } from "../audio/preset-controller.js";
 import { Pipeline } from "../pipeline/pipeline.js";
 import { startBroadcaster, type BroadcasterBridge } from "../input/webrtc-bridge.js";
 
@@ -186,6 +187,9 @@ async function begin(): Promise<void> {
   synth.onLimiterMetrics = (m: { lufsShort: number; gr: number }) => { _latestLimiterMetrics = m; };
   // Preload worklets early so they're ready before first synth.start()
   void synth.preloadWorklets();
+
+  // Scene preset controller — apply presets and detect divergence
+  new PresetController();
 
   try {
     await videoSource.start();
