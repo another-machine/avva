@@ -7,6 +7,7 @@
 
 import limiterUrl from "./worklets/limiter.js?url";
 import fmTierUrl from "./worklets/fm-tier.js?url";
+import ksStringUrl from "./worklets/ks-string.js?url";
 
 export interface LimiterMetrics {
   lufsShort: number;
@@ -41,6 +42,33 @@ export async function loadFMWorklets(actx: AudioContext): Promise<boolean> {
     console.warn("[worklet-host] FM-tier AudioWorklet load failed — falling back to node-graph FM:", e);
     return false;
   }
+}
+
+/**
+ * Load the ks-string worklet module. Returns true on success.
+ */
+export async function loadKSWorklet(actx: AudioContext): Promise<boolean> {
+  try {
+    await actx.audioWorklet.addModule(ksStringUrl);
+    return true;
+  } catch (e) {
+    console.warn("[worklet-host] KS-string AudioWorklet load failed:", e);
+    return false;
+  }
+}
+
+/**
+ * Create a ks-string AudioWorkletNode (4-voice Karplus-Strong).
+ * Call only after loadKSWorklet() resolved true on the same AudioContext.
+ */
+export function createKSNode(actx: AudioContext): AudioWorkletNode {
+  return new AudioWorkletNode(actx, "ks-string", {
+    numberOfInputs: 0,
+    numberOfOutputs: 1,
+    outputChannelCount: [2],
+    channelCount: 2,
+    channelCountMode: "explicit",
+  });
 }
 
 /**

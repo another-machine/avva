@@ -12,10 +12,12 @@
 
 import { FMVoice } from "./fm-voice.js";
 import { AudioGraph } from "./graph.js";
-import { loadWorklets, loadFMWorklets, createLimiterNode } from "./worklet-host.js";
+import { loadWorklets, loadFMWorklets, loadKSWorklet, createKSNode, createLimiterNode } from "./worklet-host.js";
 import type { LimiterMetrics } from "./worklet-host.js";
 import { NodeTierBackend, WorkletTierBackend } from "./voices.js";
 import type { TierBackend } from "./voices.js";
+import { NoiseLayer } from "./layers/noise-layer.js";
+import { ShimmerLayer } from "./layers/shimmer-layer.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
@@ -164,6 +166,16 @@ export class Synth {
   private _tremolo: Tremolo | null;
   private _workletsLoaded = false;
   private _fmWorkletLoaded = false;
+  private _ksWorkletLoaded = false;
+
+  // Phase 4 complementary layers
+  private _noiseLayer: NoiseLayer | null = null;
+  private _shimmerLayer: ShimmerLayer | null = null;
+  private _ksNode: AudioWorkletNode | null = null;
+  // KS voice pool: track which slot is oldest (for voice stealing)
+  private _ksVoiceAge: number[] = [0, 0, 0, 0];
+  private _ksVoiceClock = 0;
+  private _ksNextAllowed = 0; // AudioContext time before next KS trigger
 
   /** Called with limiter metrics at ~10 Hz when the worklet limiter is active. */
   onLimiterMetrics: ((m: LimiterMetrics) => void) | null = null;
@@ -342,6 +354,12 @@ export class Synth {
       }
     }
 
+    // Phase 4 complementary layers
+    this._noiseLayer   = new NoiseLayer(ac, graph.noiseBus);
+    this._shimmerLayer = new ShimmerLayer(ac, graph.shimmerBus);
+    // KS strings — async, falls back gracefully if worklet unavailable
+    void this._activateKSLayer(ac, graph);
+
     this.running = true;
 
     // Activate worklet limiter asynchronously — graph is already producing
@@ -366,27 +384,22 @@ export class Synth {
    * construction happens in start().
    */
   async preloadWorklets(): Promise<void> {
-    // Use a single temp AudioContext for both module loads — addModule is
-    // per-context, so the modules need to be loaded again in start()'s context,
-    // but pre-parsing here ensures faster load on first use.
     const tmp = new AudioContext();
-    const [limiterOk, fmOk] = await Promise.all([
+    const [limiterOk, fmOk, ksOk] = await Promise.all([
       loadWorklets(tmp),
       loadFMWorklets(tmp),
+      loadKSWorklet(tmp),
     ]);
     await tmp.close();
     this._workletsLoaded  = limiterOk;
     this._fmWorkletLoaded = fmOk;
+    this._ksWorkletLoaded = ksOk;
   }
 
-  /** Load worklets into the live AudioContext and activate the lookahead
-   *  limiter. Called async after start() — audio plays via safety compressor
-   *  until the swap completes. Also loads fm-tier if not already loaded. */
+  /** Load worklets into the live AudioContext and activate the lookahead limiter. */
   private async _activateWorkletLimiter(): Promise<void> {
     const graph = this._graph;
     if (!graph || graph.workletActive) return;
-    // Load both modules concurrently — fm-tier may already be registered but
-    // addModule is idempotent when the processor name matches.
     const [limiterOk] = await Promise.all([
       loadWorklets(graph.actx),
       this._fmWorkletLoaded ? Promise.resolve(true) : loadFMWorklets(graph.actx),
@@ -398,6 +411,16 @@ export class Synth {
       this.onLimiterMetrics?.(m);
     });
     this._graph.swapToWorkletLimiter(node);
+  }
+
+  /** Create the KS string AudioWorkletNode and wire it to ksBus. */
+  private async _activateKSLayer(ac: AudioContext, graph: AudioGraph): Promise<void> {
+    if (this._ksNode) return;
+    const ok = this._ksWorkletLoaded || await loadKSWorklet(ac);
+    if (!ok || !this._graph) return;
+    this._ksWorkletLoaded = true;
+    this._ksNode = createKSNode(ac);
+    this._ksNode.connect(graph.ksBus);
   }
 
   /**
@@ -792,6 +815,67 @@ export class Synth {
     this._cancelParam(this._sub!.gain.gain, now);
     this._sub!.gain.gain.setTargetAtTime(safeLo * 0.15, now, tierTaus[0]);
     this._addGridNote(subFreq, safeLo * 0.15);
+
+    // ── Phase 4 complementary layers ─────────────────────────────────────
+
+    // Layer crossfade weights (equal-power-ish, all 0..1):
+    //   KS strings:       FLUX × CTR       — percussive/busy/high-contrast
+    //   Noise resonators: SPR × (1−CTR)    — diffuse/spread/muted-contrast
+    //   Shimmer:          TILT_high×(1−FLUX) — bright-topped calm scenes
+    const ksWeight      = clamp01(safeFlux * safeContrast);
+    const noiseWeight   = clamp01(safeSpread * (1 - safeContrast));
+    const tiltHigh      = clamp01((safeTilt - 0.5) * 2);
+    const shimmerWeight = clamp01(tiltHigh * (1 - safeFlux));
+
+    // Noise resonator: update chord frequencies + weight
+    if (this._noiseLayer) {
+      this._noiseLayer.update(pcs, baseOctave + 1, noiseWeight, now, slowTau);
+    }
+
+    // Shimmer: update root pitch + weight
+    if (this._shimmerLayer) {
+      const rootPc = primarySlot.chord.pitchClasses[0];
+      this._shimmerLayer.update(rootPc, baseOctave, safePos, shimmerWeight, now, slowTau);
+    }
+
+    // KS strings: probability-triggered, similar to _maybePluck but axis-gated
+    if (this._ksNode && dt > 0 && dt < 0.5 && now >= this._ksNextAllowed) {
+      const trigProb = clamp01(ksWeight * 0.6);
+      if (Math.random() < trigProb) {
+        // Pick a chord note (spread determines how many are unlocked)
+        const nUnlocked = Math.max(1, Math.round(1 + safeSpread * (pcs.length - 1)));
+        const chosenPc = pcs[Math.floor(Math.random() * nUnlocked)];
+        // KS strings sound best 1 octave below treble
+        const ksOctave = (this._cfg.octaveOffsetTreble ?? 5) - 1;
+        const ksFreq = _pcToFreq(chosenPc, ksOctave);
+        if (Number.isFinite(ksFreq) && ksFreq > 0) {
+          // Steal oldest voice
+          let oldestVi = 0;
+          for (let vi = 1; vi < 4; vi++) {
+            if (this._ksVoiceAge[vi] < this._ksVoiceAge[oldestVi]) oldestVi = vi;
+          }
+          this._ksVoiceClock++;
+          this._ksVoiceAge[oldestVi] = this._ksVoiceClock;
+
+          // Damping from FLUX (more motion → faster decay)
+          const damp = 0.999 - safeFlux * 0.012;
+          const ksPan = (safePos - 0.5) * 0.7 + (Math.random() - 0.5) * 0.4;
+          this._ksNode.port.postMessage({
+            type: "trigger",
+            vi: oldestVi,
+            freq: ksFreq,
+            gain: ksWeight * 0.3,
+            damp,
+            pan: Math.max(-1, Math.min(1, ksPan)),
+          });
+
+          // Cooldown: shorter when more active (flux drives tempo)
+          const cooldown = (0.15 + (1 - safeFlux) * 0.5) / Math.max(0.3, ksWeight);
+          this._ksNextAllowed = now + cooldown;
+          this._addGridNote(ksFreq, ksWeight * 0.3);
+        }
+      }
+    }
 
     this._lastControls = {
       slotLabel: primarySlot.chord.label,

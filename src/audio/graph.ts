@@ -127,10 +127,11 @@ export class AudioGraph {
     this.midBus = mkBus(140);
     this.trebleBus = mkBus(500);
     this.pluckBus = mkBus(300);
-    // Phase 4 buses — connected but silent until layers are added
-    this.ksBus = mkBus();
-    this.noiseBus = mkBus();
-    this.shimmerBus = mkBus();
+    // Phase 4 buses — connected but silent until layers are added.
+    // HP slotting prevents each layer from doubling lower tiers.
+    this.ksBus      = mkBus(200);   // KS strings: HP 200 Hz
+    this.noiseBus   = mkBus(100);   // Noise resonators: HP 100 Hz
+    this.shimmerBus = mkBus(1000);  // Shimmer: HP 1 kHz (high-frequency only)
 
     // ── Master chain ───────────────────────────────────────────
     this.masterTrim = ac.createGain();

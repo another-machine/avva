@@ -324,11 +324,14 @@ async function begin(): Promise<void> {
   // Mix bus levels
   const _dBToLinear = (db: number) => Math.pow(10, db / 20);
   const _busLevels: [string, (g: number) => void][] = [
-    ["mix.subLevel",    (g) => { if (synth.graph) synth.graph.subBus.gain.value = g; }],
-    ["mix.bassLevel",   (g) => { if (synth.graph) synth.graph.bassBus.gain.value = g; }],
-    ["mix.midLevel",    (g) => { if (synth.graph) synth.graph.midBus.gain.value = g; }],
-    ["mix.trebleLevel", (g) => { if (synth.graph) synth.graph.trebleBus.gain.value = g; }],
-    ["mix.pluckLevel",  (g) => { if (synth.graph) synth.graph.pluckBus.gain.value = g; }],
+    ["mix.subLevel",     (g) => { if (synth.graph) synth.graph.subBus.gain.value = g; }],
+    ["mix.bassLevel",    (g) => { if (synth.graph) synth.graph.bassBus.gain.value = g; }],
+    ["mix.midLevel",     (g) => { if (synth.graph) synth.graph.midBus.gain.value = g; }],
+    ["mix.trebleLevel",  (g) => { if (synth.graph) synth.graph.trebleBus.gain.value = g; }],
+    ["mix.pluckLevel",   (g) => { if (synth.graph) synth.graph.pluckBus.gain.value = g; }],
+    ["mix.ksLevel",      (g) => { if (synth.graph) synth.graph.ksBus.gain.value = g; }],
+    ["mix.noiseLevel",   (g) => { if (synth.graph) synth.graph.noiseBus.gain.value = g; }],
+    ["mix.shimmerLevel", (g) => { if (synth.graph) synth.graph.shimmerBus.gain.value = g; }],
   ];
   for (const [key, apply] of _busLevels) {
     store.subscribeKey(key as any, (v) => apply(_dBToLinear(v as number)));
