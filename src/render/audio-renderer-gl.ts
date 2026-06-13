@@ -295,14 +295,11 @@ void main() {
     float g = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
     pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
   }
-  // Clamp to [0,1]; Gaussian accumulation is naturally smooth — no threshold needed
-  base = mix(base, vec3(1.0, 0.96, 0.92), clamp(pulseField, 0.0, 1.0) * 0.7);
+  float pStr = clamp(pulseField, 0.0, 1.0) * 0.7;
+  vec3 pOv = mix(2.0 * base * blobColor, 1.0 - 2.0 * (1.0 - base) * (1.0 - blobColor), step(0.5, base));
+  base = mix(base, pOv, pStr);
 
   // ── Chord-change pulse: fragmented color burst ───────────────────────────
-  vec3  flashColor = totalField > 0.001 ? totalColor / totalField : vec3(1.0);
-  float flashFrag  = snoiseN(uv * 9.0 + vec2(uTime * 20.0, 0.0))
-                   * snoiseN(uv * 3.5 + vec2(0.0, uTime * 13.0));
-  base += flashColor * uPulse * flashFrag * 0.65;
   base += vec3(uPulse * 0.035);
 
   // ── Film grain ───────────────────────────────────────────────────────────
@@ -491,13 +488,11 @@ void main() {
     float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
     pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
   }
-  base = mix(base, vec3(1.0, 0.96, 0.92), clamp(pulseField, 0.0, 1.0) * 0.7);
+  float pStr = clamp(pulseField, 0.0, 1.0) * 0.7;
+  vec3 pOv = mix(2.0 * base * veilColor, 1.0 - 2.0 * (1.0 - base) * (1.0 - veilColor), step(0.5, base));
+  base = mix(base, pOv, pStr);
 
   // ── Chord-change flash: fragmented color burst ──────────────────────────────
-  vec3  flashColor = totalW > 0.001 ? veilColor : vec3(1.0);
-  float flashFrag  = snoiseN(uv * 9.0 + vec2(uTime * 20.0, 0.0))
-                   * snoiseN(uv * 3.5 + vec2(0.0, uTime * 13.0));
-  base += flashColor * uPulse * flashFrag * 0.65;
   base += vec3(uPulse * 0.035);
 
   // ── Film grain ──────────────────────────────────────────────────────────────
@@ -507,6 +502,332 @@ void main() {
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
 }
+
+// ── Chladni base modes: (m,n) per palette slot ────────────────────────────────
+// Low-order, mixed parity so adjacent slots never share the same nodal topology.
+// Indexed i % 8; TILT adds a continuous shift so TILT=0 → simple, TILT=1 → +3.
+const CHLADNI_BASE_MODES: ReadonlyArray<readonly [number, number]> = [
+  [1, 2], [2, 3], [1, 3], [3, 4], [2, 5], [1, 4], [3, 5], [4, 5],
+];
+
+// ── Chladni background / sheen fragment shader ────────────────────────────────
+// Same uniform header as blobs/aurora so all existing plumbing works unchanged.
+// Renders: trail-decay feedback + faint nodal-line sheen + chord flash + grain.
+function makeChladniBgFragSrc(nHues: number): string {
+  return `#version 300 es
+#define N_HUES ${nHues}
+#define PI 3.14159265358979
+precision highp float;
+
+in  vec2 vUV;
+out vec4 outColor;
+
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uDegrees[N_HUES];
+uniform vec3  uDegreeRGB[N_HUES];
+uniform float uBri;
+uniform float uSpread;
+uniform float uAct;
+uniform float uBandLo;
+uniform float uPulse;
+uniform float uFeedback;
+uniform float uBlobWarp;
+uniform float uBlobSpeed;
+uniform float uBlobDrive;
+uniform float uBlobSize;
+uniform float uBlobSharp;
+uniform float uShiftSpeed;
+uniform float uPulseReactivity;
+uniform float uBriScale;
+uniform float uTilt;
+uniform float uPos;
+uniform float uCtr;
+uniform vec3  uDegreeRGB2[N_HUES];
+uniform float uSlotEdge[N_HUES];
+uniform sampler2D uPrev;
+uniform float uModeM[N_HUES];
+uniform float uModeN[N_HUES];
+uniform float uModeS;
+
+vec2 _h2(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453123) * 2.0 - 1.0;
+}
+
+float snoise(vec2 p) {
+  vec2 i = floor(p); vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = dot(_h2(i),                  f);
+  float b = dot(_h2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+  float c = dot(_h2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+  float d = dot(_h2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float snoiseN(vec2 p) { return snoise(p) * 0.5 + 0.5; }
+
+float chladniW(vec2 p, float m, float n) {
+  return cos(m * PI * p.x) * cos(n * PI * p.y)
+       + uModeS * cos(n * PI * p.x) * cos(m * PI * p.y);
+}
+
+float chladniD(vec2 p) {
+  float kSpr = mix(2.5, 1.0, uSpread);
+  float d = 0.0;
+  for (int i = 0; i < N_HUES; i++)
+    d += pow(max(uDegrees[i], 0.0), kSpr) * chladniW(p, uModeM[i], uModeN[i]);
+  return d;
+}
+
+void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+
+  // Time scaled by speed + activity, same as blobs/aurora — used by pulse bloom
+  float tSpeed = uBlobSpeed + uAct * uBlobDrive;
+  float t = uTime * (tSpeed + uPulse * uShiftSpeed);
+
+  // Trail decay: subtle turning-flow advection (same pattern as blobs)
+  vec2 flowScroll = vec2(
+    0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
+    0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
+  );
+  float driftAmt = 0.0004 + uAct * 0.0006;
+  vec2 driftRaw = vec2(
+    snoise(uvA * 4.0 + flowScroll),
+    snoise(uvA * 4.0 + flowScroll + 100.0)
+  ) * driftAmt;
+  vec2 driftUV = uv + vec2(driftRaw.x / aspect, driftRaw.y);
+  vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
+  vec3 base = prev.rgb * uFeedback;
+
+  // Slot color blend for the sheen tint
+  float kSpr = mix(2.5, 1.0, uSpread);
+  vec3 totalColor = vec3(0.0);
+  float totalW = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float wi = pow(max(uDegrees[i], 0.0), kSpr) + 1e-6;
+    float blend = clamp(0.5 + uTilt * 0.3 - 0.15 + uSlotEdge[i] * 0.4, 0.0, 1.0);
+    totalColor += mix(uDegreeRGB[i], uDegreeRGB2[i], blend) * wi;
+    totalW += wi;
+  }
+  vec3 sheenColor = totalColor / totalW;
+
+  // Plate sheen: faint nodal glow + antinode tint
+  // uBlobSharp (Softness) controls glow width: low = tight bright lines, high = wide diffuse halo.
+  // 0.06 + sharp*0.3 → at default 0.4 = 0.18 (same as before); max 1.5 → 0.51 wide.
+  float Dv = chladniD(uv);
+  float nodEdge = 0.06 + uBlobSharp * 0.3;
+  float nodalGlow = 1.0 - smoothstep(0.0, nodEdge, abs(Dv));
+  float briScale = uBri * uBriScale;
+  base += sheenColor * nodalGlow * (0.05 + briScale * 0.07);
+  base += sheenColor * abs(Dv) * 0.015;
+
+  // Orbit-based excitation glows — same Gaussian bloom as blobs/aurora.
+  // uPulseReactivity scales intensity; orbits travel at the chord-speed t.
+  float pulseField = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi    = float(i);
+    float seed  = fi * 2.399;
+    float sigma = (0.13 + presence * 0.09) * aspect;
+    float wP = 0.15 + fi * 0.022;
+    float pP = t * wP + seed + 1.2;
+    vec2  cP = vec2(
+      0.5 * aspect + 0.32 * sin(pP) + 0.09 * sin(t * (0.19 + fi * 0.053) + seed + 3.7),
+      0.5          + 0.32 * cos(pP) + 0.09 * sin(t * (0.24 + fi * 0.043) + seed + 0.9)
+    );
+    vec2  dP = uvA - cP;
+    float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
+    pulseField += g * presence * (uBri * uCtr + uTilt * 0.3) * uPulseReactivity;
+  }
+  float pStr = clamp(pulseField, 0.0, 1.0) * 0.7;
+  vec3 pOv = mix(2.0 * base * sheenColor, 1.0 - 2.0 * (1.0 - base) * (1.0 - sheenColor), step(0.5, base));
+  base = mix(base, pOv, pStr);
+
+  base += vec3(uPulse * 0.035);
+
+  // Film grain
+  base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
+        * (0.03 + uAct * 0.045);
+
+  outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
+}`;
+}
+
+// ── Chladni particle simulation update shader ─────────────────────────────────
+// Runs once per frame over the 512×512 position/velocity texture (ping-pong).
+// Force = -sign(D)·∇D pushes particles toward nodal lines (D≈0).
+function makeChladniSimFragSrc(nHues: number): string {
+  return `#version 300 es
+#define N_HUES ${nHues}
+#define PI 3.14159265358979
+precision highp float;
+
+in  vec2 vUV;
+out vec4 outPos;
+
+uniform sampler2D uPosTex;
+uniform vec2  uSimRes;
+uniform float uTime;
+uniform float uDt;
+uniform float uModeM[N_HUES];
+uniform float uModeN[N_HUES];
+uniform float uModeS;
+uniform float uDegrees[N_HUES];
+uniform float uBri;
+uniform float uAct;
+uniform float uSpread;
+uniform float uPulse;
+uniform float uBlobSpeed;
+uniform float uBlobDrive;
+uniform float uBlobWarp;
+uniform float uShiftSpeed;
+
+vec2 hash22(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453123);
+}
+
+float chladniW(vec2 p, float m, float n) {
+  return cos(m * PI * p.x) * cos(n * PI * p.y)
+       + uModeS * cos(n * PI * p.x) * cos(m * PI * p.y);
+}
+
+float chladniD(vec2 p) {
+  float kSpr = mix(2.5, 1.0, uSpread);
+  float d = 0.0;
+  for (int i = 0; i < N_HUES; i++)
+    d += pow(max(uDegrees[i], 0.0), kSpr) * chladniW(p, uModeM[i], uModeN[i]);
+  return d;
+}
+
+void main() {
+  vec4 P = texture(uPosTex, vUV);
+  vec2 p = P.xy;
+  vec2 v = P.zw;
+
+  // Gradient via central differences
+  float e = 0.0015;
+  float Dp = chladniD(p);
+  vec2 grad = vec2(
+    chladniD(p + vec2(e, 0.0)) - chladniD(p - vec2(e, 0.0)),
+    chladniD(p + vec2(0.0, e)) - chladniD(p - vec2(0.0, e))
+  ) / (2.0 * e);
+
+  // Force: descend |D| landscape; BRI scales drive strength
+  float drive = 0.018 * (0.35 + uBri + uAct * uBlobDrive * 0.3);
+  vec2 force = -sign(Dp) * grad * drive;
+
+  // Jitter: thermal noise (ACT) + chord-change scatter (pulse)
+  vec2 rnd = hash22(p * 311.7 + vUV * 97.3 + uTime * 0.1) * 2.0 - 1.0;
+  float jit = uBlobWarp * 8.0 * (0.15 + uAct) + uPulse * uShiftSpeed * 0.02;
+
+  float dt = uDt * (0.5 + uBlobSpeed);
+  v = v * 0.88 + force + rnd * jit;
+  v = clamp(v, vec2(-0.02), vec2(0.02));
+  p += v * dt * 60.0;
+
+  // Inward edge repulsion: pushes particles away from the plate boundary
+  float edgeMask = 1.0 - smoothstep(0.0, 0.04,
+    min(min(p.x, p.y), min(1.0 - p.x, 1.0 - p.y)));
+  v += (vec2(0.5) - p) * edgeMask * 0.004;
+  p = clamp(p, vec2(0.004), vec2(0.996));
+
+  outPos = vec4(p, v);
+}`;
+}
+
+// ── Chladni point vertex shader factory ──────────────────────────────────────
+// Custom vertex shader for the gl.POINTS pass. Reads particle position from the
+// sim texture and computes per-grain color from weighted slot contributions.
+function makeChladniPointVertSrc(nHues: number, simN: number): string {
+  return `#version 300 es
+#define N_HUES ${nHues}
+#define SIM_N ${simN}
+#define PI 3.14159265358979
+precision highp float;
+
+uniform sampler2D uPosTex;
+uniform vec2  uRes;
+uniform float uModeM[N_HUES];
+uniform float uModeN[N_HUES];
+uniform float uModeS;
+uniform float uDegrees[N_HUES];
+uniform float uSlotEdge[N_HUES];
+uniform vec3  uDegreeRGB[N_HUES];
+uniform vec3  uDegreeRGB2[N_HUES];
+uniform float uTilt;
+uniform float uSpread;
+uniform float uCtr;
+uniform float uBri;
+uniform float uBriScale;
+uniform float uBlobSize;
+
+out vec3  vColor;
+out float vGlow;
+
+float chladniW(vec2 p, float m, float n) {
+  return cos(m * PI * p.x) * cos(n * PI * p.y)
+       + uModeS * cos(n * PI * p.x) * cos(m * PI * p.y);
+}
+
+void main() {
+  ivec2 tc = ivec2(gl_VertexID % SIM_N, gl_VertexID / SIM_N);
+  vec4 P = texelFetch(uPosTex, tc, 0);
+  vec2 p = P.xy;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  float dpr = max(uRes.y / 1080.0, 0.5);
+  gl_PointSize = clamp((0.6 + uBlobSize * 4.0) * dpr, 1.0, 4.0);
+
+  // Weighted slot color from local mode contributions (same gradient law as blobs)
+  float kSpr = mix(3.0, 1.0, uSpread);
+  vec3  acc = vec3(0.0);
+  float wSum = 0.0;
+  float dLocal = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float Wi = chladniW(p, uModeM[i], uModeN[i]);
+    float wi = pow(max(uDegrees[i], 0.0) * abs(Wi), kSpr) + 1e-6;
+    float blend = clamp(0.5 + uTilt * 0.3 - 0.15 + uSlotEdge[i] * 0.4, 0.0, 1.0);
+    acc += mix(uDegreeRGB[i], uDegreeRGB2[i], blend) * wi;
+    wSum += wi;
+    dLocal += uDegrees[i] * Wi;
+  }
+  vColor = acc / wSum;
+  // CTR: dim off-node grains → sharper nodal figures
+  vGlow = mix(1.0, exp(-abs(dLocal) * 7.0), uCtr) * (0.25 + uBri * uBriScale * 0.6);
+}`;
+}
+
+// ── Chladni point fragment shader (constant — not n-dependent) ────────────────
+const CHLADNI_POINT_FRAG = `#version 300 es
+precision highp float;
+in  vec3  vColor;
+in  float vGlow;
+out vec4  outColor;
+void main() {
+  vec2  q = gl_PointCoord - 0.5;
+  float a = smoothstep(0.5, 0.15, length(q));
+  outColor = vec4(vColor * vGlow * a * 0.06, 1.0);
+}`;
+
+// ── Chladni seed fragment shader — randomises particle positions at startup ────
+const CHLADNI_SEED_FRAG = `#version 300 es
+precision highp float;
+in  vec2  vUV;
+out vec4  outPos;
+uniform float uSeed;
+vec2 hash22(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453123);
+}
+void main() {
+  vec2 pos = hash22(vUV * 1371.3 + uSeed * 100.0) * 0.96 + 0.02;
+  outPos = vec4(pos, 0.0, 0.0);
+}`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -579,6 +900,30 @@ export class AudioRendererGL {
   private _h = 0;
   private _texA: TexFB | null = null;
   private _texB: TexFB | null = null;
+
+  // ── Chladni particle simulation state (allocated lazily on first activation) ──
+  private readonly _simN = 512;      // sim texture side: 512² = 262,144 particles
+  private _simPosA: TexFB | null = null;
+  private _simPosB: TexFB | null = null;
+  private _simInternalFmt = 0;       // gl.RGBA32F or gl.RGBA16F after probe
+  private _simFloatType = 0;         // gl.FLOAT or gl.HALF_FLOAT after probe
+  private _chladniReady = false;     // sim textures + programs ready
+  private _chladniOk = true;         // false if float FBO probe failed
+  private _chladniSimProg: WebGLProgram | null = null;
+  private _chladniSimU: UniformMap | null = null;
+  private _chladniPtsProg: WebGLProgram | null = null;
+  private _chladniPtsU: UniformMap | null = null;
+  private _tiltSm = 0.5;            // EMA-smoothed tilt (load-bearing: raw tilt thrashes modes)
+  private _posSm = 0.5;             // EMA-smoothed pos
+  private _modeS = 1.0;             // plate symmetry scalar derived from pos
+  private _modeM: Float32Array | null = null;  // per-slot m mode order
+  private _modeN: Float32Array | null = null;  // per-slot n mode order
+  private _lastBri = 0;
+  private _lastAct = 0;
+  private _lastSpread = 0.5;
+  private _lastTilt = 0.5;
+  private _lastPos = 0.5;
+  private _lastCtr = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -702,7 +1047,9 @@ export class AudioRendererGL {
   }
 
   private _fragFor(style: string, n: number): string {
-    return style === "aurora" ? makeAuroraFragSrc(n) : makeFragSrc(n);
+    if (style === "aurora")   return makeAuroraFragSrc(n);
+    if (style === "chladni")  return makeChladniBgFragSrc(n);
+    return makeFragSrc(n);
   }
 
   /**
@@ -743,6 +1090,8 @@ export class AudioRendererGL {
     gl.uniform1f(this._u.uShiftSpeed, this._shiftSpeedVal);
     gl.uniform1f(this._u.uPulseReactivity, this._pulseReactivityVal);
     gl.uniform1f(this._u.uBriScale, this._briScaleVal);
+
+    if (style === "chladni") this._ensureChladni(n);
   }
 
   /** Resize canvas backing store to CSS px × min(2, dpr). Re-allocates textures. */
@@ -764,6 +1113,19 @@ export class AudioRendererGL {
     gl.viewport(0, 0, w, h);
     gl.useProgram(this._prog);
     gl.uniform2f(this._u.uRes, w, h);
+
+    if (this._chladniReady) {
+      this._reseedParticles();
+      if (this._chladniSimProg && this._chladniSimU) {
+        gl.useProgram(this._chladniSimProg);
+        gl.uniform2f(this._chladniSimU.uRes, w, h);
+      }
+      if (this._chladniPtsProg && this._chladniPtsU) {
+        gl.useProgram(this._chladniPtsProg);
+        gl.uniform2f(this._chladniPtsU.uRes, w, h);
+      }
+      gl.useProgram(this._prog);
+    }
   }
 
   /** Render one frame from an AudioAnalyzer.tick() output object. */
@@ -834,13 +1196,24 @@ export class AudioRendererGL {
     gl.uniform1f(u.uPos, frame.pos ?? 0.5);
     gl.uniform1f(u.uCtr, frame.ctr ?? 0);
 
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this._texA!.tex);
-    gl.uniform1i(u.uPrev, 0);
+    // Stash per-frame values for the chladni multi-pass renderer
+    this._lastBri    = frame.bri;
+    this._lastAct    = frame.act;
+    this._lastSpread = frame.spread;
+    this._lastTilt   = frame.tilt  ?? 0.5;
+    this._lastPos    = frame.pos   ?? 0.5;
+    this._lastCtr    = frame.ctr   ?? 0;
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this._texB!.fb);
-    gl.viewport(0, 0, this._w, this._h);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (this._style === "chladni" && this._chladniReady) {
+      this._renderChladni(t);
+    } else {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._texA!.tex);
+      gl.uniform1i(u.uPrev, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._texB!.fb);
+      gl.viewport(0, 0, this._w, this._h);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
 
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this._texB!.fb);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
@@ -879,11 +1252,11 @@ export class AudioRendererGL {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private _compile(fragSrc: string): WebGLProgram {
+  private _compile(fragSrc: string, vertSrc = VERT_SRC): WebGLProgram {
     const gl = this._gl;
 
     const vs = gl.createShader(gl.VERTEX_SHADER)!;
-    gl.shaderSource(vs, VERT_SRC);
+    gl.shaderSource(vs, vertSrc);
     gl.compileShader(vs);
     if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS))
       throw new Error(
@@ -937,6 +1310,14 @@ export class AudioRendererGL {
       "uDegreeRGB2",
       "uSlotEdge",
       "uPrev",
+      // Chladni-specific (null on blobs/aurora — silent no-op via getUniformLocation)
+      "uModeM",
+      "uModeN",
+      "uModeS",
+      "uPosTex",
+      "uSimRes",
+      "uDt",
+      "uSeed",
     ];
     const locs: UniformMap = {};
     for (const n of names) locs[n] = gl.getUniformLocation(prog, n);
@@ -1031,5 +1412,264 @@ export class AudioRendererGL {
       buf2[i * 3 + 1] = g2;
       buf2[i * 3 + 2] = b2;
     }
+  }
+
+  // ── Chladni private methods ────────────────────────────────────────────────
+
+  /**
+   * Lazy setup on first "chladni" activation: probe float FBO support, allocate
+   * sim textures, compile per-n sim/points programs, initialise mode arrays, seed.
+   * Idempotent for the same n; compiles fresh programs if n changes.
+   */
+  private _ensureChladni(n: number): void {
+    const gl = this._gl;
+
+    // One-time float FBO probe + sim texture allocation
+    if (!this._simPosA) {
+      if (!this._chladniOk) return;
+
+      // Request extensions then test FB completeness (safest cross-browser probe)
+      gl.getExtension("EXT_color_buffer_float");
+      gl.getExtension("EXT_color_buffer_half_float");
+
+      const candidates: Array<[number, number]> = [
+        [gl.RGBA32F, gl.FLOAT],
+        [gl.RGBA16F, gl.HALF_FLOAT],
+      ];
+      let found = false;
+      for (const [ifmt, type] of candidates) {
+        const testTex = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, testTex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, 2, 2, 0, gl.RGBA, type, null);
+        const testFB = gl.createFramebuffer()!;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, testFB);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, testTex, 0);
+        const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+        gl.deleteFramebuffer(testFB);
+        gl.deleteTexture(testTex);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        if (ok) {
+          this._simInternalFmt = ifmt;
+          this._simFloatType   = type;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        console.warn("AudioRendererGL: chladni — no float FBO support; sand disabled");
+        this._chladniOk = false;
+        return;
+      }
+
+      this._simPosA = this._makeSimTexFB(this._simN, this._simN);
+      this._simPosB = this._makeSimTexFB(this._simN, this._simN);
+
+      // Seed program (not n-dependent)
+      const seedKey = "chladni-seed:0";
+      if (!this._progCache.has(seedKey)) {
+        const prog = this._compile(CHLADNI_SEED_FRAG);
+        this._progCache.set(seedKey, { prog, u: this._cacheUniforms(prog) });
+      }
+      this._reseedParticles();
+    }
+
+    // Compile per-n programs
+    const simKey = `chladni-sim:${n}`;
+    const ptsKey = `chladni-pts:${n}`;
+
+    if (!this._progCache.has(simKey)) {
+      const prog = this._compile(makeChladniSimFragSrc(n));
+      const u    = this._cacheUniforms(prog);
+      this._progCache.set(simKey, { prog, u });
+      gl.useProgram(prog);
+      gl.uniform1f(u.uFeedback,         this._feedbackVal);
+      gl.uniform1f(u.uBlobWarp,         this._blobWarpVal);
+      gl.uniform1f(u.uBlobSpeed,        this._blobSpeedVal);
+      gl.uniform1f(u.uBlobDrive,        this._blobDriveVal);
+      gl.uniform1f(u.uBlobSize,         this._blobSizeVal);
+      gl.uniform1f(u.uBlobSharp,        this._blobSharpVal);
+      gl.uniform1f(u.uShiftSpeed,       this._shiftSpeedVal);
+      gl.uniform1f(u.uPulseReactivity,  this._pulseReactivityVal);
+      gl.uniform1f(u.uBriScale,         this._briScaleVal);
+      gl.uniform2f(u.uRes,              this._w, this._h);
+      gl.uniform2f(u.uSimRes,           this._simN, this._simN);
+      gl.useProgram(this._prog);
+    }
+
+    if (!this._progCache.has(ptsKey)) {
+      const prog = this._compile(CHLADNI_POINT_FRAG, makeChladniPointVertSrc(n, this._simN));
+      const u    = this._cacheUniforms(prog);
+      this._progCache.set(ptsKey, { prog, u });
+      gl.useProgram(prog);
+      gl.uniform1f(u.uFeedback,         this._feedbackVal);
+      gl.uniform1f(u.uBlobWarp,         this._blobWarpVal);
+      gl.uniform1f(u.uBlobSpeed,        this._blobSpeedVal);
+      gl.uniform1f(u.uBlobDrive,        this._blobDriveVal);
+      gl.uniform1f(u.uBlobSize,         this._blobSizeVal);
+      gl.uniform1f(u.uBlobSharp,        this._blobSharpVal);
+      gl.uniform1f(u.uShiftSpeed,       this._shiftSpeedVal);
+      gl.uniform1f(u.uPulseReactivity,  this._pulseReactivityVal);
+      gl.uniform1f(u.uBriScale,         this._briScaleVal);
+      gl.uniform2f(u.uRes,              this._w, this._h);
+      gl.useProgram(this._prog);
+    }
+
+    const simEntry = this._progCache.get(simKey)!;
+    const ptsEntry = this._progCache.get(ptsKey)!;
+    this._chladniSimProg = simEntry.prog;
+    this._chladniSimU    = simEntry.u;
+    this._chladniPtsProg = ptsEntry.prog;
+    this._chladniPtsU    = ptsEntry.u;
+
+    // Reallocate mode arrays when n changes
+    if (!this._modeM || this._modeM.length !== n) {
+      this._modeM = new Float32Array(n);
+      this._modeN = new Float32Array(n);
+    }
+
+    this._chladniReady = true;
+  }
+
+  /** Allocate a float-format sim FBO (format set by _ensureChladni probe). */
+  private _makeSimTexFB(w: number, h: number): TexFB {
+    const gl  = this._gl;
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, this._simInternalFmt, w, h, 0, gl.RGBA, this._simFloatType, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return { tex, fb };
+  }
+
+  /**
+   * Render random positions [0,1]² into both sim ping-pong textures.
+   * Uses a GLSL hash so half-float textures need no CPU packing.
+   */
+  private _reseedParticles(): void {
+    const gl = this._gl;
+    const { prog, u } = this._progCache.get("chladni-seed:0")!;
+    gl.useProgram(prog);
+    gl.viewport(0, 0, this._simN, this._simN);
+    for (let seed = 0; seed < 2; seed++) {
+      gl.uniform1f(u.uSeed, seed);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, seed === 0 ? this._simPosA!.fb : this._simPosB!.fb);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this._w, this._h);
+    gl.useProgram(this._prog);
+  }
+
+  /**
+   * Update per-slot mode orders from smoothed tilt and pos.
+   * Quantized glide keeps figures on true integer plate modes most of the time,
+   * then transitions quickly in the upper quarter of each integer interval.
+   */
+  private _updateModeBank(n: number, tilt: number, pos: number): void {
+    this._tiltSm += (tilt - this._tiltSm) * 0.05;
+    this._posSm  += (pos  - this._posSm)  * 0.05;
+
+    const k      = this._tiltSm * 3.0;
+    const kFloor = Math.floor(k);
+    const kFrac  = k - kFloor;
+    // Sit on integer plateau for the first 75% of each interval, then glide quickly
+    const shift  = kFloor + (kFrac > 0.75 ? (kFrac - 0.75) / 0.25 : 0.0);
+
+    for (let i = 0; i < n; i++) {
+      const [bm, bn] = CHLADNI_BASE_MODES[i % CHLADNI_BASE_MODES.length];
+      this._modeM![i] = Math.max(1.0, bm + shift);
+      this._modeN![i] = Math.max(1.0, bn + shift);
+    }
+    // POS skews plate symmetry: s=1 is a symmetric plate, deviations break mirror symmetry
+    this._modeS = 0.4 + this._posSm * 1.2;
+  }
+
+  /**
+   * Multi-pass chladni render: sim update → background sheen → point sand grains.
+   * Leaves the composite in _texB so the shared blit + swap in render() is unchanged.
+   */
+  private _renderChladni(t: number): void {
+    const gl = this._gl;
+    const n  = this._activeN;
+
+    this._updateModeBank(n, this._lastTilt, this._lastPos);
+
+    // ── 1. Sim pass: update particle positions into _simPosB ─────────────────
+    gl.useProgram(this._chladniSimProg!);
+    const su = this._chladniSimU!;
+    gl.uniform1f(su.uTime,    t);
+    gl.uniform1f(su.uDt,      1.0);
+    gl.uniform1fv(su.uModeM,  this._modeM!);
+    gl.uniform1fv(su.uModeN,  this._modeN!);
+    gl.uniform1f(su.uModeS,   this._modeS);
+    gl.uniform1fv(su.uDegrees, this._slotWeights);
+    gl.uniform1f(su.uBri,     this._lastBri);
+    gl.uniform1f(su.uAct,     this._lastAct);
+    gl.uniform1f(su.uSpread,  this._lastSpread);
+    gl.uniform1f(su.uPulse,   this._pulse);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._simPosA!.tex);
+    gl.uniform1i(su.uPosTex, 0);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._simPosB!.fb);
+    gl.viewport(0, 0, this._simN, this._simN);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Swap sim ping-pong: _simPosA now holds fresh positions
+    const tmpSim    = this._simPosA!;
+    this._simPosA   = this._simPosB;
+    this._simPosB   = tmpSim;
+
+    // ── 2. Background / sheen pass into _texB ────────────────────────────────
+    // Standard uniforms were already pushed by render()'s common block onto this._prog.
+    gl.useProgram(this._prog);
+    gl.uniform1fv(this._u.uModeM,  this._modeM!);
+    gl.uniform1fv(this._u.uModeN,  this._modeN!);
+    gl.uniform1f(this._u.uModeS,   this._modeS);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._texA!.tex);
+    gl.uniform1i(this._u.uPrev, 0);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._texB!.fb);
+    gl.viewport(0, 0, this._w, this._h);  // restore after sim pass
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // ── 3. Points pass: draw sand grains additively into the same _texB ──────
+    gl.useProgram(this._chladniPtsProg!);
+    const pu = this._chladniPtsU!;
+    gl.uniform1fv(pu.uModeM,   this._modeM!);
+    gl.uniform1fv(pu.uModeN,   this._modeN!);
+    gl.uniform1f(pu.uModeS,    this._modeS);
+    gl.uniform1fv(pu.uDegrees, this._slotWeights);
+    gl.uniform1fv(pu.uDegreeRGB,  this._degreeRGBBuf);
+    gl.uniform1fv(pu.uDegreeRGB2, this._degreeRGB2Buf);
+    gl.uniform1fv(pu.uSlotEdge,   this._slotEdgeBuf);
+    gl.uniform1f(pu.uTilt,    this._lastTilt);
+    gl.uniform1f(pu.uSpread,  this._lastSpread);
+    gl.uniform1f(pu.uCtr,     this._lastCtr);
+    gl.uniform1f(pu.uBri,     this._lastBri);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._simPosA!.tex);
+    gl.uniform1i(pu.uPosTex, 0);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.drawArrays(gl.POINTS, 0, this._simN * this._simN);
+    gl.disable(gl.BLEND);
+
+    // Restore to bg program so the shared blit in render() has the right state
+    gl.useProgram(this._prog);
   }
 }
