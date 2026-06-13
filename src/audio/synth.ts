@@ -184,6 +184,9 @@ export class Synth {
   private _noiseWeightC   = 0;
   private _shimmerWeightC = 0;
 
+  // Last satAmount applied via node-swap — skip the swap when value is unchanged
+  private _lastSatAmount = -1;
+
   /** Called with limiter metrics at ~10 Hz when the worklet limiter is active. */
   onLimiterMetrics: ((m: LimiterMetrics) => void) | null = null;
 
@@ -1343,18 +1346,28 @@ export class Synth {
     const now = ac.currentTime;
     const tau = 0.05;
 
+    // Cancel stacked automation before scheduling new targets — prevents
+    // overlapping setTargetAtTime curves from rapid _applyCassette bursts.
+    const ramp = (param: AudioParam, target: number, t: number) => {
+      param.cancelAndHoldAtTime?.(now) ?? param.cancelScheduledValues(now);
+      param.setTargetAtTime(target, now, t);
+    };
+
     if (p.midBoostDb !== undefined)
-      c.midBoost.gain.setTargetAtTime(p.midBoostDb, now, tau);
+      ramp(c.midBoost.gain, p.midBoostDb, tau);
     if (p.masterLPHz !== undefined) this._masterLPHzBase = p.masterLPHz;
     if (p.satWet !== undefined) {
       const wet = Math.max(0, Math.min(1, p.satWet));
-      c.satWet.gain.setTargetAtTime(wet, now, tau);
-      c.satDry.gain.setTargetAtTime(1 - wet, now, tau);
+      ramp(c.satWet.gain, wet, tau);
+      ramp(c.satDry.gain, 1 - wet, tau);
     }
-    if (p.satAmount !== undefined) {
-      // Brief fade-out on satWet to reduce the click from node-swap, then restore.
+    if (p.satAmount !== undefined && p.satAmount !== this._lastSatAmount) {
+      // Only swap the waveshaper node when satAmount actually changes.
+      // _applyCassette passes satAmount on every call so this guard prevents
+      // redundant swaps (and the associated fade-glitches) during preset bursts.
+      this._lastSatAmount = p.satAmount;
       const newSat = Synth._makeTapeSat(ac, p.satAmount);
-      c.satWet.gain.setTargetAtTime(0, now, 0.01);
+      ramp(c.satWet.gain, 0, 0.015);
       setTimeout(() => {
         if (!this._cassette) return;
         try { c.tapeSat.disconnect(); } catch { /* no-op */ }
@@ -1362,27 +1375,29 @@ export class Synth {
         newSat.connect(c.satWet);
         (c as { tapeSat: WaveShaperNode }).tapeSat = newSat;
         const wetTarget = Math.max(0, Math.min(1, p.satWet ?? c.satWet.gain.value));
-        c.satWet.gain.setTargetAtTime(wetTarget, ac.currentTime, 0.03);
-      }, 30);
+        c.satWet.gain.cancelAndHoldAtTime?.(ac.currentTime) ??
+          c.satWet.gain.cancelScheduledValues(ac.currentTime);
+        c.satWet.gain.setTargetAtTime(wetTarget, ac.currentTime, 0.04);
+      }, 25);
     }
     if (p.tapeDelayMs !== undefined)
-      c.tapeDelay.delayTime.setTargetAtTime(p.tapeDelayMs / 1000, now, tau);
+      ramp(c.tapeDelay.delayTime, p.tapeDelayMs / 1000, tau);
     if (p.tapeDelayFb !== undefined)
-      c.tapeDelayFb.gain.setTargetAtTime(p.tapeDelayFb, now, tau);
+      ramp(c.tapeDelayFb.gain, p.tapeDelayFb, tau);
     if (p.tapeDelayWet !== undefined)
-      c.tapeDelayWet.gain.setTargetAtTime(p.tapeDelayWet, now, tau);
+      ramp(c.tapeDelayWet.gain, p.tapeDelayWet, tau);
     if (p.reverbWet !== undefined)
-      c.reverbWet.gain.setTargetAtTime(p.reverbWet, now, tau);
+      ramp(c.reverbWet.gain, p.reverbWet, tau);
     if (p.noiseGain !== undefined)
-      c.noiseGain.gain.setTargetAtTime(p.noiseGain, now, tau);
+      ramp(c.noiseGain.gain, p.noiseGain, tau);
     if (p.wowDepthCents !== undefined)
-      c.wowDepth.gain.setTargetAtTime(p.wowDepthCents, now, tau);
+      ramp(c.wowDepth.gain, p.wowDepthCents, tau);
     if (p.flutterDepthCents !== undefined)
-      c.flutterDepth.gain.setTargetAtTime(p.flutterDepthCents, now, tau);
+      ramp(c.flutterDepth.gain, p.flutterDepthCents, tau);
 
     // Update auto-makeup whenever gain-affecting params change
     if (p.satAmount !== undefined || p.satWet !== undefined || p.midBoostDb !== undefined) {
-      const satAmount = p.satAmount ?? 8;
+      const satAmount = p.satAmount ?? this._lastSatAmount;
       const satWet = p.satWet ?? c.satWet.gain.value;
       const midBoostDb = p.midBoostDb !== undefined ? p.midBoostDb : c.midBoost.gain.value;
       this._graph?.updateAutoMakeup(satAmount, satWet, midBoostDb);

@@ -325,20 +325,29 @@ async function begin(): Promise<void> {
     synth.setMasterGain(v as number);
   });
 
-  // Mix bus levels
+  // Mix bus levels — use setTargetAtTime (not .value) to avoid zipper noise
   const _dBToLinear = (db: number) => Math.pow(10, db / 20);
-  const _busLevels: [string, (g: number) => void][] = [
-    ["mix.subLevel",     (g) => { if (synth.graph) synth.graph.subBus.gain.value = g; }],
-    ["mix.bassLevel",    (g) => { if (synth.graph) synth.graph.bassBus.gain.value = g; }],
-    ["mix.midLevel",     (g) => { if (synth.graph) synth.graph.midBus.gain.value = g; }],
-    ["mix.trebleLevel",  (g) => { if (synth.graph) synth.graph.trebleBus.gain.value = g; }],
-    ["mix.pluckLevel",   (g) => { if (synth.graph) synth.graph.pluckBus.gain.value = g; }],
-    ["mix.ksLevel",      (g) => { if (synth.graph) synth.graph.ksBus.gain.value = g; }],
-    ["mix.noiseLevel",   (g) => { if (synth.graph) synth.graph.noiseBus.gain.value = g; }],
-    ["mix.shimmerLevel", (g) => { if (synth.graph) synth.graph.shimmerBus.gain.value = g; }],
+  const _busLevels: [string, (node: GainNode, g: number) => void][] = [
+    ["mix.subLevel",     (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.bassLevel",    (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.midLevel",     (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.trebleLevel",  (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.pluckLevel",   (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.ksLevel",      (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.noiseLevel",   (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
+    ["mix.shimmerLevel", (n, g) => n.gain.setTargetAtTime(g, n.context.currentTime, 0.02)],
   ];
-  for (const [key, apply] of _busLevels) {
-    store.subscribeKey(key as any, (v) => apply(_dBToLinear(v as number)));
+  const _busNodes = () => synth.graph ? [
+    synth.graph.subBus, synth.graph.bassBus, synth.graph.midBus, synth.graph.trebleBus,
+    synth.graph.pluckBus, synth.graph.ksBus, synth.graph.noiseBus, synth.graph.shimmerBus,
+  ] : [];
+  for (let i = 0; i < _busLevels.length; i++) {
+    const [key, apply] = _busLevels[i];
+    const idx = i;
+    store.subscribeKey(key as any, (v) => {
+      const nodes = _busNodes();
+      if (nodes[idx]) apply(nodes[idx], _dBToLinear(v as number));
+    });
   }
 
   store.subscribeKey("view.heatOn", (v) => {
