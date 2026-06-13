@@ -10,9 +10,10 @@
  *
  * Every preset declares the full set of "character" keys so switching presets
  * always lands in a known state:
- *   carrier types (bass/mid/treble/pluck)
- *   articulation  (bass/mid/treble)
- *   pulse rate    (bass/mid/treble)
+ *   carrier types  (bass/mid/treble/pluck)
+ *   octave offsets (bass/mid/treble/pluck)
+ *   articulation   (bass/mid/treble)
+ *   pulse rate     (bass/mid/treble)
  */
 
 export interface ScenePreset {
@@ -36,6 +37,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "softtri",
       "synth.carrierTypeTreble":  "softtri",
       "synth.carrierTypePluck":   "sine",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    4,
+      "synth.octaveOffsetTreble": 5,
+      "synth.octaveOffsetPluck":  5,
       "synth.articulationBass":   0,
       "synth.articulationMid":    0,
       "synth.articulationTreble": 0,
@@ -69,6 +74,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "bell",
       "synth.carrierTypeTreble":  "bell",
       "synth.carrierTypePluck":   "bell",
+      "synth.octaveOffsetBass":   4,
+      "synth.octaveOffsetMid":    5,
+      "synth.octaveOffsetTreble": 6,
+      "synth.octaveOffsetPluck":  6,
       "synth.articulationBass":   0.5,
       "synth.articulationMid":    0.65,
       "synth.articulationTreble": 0.8,
@@ -99,6 +108,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "sine",
       "synth.carrierTypeTreble":  "sine",
       "synth.carrierTypePluck":   "sine",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    4,
+      "synth.octaveOffsetTreble": 5,
+      "synth.octaveOffsetPluck":  5,
       "synth.articulationBass":   0,
       "synth.articulationMid":    0,
       "synth.articulationTreble": 0,
@@ -129,6 +142,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "softtri",
       "synth.carrierTypeTreble":  "softtri",
       "synth.carrierTypePluck":   "softtri",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    5,
+      "synth.octaveOffsetTreble": 6,
+      "synth.octaveOffsetPluck":  6,
       "synth.articulationBass":   0,
       "synth.articulationMid":    0,
       "synth.articulationTreble": 0,
@@ -137,7 +154,6 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.pulseRateTreble":    0,
       "synth.fmIndexBase":        0.1,
       "synth.fmIndexScale":       1.2,
-      "synth.octaveOffsetTreble": 6,
       "synth.glideMin":           0.08,
       "synth.glideMax":           3.0,
       "cassette.preset":          "clean",
@@ -161,6 +177,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "sawtooth",
       "synth.carrierTypeTreble":  "sawtooth",
       "synth.carrierTypePluck":   "sawtooth",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    4,
+      "synth.octaveOffsetTreble": 5,
+      "synth.octaveOffsetPluck":  5,
       "synth.articulationBass":   0.2,
       "synth.articulationMid":    0.35,
       "synth.articulationTreble": 0.5,
@@ -189,6 +209,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "softtri",
       "synth.carrierTypeTreble":  "reed",
       "synth.carrierTypePluck":   "sine",
+      "synth.octaveOffsetBass":   2,
+      "synth.octaveOffsetMid":    3,
+      "synth.octaveOffsetTreble": 4,
+      "synth.octaveOffsetPluck":  3,
       "synth.articulationBass":   0,
       "synth.articulationMid":    0,
       "synth.articulationTreble": 0,
@@ -223,6 +247,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "softsquare",
       "synth.carrierTypeTreble":  "softsaw",
       "synth.carrierTypePluck":   "sawtooth",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    4,
+      "synth.octaveOffsetTreble": 5,
+      "synth.octaveOffsetPluck":  5,
       "synth.articulationBass":   0.4,
       "synth.articulationMid":    0.55,
       "synth.articulationTreble": 0.7,
@@ -252,6 +280,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "organ",
       "synth.carrierTypeTreble":  "softsquare",
       "synth.carrierTypePluck":   "organ",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    4,
+      "synth.octaveOffsetTreble": 5,
+      "synth.octaveOffsetPluck":  4,
       "synth.articulationBass":   0,
       "synth.articulationMid":    0,
       "synth.articulationTreble": 0,
@@ -280,6 +312,10 @@ export const SCENE_PRESETS: Record<string, ScenePreset> = {
       "synth.carrierTypeMid":     "sine",
       "synth.carrierTypeTreble":  "sine",
       "synth.carrierTypePluck":   "sine",
+      "synth.octaveOffsetBass":   3,
+      "synth.octaveOffsetMid":    4,
+      "synth.octaveOffsetTreble": 5,
+      "synth.octaveOffsetPluck":  5,
       "synth.articulationBass":   0,
       "synth.articulationMid":    0,
       "synth.articulationTreble": 0,
