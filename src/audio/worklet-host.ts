@@ -6,6 +6,7 @@
  */
 
 import limiterUrl from "./worklets/limiter.js?url";
+import fmTierUrl from "./worklets/fm-tier.js?url";
 
 export interface LimiterMetrics {
   lufsShort: number;
@@ -15,16 +16,29 @@ export interface LimiterMetrics {
 export type MetricsCallback = (m: LimiterMetrics) => void;
 
 /**
- * Attempt to load all AudioWorklet modules for the given AudioContext.
- * Returns true if loading succeeded, false on any error (caller keeps the
- * safety-compressor fallback in place).
+ * Load the lookahead-limiter worklet module.
+ * Returns true on success; caller keeps the safety-compressor fallback on failure.
  */
 export async function loadWorklets(actx: AudioContext): Promise<boolean> {
   try {
     await actx.audioWorklet.addModule(limiterUrl);
     return true;
   } catch (e) {
-    console.warn("[worklet-host] AudioWorklet load failed — keeping safety compressor:", e);
+    console.warn("[worklet-host] Limiter AudioWorklet load failed — keeping safety compressor:", e);
+    return false;
+  }
+}
+
+/**
+ * Load the fm-tier worklet module. Returns true on success; caller falls back
+ * to NodeTierBackend on failure.
+ */
+export async function loadFMWorklets(actx: AudioContext): Promise<boolean> {
+  try {
+    await actx.audioWorklet.addModule(fmTierUrl);
+    return true;
+  } catch (e) {
+    console.warn("[worklet-host] FM-tier AudioWorklet load failed — falling back to node-graph FM:", e);
     return false;
   }
 }

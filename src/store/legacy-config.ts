@@ -56,6 +56,7 @@ export interface LegacyConfig {
   glideScaleMid: number;
   glideScaleTreble: number;
   pluckFluxSensitivity: number;
+  engine?: string;
 
   feedback: number;
   blobWarp: number;
@@ -201,6 +202,9 @@ export const legacyConfig: LegacyConfig = {
   },
   get pluckFluxSensitivity() {
     return store.get("synth.pluckFluxSensitivity");
+  },
+  get engine() {
+    return store.get("synth.engine") as string;
   },
 
   get feedback() {

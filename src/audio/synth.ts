@@ -12,8 +12,10 @@
 
 import { FMVoice } from "./fm-voice.js";
 import { AudioGraph } from "./graph.js";
-import { loadWorklets, createLimiterNode } from "./worklet-host.js";
+import { loadWorklets, loadFMWorklets, createLimiterNode } from "./worklet-host.js";
 import type { LimiterMetrics } from "./worklet-host.js";
+import { NodeTierBackend, WorkletTierBackend } from "./voices.js";
+import type { TierBackend } from "./voices.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
@@ -53,16 +55,8 @@ const NOTE_GRID_GAIN_NORM = 4;
 
 // ── Internal types ────────────────────────────────────────────
 
-interface TierVoice {
-  fm: FMVoice;
-  panner: StereoPannerNode;
-  ratioBase: number;
-  gain: GainNode;
-  osc: OscillatorNode;
-}
-
 interface Tier {
-  voices: TierVoice[];
+  backend: TierBackend;
 }
 
 interface PluckVoice {
@@ -169,6 +163,7 @@ export class Synth {
   private _delay: Delay | null;
   private _tremolo: Tremolo | null;
   private _workletsLoaded = false;
+  private _fmWorkletLoaded = false;
 
   /** Called with limiter metrics at ~10 Hz when the worklet limiter is active. */
   onLimiterMetrics: ((m: LimiterMetrics) => void) | null = null;
@@ -319,39 +314,31 @@ export class Synth {
 
     // Tier buses: bass → bassBus, mid → midBus, treble → trebleBus
     const TIER_BUSES = [graph.bassBus, graph.midBus, graph.trebleBus] as const;
-    this._tiers = [];
-    for (let ti = 0; ti < 3; ti++) {
+    const useWorklet =
+      (this._cfg.engine ?? "nodes") === "worklet" && this._fmWorkletLoaded;
+    this._tiers = TIER_BUSES.map((bus, ti) => {
       const ratioBase = TIER_RATIO[ti];
-      const tierBus = TIER_BUSES[ti];
-      const voices: TierVoice[] = [];
-      for (let vi = 0; vi < 5; vi++) {
-        const fm = new FMVoice(ac, tierBus, {
-          ratio: ratioBase,
-          index: 0.4,
-        });
-        const basePan =
-          vi < 3 ? TIER_BASE_PAN[ti][vi] : TIER_BASE_PAN_EXT[ti][vi - 3];
-        const panner = ac.createStereoPanner();
-        panner.pan.value = basePan * 0.25;
-        fm.outGain.disconnect();
-        fm.outGain.connect(panner);
-        panner.connect(tierBus);
-        voices.push({
-          fm,
-          panner,
+      let backend: TierBackend;
+      if (useWorklet) {
+        backend = new WorkletTierBackend(ac);
+      } else {
+        backend = new NodeTierBackend(
+          ac,
           ratioBase,
-          gain: fm.outGain,
-          osc: fm.carrier,
-        });
+          (osc, name) => this._applyCarrierType(osc, name),
+        );
       }
-      this._tiers.push({ voices });
-    }
+      backend.connect(bus);
+      return { backend };
+    });
 
-    // Connect wow/flutter LFOs to all tier carrier detuners
-    for (const { voices } of this._tiers) {
-      for (const { osc } of voices) {
-        this._cassette!.wowDepth.connect(osc.detune);
-        this._cassette!.flutterDepth.connect(osc.detune);
+    // Connect wow/flutter LFOs to tier carrier detuners.
+    // NodeTierBackend returns one AudioParam per voice; WorkletTierBackend
+    // returns a single shared AudioParam (all voices hear the same detune).
+    for (const { backend } of this._tiers) {
+      for (const param of backend.detuneTargets()) {
+        this._cassette!.wowDepth.connect(param);
+        this._cassette!.flutterDepth.connect(param);
       }
     }
 
@@ -379,24 +366,32 @@ export class Synth {
    * construction happens in start().
    */
   async preloadWorklets(): Promise<void> {
-    if (this._workletsLoaded) return;
-    // AudioWorklet.addModule() needs an AudioContext, but we can use an
-    // OfflineAudioContext for the module load check — the registration is
-    // global per-context, but we just need the module code parsed.
-    // Simpler: create a minimal suspended AudioContext just for loading.
+    // Use a single temp AudioContext for both module loads — addModule is
+    // per-context, so the modules need to be loaded again in start()'s context,
+    // but pre-parsing here ensures faster load on first use.
     const tmp = new AudioContext();
-    const ok = await loadWorklets(tmp);
+    const [limiterOk, fmOk] = await Promise.all([
+      loadWorklets(tmp),
+      loadFMWorklets(tmp),
+    ]);
     await tmp.close();
-    this._workletsLoaded = ok;
+    this._workletsLoaded  = limiterOk;
+    this._fmWorkletLoaded = fmOk;
   }
 
-  /** Activate the worklet limiter on the graph's AudioContext. Called
-   *  internally after start() creates the graph if preloadWorklets succeeded. */
+  /** Load worklets into the live AudioContext and activate the lookahead
+   *  limiter. Called async after start() — audio plays via safety compressor
+   *  until the swap completes. Also loads fm-tier if not already loaded. */
   private async _activateWorkletLimiter(): Promise<void> {
     const graph = this._graph;
     if (!graph || graph.workletActive) return;
-    const ok = await loadWorklets(graph.actx);
-    if (!ok || !this._graph) return;
+    // Load both modules concurrently — fm-tier may already be registered but
+    // addModule is idempotent when the processor name matches.
+    const [limiterOk] = await Promise.all([
+      loadWorklets(graph.actx),
+      this._fmWorkletLoaded ? Promise.resolve(true) : loadFMWorklets(graph.actx),
+    ]);
+    if (!limiterOk || !this._graph) return;
     const node = createLimiterNode(graph.actx, (m) => {
       this._lastLufs = m.lufsShort;
       this._lastMetricsTime = this._graph?.actx.currentTime ?? 0;
@@ -535,11 +530,11 @@ export class Synth {
       this._cfg.carrierTypeTreble ?? "sine",
     ];
     const pluckCarrierType = this._cfg.carrierTypePluck ?? "sine";
-    this._tiers.forEach(({ voices }, ti) => {
+    this._tiers.forEach(({ backend }, ti) => {
       const ct = tierCarrierTypes[ti];
       if (ct !== this._lastCarrierTypes[ti]) {
         this._lastCarrierTypes[ti] = ct;
-        for (const { fm } of voices) this._applyCarrierType(fm.carrier, ct);
+        for (let vi = 0; vi < 5; vi++) backend.setCarrierWave(vi, ct);
       }
     });
     if (pluckCarrierType !== this._lastCarrierTypes[3]) {
@@ -654,7 +649,7 @@ export class Synth {
     // Rebuild the ground-truth note grid from this frame's generated voices.
     this._noteGrid.fill(0);
 
-    this._tiers.forEach(({ voices }, ti) => {
+    this._tiers.forEach(({ backend }, ti) => {
       const octaveShift = tierOctaveOffsets[ti];
       const freqScale = Math.pow(2, octaveShift);
       const articulation = tierArticulations[ti];
@@ -668,15 +663,14 @@ export class Synth {
         this._waveGainComp(tierCarrierTypes[ti]) *
         cpNorm;
 
-      voices.forEach(({ fm, panner, ratioBase }, vi) => {
+      for (let vi = 0; vi < 5; vi++) {
         if (vi < 3) {
-          // Triad voices: root (0), 3rd (1), 5th (2) — fold with modulo on short chords
-          let targetFreq: number;
+          // Triad voices: root (0), 3rd (1), 5th (2)
           const nPCs = note.triad.length;
-          targetFreq = note.triad[vi % nPCs].freq * freqScale;
+          let targetFreq = note.triad[vi % nPCs].freq * freqScale;
           if (!Number.isFinite(targetFreq) || targetFreq <= 0) {
-            fm.setGain(0, tierTau);
-            return;
+            backend.setGain(vi, 0, tierTau);
+            continue;
           }
 
           // Mid-tier 5th voice-leading
@@ -691,64 +685,58 @@ export class Synth {
             }
           }
 
-          fm.glideTo(targetFreq, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
+          backend.glideTo(vi, targetFreq, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
           const triadGain =
             tierBase *
             voiceWeights[vi] *
             (1 - bf2) *
             (note._palettePrimary.gain ?? 1);
-          fm.setGain(triadGain, tierTau);
+          backend.setGain(vi, triadGain, tierTau);
           this._addGridNote(targetFreq, triadGain);
-          fm.setIndex(tierIndex[ti], tierSlowTau);
+          backend.setIndex(vi, tierIndex[ti], tierSlowTau);
           const bassExtraDrift = ti === 0 ? 0.02 : 0;
           const targetRatio =
-            ratioBase + (ratioDrift + bassExtraDrift) * VOICE_DRIFT_SIGN[vi];
-          fm.setRatio(targetRatio, tierSlowTau);
-          const targetPan = TIER_BASE_PAN[ti][vi] * widthScale;
-          this._panTo(panner.pan, targetPan, tierSlowTau, now);
+            TIER_RATIO[ti] + (ratioDrift + bassExtraDrift) * VOICE_DRIFT_SIGN[vi];
+          backend.setRatio(vi, targetRatio, tierSlowTau);
+          backend.setPan(vi, TIER_BASE_PAN[ti][vi] * widthScale, tierSlowTau, now);
         } else {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
-          {
-            const pcs = note._palettePrimary.chord.pitchClasses;
-            const secSlot = note2;
-            let handled = false;
+          const pcs = note._palettePrimary.chord.pitchClasses;
+          let handled = false;
 
-            if (secSlot && bf2 > 0.04) {
-              const secPCs = secSlot.chord.pitchClasses;
-              const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
-              if (si < secPCs.length) {
-                const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
-                fm.glideTo(sf, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
-                const sg =
-                  tierBase * voiceWeights[[0, 2][ei]] * bf2 * (secSlot.gain ?? 1);
-                fm.setGain(sg, tierTau);
-                this._addGridNote(sf, sg);
-                fm.setIndex(tierIndex[ti] * 0.65, tierSlowTau);
-                fm.setRatio(ratioBase, tierSlowTau);
-                handled = true;
-              }
+          if (note2 && bf2 > 0.04) {
+            const secPCs = note2.chord.pitchClasses;
+            const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
+            if (si < secPCs.length) {
+              const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
+              backend.glideTo(vi, sf, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
+              const sg = tierBase * voiceWeights[[0, 2][ei]] * bf2 * (note2.gain ?? 1);
+              backend.setGain(vi, sg, tierTau);
+              this._addGridNote(sf, sg);
+              backend.setIndex(vi, tierIndex[ti] * 0.65, tierSlowTau);
+              backend.setRatio(vi, TIER_RATIO[ti], tierSlowTau);
+              handled = true;
             }
-            if (!handled) {
-              const xi = 3 + ei;
-              if (xi < pcs.length) {
-                const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
-                fm.glideTo(ef, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
-                const xg =
-                  tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25);
-                fm.setGain(xg, tierTau);
-                this._addGridNote(ef, xg);
-                fm.setIndex(tierIndex[ti] * (0.75 - ei * 0.15), tierSlowTau);
-                fm.setRatio(ratioBase, tierSlowTau);
-                handled = true;
-              }
-            }
-            if (!handled) fm.setGain(0, tierTau);
           }
-          const extPan = TIER_BASE_PAN_EXT[ti][ei] * widthScale;
-          this._panTo(panner.pan, extPan, tierSlowTau, now);
+          if (!handled) {
+            const xi = 3 + ei;
+            if (xi < pcs.length) {
+              const ef = _pcToFreq(pcs[xi], baseOctave + octaveShift);
+              backend.glideTo(vi, ef, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
+              const xg = tierBase * (ei === 0 ? seventhW * 0.45 : ninthW * 0.25);
+              backend.setGain(vi, xg, tierTau);
+              this._addGridNote(ef, xg);
+              backend.setIndex(vi, tierIndex[ti] * (0.75 - ei * 0.15), tierSlowTau);
+              backend.setRatio(vi, TIER_RATIO[ti], tierSlowTau);
+              handled = true;
+            }
+          }
+          if (!handled) backend.setGain(vi, 0, tierTau);
+          backend.setPan(vi, TIER_BASE_PAN_EXT[ti][ei] * widthScale, tierSlowTau, now);
         }
-      });
+      }
+      backend.flush();
     });
 
     this._prevRootFreq = _pcToFreq(

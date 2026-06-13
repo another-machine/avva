@@ -764,6 +764,14 @@ export const SCHEMA = {
     group: "synth-params",
     hint: "Snaps a bundle of synth + cassette params to a named aesthetic. 'custom' is the live-edited state.",
   },
+  "synth.engine": {
+    kind: "select",
+    default: "nodes" as const,
+    options: ["nodes", "worklet"] as const,
+    label: "FM engine",
+    group: "synth-params",
+    hint: "nodes = safe Web Audio node-graph FM; worklet = AudioWorklet FM with index ceiling and per-sample glide. Takes effect on next synth restart.",
+  },
 
   // ── mix bus ────────────────────────────────────────────────
   "mix.subLevel": {
