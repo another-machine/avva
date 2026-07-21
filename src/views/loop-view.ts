@@ -164,6 +164,16 @@ function _clearMask(canvas: HTMLCanvasElement): void {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+function _extremesFromStore() {
+  return {
+    enabled: store.get("extremes.enabled") as boolean,
+    darkStart: store.get("extremes.darkStart") as number,
+    whiteStart: store.get("extremes.whiteStart") as number,
+    whiteWash: store.get("extremes.whiteWash") as number,
+    speed: store.get("extremes.speed") as number,
+  };
+}
+
 async function begin(): Promise<void> {
   videoEl = document.getElementById("vid") as HTMLVideoElement;
   audioCanvas = document.getElementById("av-canvas") as HTMLCanvasElement;
@@ -266,7 +276,10 @@ async function begin(): Promise<void> {
       if (maskOn && maskCanvas) _drawMaskOverlay(maskCanvas);
       synth.update(f.out);
       if (synth._actx) {
-        synth.setBriDim(f.out.bri, synth._actx.currentTime);
+        // Normalized bri drives the loudness dim; briRaw keeps the extremes
+        // thresholds absolute — auto-range must never stretch a dark room
+        // out of its blackout.
+        synth.setBriDim(f.out.bri, synth._actx.currentTime, f.out.briRaw);
       }
       return synth.lastControls;
     },
@@ -299,6 +312,7 @@ async function begin(): Promise<void> {
     audioRenderer.setBlobSharp(store.get("audio.blobSharp") as number);
     audioRenderer.setPulseReactivity(store.get("audio.pulseReactivity") as number);
     audioRenderer.setBriScale(store.get("audio.briScale") as number);
+    audioRenderer.setExtremes(_extremesFromStore());
   }
 
   document.getElementById("gate")?.classList.add("hide");
@@ -309,6 +323,24 @@ async function begin(): Promise<void> {
 
   // ── Controller subscriptions ────────────────────────────────────────────────
 
+  // Push every drums.* store value onto a (possibly just-created) kit — the
+  // DrumSynth/DrumMachine are rebuilt on each synth.start(), so URL- or
+  // preset-carried values must be re-applied, not just subscribed.
+  const _applyDrumSettings = () => {
+    synth.drumMachine?.setBpm(store.get("drums.bpm") as number);
+    synth.drumMachine?.setPattern(store.get("drums.pattern") as string);
+    synth.drumSynth?.setVolume(store.get("drums.volume") as number);
+    synth.drumSynth?.setFilter(
+      store.get("drums.filterHz") as number,
+      store.get("drums.filterQ") as number,
+    );
+    synth.drumSynth?.setEcho(
+      store.get("drums.echoTime") as number,
+      store.get("drums.echoFb") as number,
+      store.get("drums.echoWet") as number,
+    );
+  };
+
   store.subscribeKey("synth.enabled", (v) => {
     if (v && !synth.running) {
       synth.start();
@@ -318,8 +350,38 @@ async function begin(): Promise<void> {
       // enabled from the controller/LISTEN tab — so the tick-driven tap would
       // never run and the broadcaster would sit there publishing nothing.
       maybeTapSynth();
+      _applyDrumSettings();
+      // If drums were already enabled before synth started, start them now
+      if (store.get("drums.enabled")) synth.drumMachine?.start();
     } else if (!v && synth.running) synth.stop();
   });
+
+  store.subscribeKey("drums.enabled", (v) => {
+    if (v && synth.running) synth.drumMachine?.start();
+    else synth.drumMachine?.stop();
+  });
+  store.subscribeKey("drums.bpm", (v) => {
+    synth.drumMachine?.setBpm(v as number);
+  });
+  store.subscribeKey("drums.pattern", (v) => {
+    synth.drumMachine?.setPattern(v as string);
+  });
+  store.subscribeKey("drums.volume", (v) => {
+    synth.drumSynth?.setVolume(v as number);
+  });
+  for (const k of ["drums.filterHz", "drums.filterQ", "drums.echoTime", "drums.echoFb", "drums.echoWet"] as const) {
+    store.subscribeKey(k, () => {
+      synth.drumSynth?.setFilter(
+        store.get("drums.filterHz") as number,
+        store.get("drums.filterQ") as number,
+      );
+      synth.drumSynth?.setEcho(
+        store.get("drums.echoTime") as number,
+        store.get("drums.echoFb") as number,
+        store.get("drums.echoWet") as number,
+      );
+    });
+  }
 
   store.subscribeKey("synth.masterGain", (v) => {
     synth.setMasterGain(v as number);
@@ -433,6 +495,9 @@ async function begin(): Promise<void> {
   store.subscribeKey("audio.briScale", (v) => {
     audioRenderer?.setBriScale(v);
   });
+  for (const k of ["extremes.enabled", "extremes.darkStart", "extremes.whiteStart", "extremes.whiteWash", "extremes.speed"] as const) {
+    store.subscribeKey(k, () => audioRenderer?.setExtremes(_extremesFromStore()));
+  }
 
   store.subscribeKey("synth.preset", (name) => {
     if (name === "custom") return;
@@ -589,6 +654,16 @@ function maybeTapSynth(): void {
       audioAnalyzer!.setEqGain(i, store.get(k) as number);
       store.subscribeKey(k, (v) => audioAnalyzer?.setEqGain(i, v as number));
     });
+
+    // Audio-side auto-range (forgiving constraints), tracking the store live.
+    const _applyAudioAutoRange = () =>
+      audioAnalyzer?.setAutoRange(
+        store.get("audioAnalysis.autoRange") as number,
+        store.get("analysis.autoRangeWindow") as number,
+      );
+    _applyAudioAutoRange();
+    store.subscribeKey("audioAnalysis.autoRange", _applyAudioAutoRange);
+    store.subscribeKey("analysis.autoRangeWindow", _applyAudioAutoRange);
   }
 
   // Expose the synth's master output as a MediaStream for any listener tabs

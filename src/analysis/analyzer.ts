@@ -6,6 +6,7 @@
  */
 
 import { rgbToHsv } from "./color.js";
+import { AutoRange } from "./auto-range.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { Calibration } from "../controls/calibration.js";
 
@@ -26,6 +27,9 @@ export interface AnalysisOut {
   flux: number;   // consolidated activity: max(act,actBg) + 0.4*actEdge
   tilt: number;   // vertical brightness centroid → spectral centroid target
   pos: number;    // horizontal motion centroid → stereo position target
+  /** Un-normalized brightness — auto-range never touches this. The extremes
+   *  system keys off it so "total dark" keeps its absolute meaning. */
+  briRaw: number;
 }
 
 export interface AnalysisFrame {
@@ -51,6 +55,7 @@ export class Analyzer {
   private _actBgSmooth = 0;
   private _mxSmooth = 0.5;
   private _vySmooth = 0.5;
+  private readonly _autoRange = new AutoRange();
 
   heatOn: boolean;
 
@@ -77,6 +82,7 @@ export class Analyzer {
       flux: 0,
       tilt: 0.5,
       pos: 0.5,
+      briRaw: 0,
     };
     this._histBins = new Float32Array(HUE_BINS);
     this.heatOn = false;
@@ -304,8 +310,25 @@ export class Analyzer {
   // ── Private ──────────────────────────────────────────────────
 
   private _currentFrame(heatImageData: ImageData | null): AnalysisFrame {
+    // Auto-range projection: `_out` stays raw smoothing state; the emitted
+    // frame gets the six canonical axes adaptively normalized ("forgiving
+    // constraints") so downstream mappings see full-range swings even from a
+    // dim or flat scene. Bounds track continuously (cheap) so the knob is
+    // warm the moment it's raised. briRaw always carries the absolute value.
+    const out = { ...this._out };
+    out.briRaw = this._out.bri;
+    const amt = Math.max(0, Math.min(1, this._cfg.autoRange ?? 0));
+    const win = this._cfg.autoRangeWindow ?? 75;
+    this._autoRange.tick(performance.now());
+    out.bri = this._autoRange.apply("bri", this._out.bri, amt, win);
+    out.flux = this._autoRange.apply("flux", this._out.flux, amt, win);
+    out.spread = this._autoRange.apply("spread", this._out.spread, amt, win);
+    out.tilt = this._autoRange.apply("tilt", this._out.tilt, amt, win);
+    out.pos = this._autoRange.apply("pos", this._out.pos, amt, win);
+    out.contrast = this._autoRange.apply("contrast", this._out.contrast, amt, win);
+    out.lo = this._autoRange.apply("lo", this._out.lo, amt, win);
     return {
-      out: { ...this._out },
+      out,
       histBins: this._histBins,
       heatImageData,
     };

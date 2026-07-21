@@ -209,13 +209,15 @@ export class AudioGraph {
     this.masterTrim.gain.setTargetAtTime(target, this.actx.currentTime, 0.02);
   }
 
-  setBriDim(bri: number, now: number): void {
+  setBriDim(bri: number, now: number, extremesScale = 1): void {
     // Perceptual brightness→loudness: sones approximation uses ~0.6 exponent.
     // The ramp-up zone (bri < 0.1) applies a linear fade-in to prevent
     // the synth from sounding full-volume on nearly-black frames.
+    // extremesScale (see Synth.setBriDim) drives the dim to a true 0 in total
+    // darkness and past 1 during a whiteout climax — the limiter protects.
     const ramp = Math.min(1, bri / 0.08);
     const perceptual = Math.pow(Math.max(0, bri), 0.6);
-    const scale = Math.min(1, ramp * perceptual);
+    const scale = Math.min(1, ramp * perceptual) * Math.max(0, extremesScale);
     this.dimGain.gain.setTargetAtTime(scale, now, 0.08);
   }
 

@@ -19,6 +19,8 @@ export interface LegacyConfig {
   valFloor: number;
   activityGain: number;
   activityNoise: number;
+  autoRange: number;
+  autoRangeWindow: number;
   sparkLen: number;
 
   mirror: boolean;
@@ -57,6 +59,12 @@ export interface LegacyConfig {
   glideScaleTreble: number;
   pluckFluxSensitivity: number;
   engine?: string;
+
+  extremesEnabled: boolean;
+  extremesDarkStart: number;
+  extremesWhiteStart: number;
+  extremesWhiteLiftDb: number;
+  extremesSpeed: number;
 
   feedback: number;
   blobWarp: number;
@@ -101,6 +109,12 @@ export const legacyConfig: LegacyConfig = {
   },
   get activityNoise() {
     return store.get("analysis.activityNoise");
+  },
+  get autoRange() {
+    return store.get("analysis.autoRange");
+  },
+  get autoRangeWindow() {
+    return store.get("analysis.autoRangeWindow");
   },
   get sparkLen() {
     return store.get("global.sparkLen");
@@ -205,6 +219,22 @@ export const legacyConfig: LegacyConfig = {
   },
   get engine() {
     return store.get("synth.engine") as string;
+  },
+
+  get extremesEnabled() {
+    return store.get("extremes.enabled");
+  },
+  get extremesDarkStart() {
+    return store.get("extremes.darkStart");
+  },
+  get extremesWhiteStart() {
+    return store.get("extremes.whiteStart");
+  },
+  get extremesWhiteLiftDb() {
+    return store.get("extremes.whiteLiftDb");
+  },
+  get extremesSpeed() {
+    return store.get("extremes.speed");
   },
 
   get feedback() {

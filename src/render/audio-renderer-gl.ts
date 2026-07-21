@@ -62,6 +62,582 @@ void main() {
   gl_Position = vec4(pos, 0.0, 1.0);
 }`;
 
+// ── Shared field-style scaffold ───────────────────────────────────────────────
+// Every "fullscreen field" style (aurora, slime, and the six below) is built on
+// the SAME treatment so that switching styles feels like the same instrument in
+// a different skin: identical uniforms, identical oklch palette weave, identical
+// brightness model, identical feedback trails, pulse-glow reactivity, and grain.
+// A new style only writes a short main() that produces a field/color and then
+// calls these helpers. (blobs/chladni predate the scaffold and keep their own
+// bespoke cores.)
+
+const GLSL_HEAD = (n: number) => `#version 300 es
+#define N_HUES ${n}
+precision highp float;
+
+in  vec2 vUV;
+out vec4 outColor;
+
+`;
+
+// The full shared uniform set (references the N_HUES macro from GLSL_HEAD).
+const GLSL_UNIFORMS = `uniform vec2  uRes;
+uniform float uTime;
+uniform float uDegrees[N_HUES];
+uniform vec3  uDegreeRGB[N_HUES];
+uniform float uBri;
+uniform float uSpread;
+uniform float uAct;
+uniform float uBandLo;
+uniform float uPulse;
+uniform float uFeedback;
+uniform float uBlobWarp;
+uniform float uBlobSpeed;
+uniform float uBlobDrive;
+uniform float uBlobSize;
+uniform float uBlobSharp;
+uniform float uShiftSpeed;
+uniform float uPulseReactivity;
+uniform float uPhase;
+uniform float uBriScale;
+uniform float uTilt;
+uniform float uPos;
+uniform float uCtr;
+uniform vec3  uDegreeRGB2[N_HUES];
+uniform float uSlotEdge[N_HUES];
+uniform float uDark;
+uniform float uWhite;
+uniform sampler2D uPrev;
+
+`;
+
+// Semantic aliases so style bodies read generically — the saved store keys stay
+// blob* (no migration), but the shaders speak Scale/Soft/Warp/React/Gain/…
+const GLSL_ALIASES = `#define uScale uBlobSize
+#define uSoft  uBlobSharp
+#define uWarp  uBlobWarp
+#define uReact uPulseReactivity
+#define uGain  uBriScale
+#define uSpeed uBlobSpeed
+#define uDrive uBlobDrive
+
+`;
+
+const GLSL_NOISE = `vec2 _h2(vec2 p) {
+  p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+  return fract(sin(p) * 43758.5453123) * 2.0 - 1.0;
+}
+
+float snoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = dot(_h2(i),                  f);
+  float b = dot(_h2(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+  float c = dot(_h2(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+  float d = dot(_h2(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float snoiseN(vec2 p) { return snoise(p) * 0.5 + 0.5; }
+
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * snoise(p); p *= 2.0; a *= 0.5; }
+  return v;
+}
+
+`;
+
+// The shared "treatment" library — palette weave, feedback advection, background
+// glow, band-pulse reactivity, and the chord-flash + grain finish. Bodies are
+// the exact logic aurora/slime use, parameterized for the few per-style knobs.
+const GLSL_LIB = `// Bounded, incommensurate domain-warp offsets (no net drift). Warp widens them.
+void flowOffsets(float t, out vec2 flow, out vec2 flow2) {
+  float warpAmp = 0.5 + uWarp * 4.0;
+  flow  = vec2(cos(t * 0.10) + 0.5 * sin(t * 0.043),
+               sin(t * 0.08) + 0.5 * cos(t * 0.037)) * warpAmp;
+  flow2 = vec2(sin(t * 0.11) + 0.5 * cos(t * 0.037),
+               cos(t * 0.09) + 0.5 * sin(t * 0.041)) * warpAmp;
+}
+
+// Per-slot palette weave. sampleBase is the warped field coord; each active slot
+// adds its own offset and carves a band tinted by that slot's oklch gradient.
+// Returns the blended chord color; outputs coverage (0..1) and the band-
+// independent chord average used to floor gaps to a dim tint instead of black.
+vec3 paletteWeave(vec2 sampleBase, float softness, float ctrTighten,
+                  out float coverage, out vec3 chordAvg) {
+  float totalW = 0.0;
+  vec3  totalColor = vec3(0.0);
+  vec3  ambColor   = vec3(0.0);
+  float ambW       = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi   = float(i);
+    float band = fbm(sampleBase + vec2(fi * 3.1, fi * 1.7)) * 0.5 + 0.5;
+    band = pow(band, ctrTighten);
+    float w = smoothstep(0.5 - softness, 0.5 + softness, band);
+    float blend = clamp(band + uTilt * 0.3 - 0.15 + uSlotEdge[i] * 0.4, 0.0, 1.0);
+    vec3  c = mix(uDegreeRGB[i], uDegreeRGB2[i], blend);
+    float contrib = w * presence;
+    totalColor += c * contrib;
+    totalW     += contrib;
+    ambColor   += c * presence;
+    ambW       += presence;
+  }
+  chordAvg = ambW > 0.001 ? ambColor / ambW : vec3(0.0);
+  coverage = clamp(totalW, 0.0, 1.0);
+  return totalW > 0.001 ? totalColor / totalW : chordAvg;
+}
+
+// Previous frame, advected along a slow turning flow — the shared trail look.
+vec4 feedbackPrev(vec2 uv, vec2 uvA, float aspect) {
+  vec2 flowScroll = vec2(
+    0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
+    0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
+  );
+  float driftAmt = 0.0015 + uAct * 0.005;
+  vec2 driftRaw = vec2(
+    snoise(uvA * 4.0 + flowScroll),
+    snoise(uvA * 4.0 + flowScroll + 100.0)
+  ) * driftAmt;
+  vec2 driftUV = uv + vec2(driftRaw.x / aspect, driftRaw.y);
+  return texture(uPrev, clamp(driftUV, 0.0, 1.0));
+}
+
+// Background glow centered at (pos, tilt), BRI + low-band driven.
+float bgGlowAmt(vec2 uvA, float aspect) {
+  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.75 * aspect, 1.0 - uTilt);
+  float bgDist  = dot(uvA - glowCtr, uvA - glowCtr);
+  return exp(-bgDist * 2.5) * (uBri + uBandLo * 0.3) * 0.4;
+}
+
+// Band-driven pulse glows: each slot is a soft Gaussian bloom roaming a bounded
+// noise walk, burned into the base as the chord color. sigA/sigB size the bloom;
+// pStrMax caps the burn. This is the shared "reactivity" across every style.
+vec3 applyPulseGlows(vec3 base, vec3 tint, vec2 uvA, float aspect, float t,
+                     float sigA, float sigB, float pStrMax) {
+  float pulseField = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi    = float(i);
+    float seed  = fi * 2.399;
+    float sigma = (sigA + presence * sigB) * aspect;
+    float wt    = t * 0.16;
+    float lane  = seed * 11.3;
+    float nx = snoise(vec2(lane,        wt))             * 0.7
+             + snoise(vec2(lane +  5.0, wt * 2.7))       * 0.3;
+    float ny = snoise(vec2(lane + 47.0, wt + 19.0))      * 0.7
+             + snoise(vec2(lane + 53.0, wt * 2.7 + 31.0)) * 0.3;
+    vec2  cP = vec2(0.5 * aspect + 0.62 * nx, 0.5 + 0.46 * ny);
+    vec2  dP = uvA - cP;
+    float g  = exp(-dot(dP, dP) / (2.0 * sigma * sigma));
+    pulseField += g * presence * (0.45 + uBri * uCtr * 0.6 + uTilt * 0.25) * uReact;
+  }
+  float pStr = (1.0 - exp(-pulseField * 2.0)) * pStrMax;
+  vec3 pg    = clamp(tint, 0.0, 1.0);
+  vec3 pMul  = base * pg;
+  vec3 pBurn = clamp(1.0 - (1.0 - base) / max(pg, vec3(0.04)), 0.0, 1.0);
+  vec3 pRich = mix(pMul, pBurn, 0.6);
+  return mix(base, pRich, pStr);
+}
+
+// Chord-change flash + film grain, clamped — the shared tail of every style.
+// uDark/uWhite are the extremes depths: total darkness crushes everything
+// (grain, dim tint floor, feedback trails) to true black; whiteout bleaches
+// toward full white. Both are 0 unless extremes.enabled.
+vec3 finish(vec3 base, vec2 uv, float flashAmt, float grainBase, float grainAct) {
+  base += vec3(uPulse * flashAmt);
+  base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
+        * (grainBase + uAct * grainAct);
+  base = mix(base, vec3(0.0), uDark);
+  base = mix(base, vec3(1.0), uWhite);
+  return clamp(base, 0.0, 1.0);
+}
+
+`;
+
+function glslPreamble(n: number): string {
+  return GLSL_HEAD(n) + GLSL_UNIFORMS + GLSL_ALIASES + GLSL_NOISE + GLSL_LIB;
+}
+
+/** Clamped smoothstep on 0..1 — soft entry/exit for the extremes depths. */
+function _smooth01(x: number): number {
+  const t = Math.max(0, Math.min(1, x));
+  return t * t * (3 - 2 * t);
+}
+
+// ── Volcano fragment shader factory ──────────────────────────────────────────
+// Birds-eye foam volcano: a slow, viscous, bloblike mass that wells up at the
+// (pos,tilt) center and creeps outward via feedback advection — lumpy chord-
+// colored foam with a bright advancing lip. Mesmerizing to stare into.
+function makeVolcanoFragSrc(n: number): string {
+  return glslPreamble(n) + `void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+  float t = uPhase;
+  float bScale = uBri * uGain;
+  float softness   = clamp(uSoft * 0.5, 0.04, 0.7);
+  float ctrTighten = 0.55 + 1.2 * uCtr;
+
+  vec2 flow, flow2; flowOffsets(t, flow, flow2);
+
+  // Eruption center follows (pos, tilt).
+  vec2 ctrUV  = vec2(0.5 + (uPos - 0.5) * 0.75, 1.0 - uTilt);
+  vec2 dUV    = uv - ctrUV;
+  vec2 dPhys  = dUV * vec2(aspect, 1.0);
+  float physR = length(dPhys);
+  float ang   = atan(dPhys.y, dPhys.x);
+
+  // Viscous outward flow: this pixel inherits color from a point pulled slightly
+  // back toward the center, so the painted foam creeps outward every frame.
+  float adv = 0.003 + 0.014 * (uSpeed * 0.25 + uAct * 0.6);
+  vec2 srcUV = ctrUV + dUV * (1.0 - adv);
+  srcUV += vec2(snoise(uvA * 3.0 + flow), snoise(uvA * 3.0 + flow + 50.0)) * 0.004;
+  vec4 prev = texture(uPrev, clamp(srcUV, 0.0, 1.0));
+
+  // Warped field → chord color (the foam's internal marbling).
+  float scale = mix(1.8, 2.7, uSpread) / max(0.4, uScale * 2.5);
+  vec2 pC = dPhys;
+  vec2 q  = vec2(fbm(pC * scale + flow), fbm(pC * scale + flow + 7.3));
+  vec2 rr = vec2(fbm(pC * scale + 1.7 * q + flow2),
+                 fbm(pC * scale + 1.7 * q + flow2 + 5.1));
+  float coverage; vec3 chordAvg;
+  vec3 foamColor = paletteWeave(pC * scale + 1.7 * rr, softness, ctrTighten,
+                                coverage, chordAvg);
+
+  // Lumpy eruption front: a slowly churning radius modulated per-angle by noise.
+  float lobe   = fbm(vec2(cos(ang), sin(ang)) * 1.6 + flow * 0.5 + t * 0.04) * 0.5 + 0.5;
+  float frontR = (0.05 + uScale * 0.6) * (0.55 + 0.9 * lobe);
+  float soft   = 0.02 + uSoft * 0.13;
+  float inject = smoothstep(frontR + soft, frontR - soft, physR);
+  float rim    = inject * (1.0 - inject) * 4.0;          // bright advancing lip
+
+  // Fine bubble texture brightens near the active foam.
+  float bubbles = snoiseN(uvA * (16.0 + uScale * 22.0) + flow * 2.0 + t * 0.25);
+
+  vec3 base = prev.rgb * uFeedback;
+  vec3 foam = foamColor * (0.45 + 0.8 * bScale) * (0.7 + 0.5 * bubbles);
+  base = mix(base, foam, inject * clamp(0.4 + bScale, 0.0, 1.0));
+  base += foamColor * rim * (0.35 + bScale * 0.5);
+  base = max(base, chordAvg * (0.03 + bScale * 0.05));
+
+  base = applyPulseGlows(base, foamColor, uvA, aspect, t, 0.13, 0.09, 0.85);
+  outColor = vec4(finish(base, uv, 0.035, 0.03, 0.045), 1.0);
+}`;
+}
+
+// ── Facets fragment shader factory ───────────────────────────────────────────
+// Harsh angled colored-metal folds: the plane is tiled into equilateral triangle
+// facets, each given a flat normal that leans at its own slowly-drifting angle,
+// then lit as polished anodized metal. The shading jumps at every crease, reading
+// as crumpled chromatic foil.
+function makeFacetsFragSrc(n: number): string {
+  return glslPreamble(n) + `// Simplex (equilateral-triangle) cell: returns the facet centroid (a stable id)
+// and the in-facet edge proximity (~0 at a crease, ~0.33 at the centroid).
+vec2 simplexTri(vec2 p, out float edge) {
+  const float F2 = 0.3660254037844386;
+  const float G2 = 0.21132486540518713;
+  vec2 s  = floor(p + (p.x + p.y) * F2);
+  vec2 x0 = p - s + (s.x + s.y) * G2;
+  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec2 c0 = s;
+  vec2 c1 = s + i1;
+  vec2 c2 = s + 1.0;
+  vec2 w0 = c0 - (c0.x + c0.y) * G2;
+  vec2 w1 = c1 - (c1.x + c1.y) * G2;
+  vec2 w2 = c2 - (c2.x + c2.y) * G2;
+  vec2 v0 = w1 - w0, v1 = w2 - w0, v2 = p - w0;
+  float den = v0.x * v1.y - v1.x * v0.y;
+  float b1 = (v2.x * v1.y - v1.x * v2.y) / den;
+  float b2 = (v0.x * v2.y - v2.x * v0.y) / den;
+  float b0 = 1.0 - b1 - b2;
+  edge = min(min(b0, b1), b2);
+  return (w0 + w1 + w2) / 3.0;
+}
+
+void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+  float t = uPhase;
+  float bScale = uBri * uGain;
+  float softness   = clamp(uSoft * 0.5, 0.04, 0.7);
+  float ctrTighten = 0.55 + 1.2 * uCtr;
+
+  vec2 flow, flow2; flowOffsets(t, flow, flow2);
+
+  vec2 p = uvA;
+  p.x -= (uPos - 0.5) * 0.75 * aspect;
+  p.y -= (0.5 - uTilt) * 0.4;
+  vec2 pC = p - vec2(0.5 * aspect, 0.5);
+
+  // Triangular lattice; larger Size → bigger, fewer facets.
+  float gscale = mix(26.0, 7.0, clamp(uScale * 1.6, 0.0, 1.0));
+  float edge;
+  vec2  id = simplexTri(pC * gscale + flow * 0.3, edge);
+
+  // Flat per-facet normal: random base tilt + slow rotation + low-freq fbm so
+  // neighboring facets lean at different angles, like crumpled foil.
+  vec2  hsh   = _h2(id * 1.37);
+  float steep = (0.35 + uCtr * 1.1) * (0.6 + uSoft);
+  float dr    = t * 0.05;
+  vec2  tilt  = vec2(hsh.x * cos(dr) - hsh.y * sin(dr),
+                     hsh.x * sin(dr) + hsh.y * cos(dr)) * steep;
+  tilt += vec2(fbm(id * 0.5 + flow * 0.2),
+               fbm(id * 0.5 + flow * 0.2 + 9.0)) * steep * 0.6;
+  vec3 N = normalize(vec3(-tilt, 1.0));
+  vec3 V = vec3(0.0, 0.0, 1.0);
+
+  // One flat tint per facet (sampled at the facet id → constant within facet).
+  float coverage; vec3 chordAvg;
+  vec3 tint = paletteWeave(id * 0.6, softness, ctrTighten, coverage, chordAvg);
+
+  // Metallic studio lighting (lights lean with TILT/POS).
+  vec3 L1 = normalize(vec3( 0.55, 0.30 + (uTilt - 0.5) * 0.9, 0.78));
+  vec3 L2 = normalize(vec3(-0.55 + (uPos - 0.5) * 0.7, -0.45, 0.60));
+  float shin = mix(18.0, 140.0, clamp(uSoft, 0.0, 1.0));
+  float s1 = pow(max(dot(N, normalize(L1 + V)), 0.0), shin);
+  float s2 = pow(max(dot(N, normalize(L2 + V)), 0.0), shin * 0.45);
+  vec3  R    = reflect(-V, N);
+  float envY = R.y * 0.5 + 0.5;
+  float env  = 0.08 + 0.9 * smoothstep(0.2, 0.8, envY)
+                    + 0.6 * smoothstep(0.86, 0.96, envY);
+  vec3 metalTint = mix(vec3(0.36, 0.38, 0.46), tint, clamp(coverage * 1.6, 0.0, 1.0));
+  float mLum = dot(metalTint, vec3(0.299, 0.587, 0.114));
+  metalTint = clamp(mix(vec3(mLum), metalTint, 1.6), 0.0, 1.0);
+
+  vec3 col = metalTint * (0.14 + env);
+  col += mix(vec3(1.0), metalTint, 0.30) * s1 * (1.0 + bScale * 0.9);
+  col += metalTint * s2 * (0.6 + bScale * 0.5);
+  // Darken the crease lines between facets for crisp folds.
+  float crease = smoothstep(0.0, 0.05 + uSoft * 0.12, edge);
+  col *= mix(0.3, 1.0, crease);
+
+  vec4 prev = feedbackPrev(uv, uvA, aspect);
+  vec3 bgBase = prev.rgb * uFeedback;
+  float surfMask = clamp(max(bScale, 0.4 + coverage * 0.45), 0.0, 1.2);
+  vec3 base = mix(bgBase, col, clamp(surfMask, 0.0, 1.0));
+  base = max(base, metalTint * (0.03 + bScale * 0.05));
+
+  base = applyPulseGlows(base, metalTint, uvA, aspect, t, 0.10, 0.07, 0.9);
+  outColor = vec4(finish(base, uv, 0.04, 0.025, 0.04), 1.0);
+}`;
+}
+
+// ── Vortex fragment shader factory ───────────────────────────────────────────
+// Hypnotic spiral tunnel in polar coordinates about (pos,tilt): palette rings and
+// spiral arms stream endlessly into a glowing throat, with the feedback buffer
+// advected inward so it reads as infinite falling. Maximal "stare forever" pull.
+function makeVortexFragSrc(n: number): string {
+  return glslPreamble(n) + `void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+  float t = uPhase;
+  float bScale = uBri * uGain;
+  float softness   = clamp(uSoft * 0.5, 0.04, 0.7);
+  float ctrTighten = 0.55 + 1.2 * uCtr;
+
+  vec2 flow, flow2; flowOffsets(t, flow, flow2);
+
+  vec2 ctrUV = vec2(0.5 + (uPos - 0.5) * 0.6, 1.0 - uTilt);
+  vec2 d = (uv - ctrUV) * vec2(aspect, 1.0);
+  float r = length(d) + 1e-4;
+  float a = atan(d.y, d.x);
+
+  // Tunnel: depth streams inward; spiral winds the arms. Warp keeps it organic.
+  float arms   = floor(2.0 + uCtr * 5.0);
+  float depth  = 1.0 / (r + 0.12) + t * (0.15 + uSpeed * 0.12);
+  float spiral = a * arms + log(r + 0.12) * (2.0 + uWarp * 28.0) + t * 0.10;
+  vec2  warp   = vec2(fbm(vec2(spiral * 0.3, depth * 0.3) + flow),
+                      fbm(vec2(spiral * 0.3, depth * 0.3) + flow + 4.0));
+  float ringFreq = mix(4.0, 12.0, clamp(uScale * 1.5, 0.0, 1.0));
+  float rings = sin(depth * ringFreq + warp.x * 2.0) * 0.5 + 0.5;
+  float swirl = sin(spiral + warp.y * 2.0) * 0.5 + 0.5;
+  float bands = pow(mix(rings, rings * swirl, 0.5), ctrTighten);
+
+  float coverage; vec3 chordAvg;
+  vec3 col = paletteWeave(vec2(depth * 1.5, spiral * 0.25) + flow2 * 0.5,
+                          softness, ctrTighten, coverage, chordAvg);
+
+  float core = exp(-r * r * 3.0);                  // glowing throat
+  vec3 ring = col * (0.2 + 0.95 * bands) * (0.35 + bScale);
+  ring += chordAvg * core * (0.3 + bScale * 0.7);
+
+  // Feedback advected inward → rings appear to fall endlessly into the throat.
+  vec2 srcUV = ctrUV + (uv - ctrUV) * (1.0 - (0.004 + uSpeed * 0.004));
+  vec3 prev = texture(uPrev, clamp(srcUV, 0.0, 1.0)).rgb;
+  vec3 base = max(ring, prev * uFeedback);
+  base = max(base, chordAvg * (0.02 + bScale * 0.04));
+
+  base = applyPulseGlows(base, col, uvA, aspect, t, 0.13, 0.09, 0.85);
+  outColor = vec4(finish(base, uv, 0.035, 0.03, 0.045), 1.0);
+}`;
+}
+
+// ── Plasma fragment shader factory ───────────────────────────────────────────
+// Smooth flowing lightfield: a domain-warped sum of incommensurate sine waves
+// painted through the chord palette — soft morphing color membranes of liquid
+// light with no hard edges, drifting forever.
+function makePlasmaFragSrc(n: number): string {
+  return glslPreamble(n) + `void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+  float t = uPhase;
+  float bScale = uBri * uGain;
+  float ctrTighten = 0.55 + 1.2 * uCtr;
+  float softness = clamp(0.22 + uSoft * 0.45, 0.1, 0.85);  // plasma stays soft
+
+  vec2 flow, flow2; flowOffsets(t, flow, flow2);
+
+  vec2 p = uvA;
+  p.x -= (uPos - 0.5) * 0.75 * aspect;
+  p.y -= (0.5 - uTilt) * 0.4;
+  vec2 pC = p - vec2(0.5 * aspect, 0.5);
+
+  float scale = mix(2.0, 6.0, clamp(uScale * 1.5, 0.0, 1.0));
+  vec2 z = pC * scale;
+  vec2 q = vec2(fbm(z + flow), fbm(z + flow + 3.7));
+  z += 0.8 * q;
+  float v = sin(z.x * 1.3 + t * 0.30)
+          + sin(z.y * 1.7 - t * 0.23)
+          + sin((z.x + z.y) * 1.1 + t * 0.17)
+          + sin(length(z) * 2.0 - t * 0.20);
+  float field = clamp(v * 0.125 + 0.5, 0.0, 1.0);
+
+  float coverage; vec3 chordAvg;
+  vec3 col = paletteWeave(z + vec2(field * 1.6), softness, ctrTighten,
+                          coverage, chordAvg);
+
+  float membrane = smoothstep(0.35, 0.65, field);
+  vec3 plasmaCol = mix(chordAvg, col, coverage);
+
+  vec3 prev = feedbackPrev(uv, uvA, aspect).rgb;
+  vec3 base = prev * uFeedback;
+  base = mix(base, plasmaCol,
+             clamp(0.3 + bScale * 0.6, 0.0, 1.0) * (0.4 + 0.6 * membrane));
+  base += col * pow(field, 2.0) * (0.3 + bScale * 0.5) * coverage;
+  base = max(base, chordAvg * (0.03 + bScale * 0.05));
+
+  base = applyPulseGlows(base, col, uvA, aspect, t, 0.13, 0.09, 0.85);
+  outColor = vec4(finish(base, uv, 0.035, 0.03, 0.045), 1.0);
+}`;
+}
+
+// ── Mandala fragment shader factory ──────────────────────────────────────────
+// N-fold kaleidoscope: the aurora veil field mirror-folded into K-fold radial
+// symmetry that slowly rotates and breathes. Richer chords raise the symmetry
+// order. Infinitely watchable, colors identical to aurora.
+function makeMandalaFragSrc(n: number): string {
+  return glslPreamble(n) + `void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+  float t = uPhase;
+  float bScale = uBri * uGain;
+  float softness   = clamp(uSoft * 0.5, 0.04, 0.7);
+  float ctrTighten = 0.55 + 1.2 * uCtr;
+
+  vec2 flow, flow2; flowOffsets(t, flow, flow2);
+
+  vec2 ctrUV = vec2(0.5 + (uPos - 0.5) * 0.45, 0.5 + (uTilt - 0.5) * 0.45);
+  vec2 d = (uv - ctrUV) * vec2(aspect, 1.0);
+  float r = length(d);
+  float ang = atan(d.y, d.x);
+
+  // K-fold mirror symmetry; richer chords (Spread) raise the symmetry order.
+  float K = max(3.0, floor(4.0 + uSpread * 8.0));
+  float sector = 6.28318530718 / K;
+  float a = mod(ang + t * 0.03, sector);
+  a = abs(a - sector * 0.5);
+  float rr = r * (1.0 + 0.08 * sin(t * 0.1));           // gentle breathe
+  vec2 fp = vec2(cos(a), sin(a)) * rr;
+
+  float scale = mix(2.5, 5.0, uSpread) / max(0.4, uScale * 2.5);
+  vec2 q  = vec2(fbm(fp * scale + flow), fbm(fp * scale + flow + 7.3));
+  vec2 rv = vec2(fbm(fp * scale + 1.7 * q + flow2),
+                 fbm(fp * scale + 1.7 * q + flow2 + 5.1));
+  float master = clamp(fbm(fp * scale + 2.0 * rv) * 0.5 + 0.5, 0.0, 1.0);
+
+  float coverage; vec3 chordAvg;
+  vec3 veil = paletteWeave(fp * scale + 1.7 * rv, softness, ctrTighten,
+                           coverage, chordAvg);
+
+  float crest = smoothstep(0.55, 0.95, master);
+  vec4 prev = feedbackPrev(uv, uvA, aspect);
+  float bg = bgGlowAmt(uvA, aspect);
+  vec3 bgBase = prev.rgb * uFeedback + veil * bg;
+  vec3 base = mix(bgBase, veil, coverage);
+  base *= clamp(max(bScale, coverage * 0.55), 0.0, 1.0);
+  base = max(base, chordAvg * (0.04 + bScale * 0.06));
+  base += veil * crest * coverage * (0.35 + bScale * 0.5);
+
+  base = applyPulseGlows(base, veil, uvA, aspect, t, 0.13, 0.09, 0.85);
+  outColor = vec4(finish(base, uv, 0.035, 0.03, 0.045), 1.0);
+}`;
+}
+
+// ── Ripples fragment shader factory ──────────────────────────────────────────
+// Concentric interference: each active chord slot is a wandering emitter sending
+// out colored ripples; their overlapping wavefronts form an ever-shifting moiré
+// bloom that never repeats.
+function makeRipplesFragSrc(n: number): string {
+  return glslPreamble(n) + `void main() {
+  vec2 uv = vUV;
+  float aspect = uRes.x / uRes.y;
+  vec2 uvA = vec2(uv.x * aspect, uv.y);
+  float t = uPhase;
+  float bScale = uBri * uGain;
+
+  float freq   = mix(16.0, 54.0, clamp(uScale * 1.5, 0.0, 1.0));
+  float crestW = 0.04 + uSoft * 0.4;
+
+  float field = 0.0;
+  vec3  colAccum = vec3(0.0);
+  float wAccum = 0.0;
+  for (int i = 0; i < N_HUES; i++) {
+    float presence = uDegrees[i];
+    if (presence < 0.005) continue;
+    float fi   = float(i);
+    float seed = fi * 2.399;
+    float lane = seed * 11.3;
+    float wt   = t * 0.16;
+    float nx = snoise(vec2(lane,        wt))             * 0.7
+             + snoise(vec2(lane +  5.0, wt * 2.7))       * 0.3;
+    float ny = snoise(vec2(lane + 47.0, wt + 19.0))      * 0.7
+             + snoise(vec2(lane + 53.0, wt * 2.7 + 31.0)) * 0.3;
+    vec2 src = vec2(0.5 * aspect + 0.62 * nx, 0.5 + 0.46 * ny);
+    float dist = length(uvA - src);
+    float wave = sin(dist * freq - t * (2.0 + uSpeed * 3.0) - fi * 1.3);
+    field += wave * presence;
+    float blend = clamp(0.5 + uTilt * 0.3 - 0.15 + uSlotEdge[i] * 0.4, 0.0, 1.0);
+    vec3 c = mix(uDegreeRGB[i], uDegreeRGB2[i], blend);
+    float amp = (0.5 + 0.5 * wave) * presence;
+    colAccum += c * amp;
+    wAccum += amp;
+  }
+  vec3 ripColor = wAccum > 0.001 ? colAccum / wAccum : vec3(0.0);
+  float pattern = clamp(field * 0.5 / max(1.0, wAccum) + 0.5, 0.0, 1.0);
+  pattern = pow(pattern, 0.7 + 0.6 * uCtr);
+  float crest = smoothstep(0.5 - crestW, 0.5 + crestW, pattern);
+
+  vec4 prev = feedbackPrev(uv, uvA, aspect);
+  float bg = bgGlowAmt(uvA, aspect);
+  vec3 base = prev.rgb * uFeedback + ripColor * bg;
+  vec3 lit = ripColor * (0.18 + 0.95 * crest) * (0.4 + bScale);
+  base = max(base, lit);
+  base = max(base, ripColor * (0.03 + bScale * 0.05));
+
+  base = applyPulseGlows(base, ripColor, uvA, aspect, t, 0.12, 0.08, 0.85);
+  outColor = vec4(finish(base, uv, 0.035, 0.03, 0.045), 1.0);
+}`;
+}
+
 // ── Fragment shader factory ───────────────────────────────────────────────────
 function makeFragSrc(nHues: number): string {
   return `#version 300 es
@@ -98,6 +674,8 @@ uniform vec3  uDegreeRGB2[N_HUES];
 // toward the slot's left-boundary color, +1 toward the right-boundary color.
 // Derived from where the continuous audio hue sits within / next to each slot.
 uniform float uSlotEdge[N_HUES];
+uniform float uDark;
+uniform float uWhite;
 uniform sampler2D uPrev;
 
 vec2 _h2(vec2 p) {
@@ -161,8 +739,8 @@ void main() {
 
   // pos shifts the whole cloud left/right; tilt translates it up/down
   // tilt=0 (bright top of frame) → blobs shift up; tilt=1 (bright bottom) → down
-  float posShift   = (uPos - 0.5) * 0.4 * aspect;
-  float tiltOffset = (0.5 - uTilt) * 0.4;
+  float posShift   = (uPos - 0.5) * 0.6 * aspect;
+  float tiltOffset = (0.5 - uTilt) * 0.6;
 
   for (int i = 0; i < N_HUES; i++) {
     float presence = uDegrees[i];
@@ -243,7 +821,7 @@ void main() {
     0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
     0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
   );
-  float driftAmt = 0.0015 + uAct * 0.002;
+  float driftAmt = 0.0015 + uAct * 0.005;
   // Sample noise in aspect-corrected uvA space (isotropic cells), and divide the
   // x displacement by aspect so a unit of drift moves the same number of PHYSICAL
   // pixels horizontally as vertically. driftUV is in uv space, where x spans the
@@ -320,6 +898,10 @@ void main() {
   base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
         * (0.03 + uAct * 0.045);
 
+  // Extremes: total dark crushes to true black, whiteout bleaches to white
+  base = mix(base, vec3(0.0), uDark);
+  base = mix(base, vec3(1.0), uWhite);
+
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
 }
@@ -362,6 +944,8 @@ uniform float uPos;
 uniform float uCtr;
 uniform vec3  uDegreeRGB2[N_HUES];
 uniform float uSlotEdge[N_HUES];
+uniform float uDark;
+uniform float uWhite;
 uniform sampler2D uPrev;
 
 vec2 _h2(vec2 p) {
@@ -403,7 +987,7 @@ void main() {
 
   // POS shifts the field left/right, TILT up/down (same sense as the blob view).
   vec2 p = uvA;
-  p.x -= (uPos - 0.5) * 0.5 * aspect;
+  p.x -= (uPos - 0.5) * 0.75 * aspect;
   p.y -= (0.5 - uTilt) * 0.4;
 
   // SPR sets turbulence scale: focused chord -> broad smooth veils, rich chord
@@ -446,7 +1030,7 @@ void main() {
   vec3  ambColor   = vec3(0.0);   // chord-average hue, independent of the bands
   float ambW       = 0.0;
   float softness   = clamp(uBlobSharp * 0.5, 0.04, 0.7); // veil edge width
-  float ctrTighten = 0.7 + 0.6 * uCtr;                   // CTR tightens bands
+  float ctrTighten = 0.55 + 1.2 * uCtr;                  // CTR tightens bands
   for (int i = 0; i < N_HUES; i++) {
     float presence = uDegrees[i];
     if (presence < 0.005) continue;
@@ -480,7 +1064,7 @@ void main() {
     0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
     0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
   );
-  float driftAmt = 0.0015 + uAct * 0.002;
+  float driftAmt = 0.0015 + uAct * 0.005;
   vec2 driftRaw = vec2(
     snoise(uvA * 4.0 + flowScroll),
     snoise(uvA * 4.0 + flowScroll + 100.0)
@@ -490,7 +1074,7 @@ void main() {
 
   // Background glow centered at (pos, tilt), chord-tinted, BRI-driven.
   // tilt=0 maps to top of screen (GL y=1); tilt=1 to bottom (GL y=0).
-  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.5 * aspect, 1.0 - uTilt);
+  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.75 * aspect, 1.0 - uTilt);
   float bgDist  = dot(uvA - glowCtr, uvA - glowCtr);
   float bgGlow  = exp(-bgDist * 2.5) * (uBri + uBandLo * 0.3) * 0.4;
 
@@ -554,6 +1138,10 @@ void main() {
   base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
         * (0.03 + uAct * 0.045);
 
+  // Extremes: total dark crushes to true black, whiteout bleaches to white
+  base = mix(base, vec3(0.0), uDark);
+  base = mix(base, vec3(1.0), uWhite);
+
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
 }
@@ -599,6 +1187,8 @@ uniform float uPos;
 uniform float uCtr;
 uniform vec3  uDegreeRGB2[N_HUES];
 uniform float uSlotEdge[N_HUES];
+uniform float uDark;
+uniform float uWhite;
 uniform sampler2D uPrev;
 
 vec2 _h2(vec2 p) {
@@ -652,7 +1242,7 @@ void main() {
 
   // POS shifts the field left/right, TILT up/down (same sense as the blob view).
   vec2 p = uvA;
-  p.x -= (uPos - 0.5) * 0.5 * aspect;
+  p.x -= (uPos - 0.5) * 0.75 * aspect;
   p.y -= (0.5 - uTilt) * 0.4;
 
   // SPR sets turbulence scale; Size zooms the goo. Quadratic in Size so low
@@ -685,7 +1275,7 @@ void main() {
   float totalW = 0.0;
   vec3  totalColor = vec3(0.0);
   float softness   = clamp(uBlobSharp * 0.5, 0.04, 0.7);
-  float ctrTighten = 0.7 + 0.6 * uCtr;
+  float ctrTighten = 0.55 + 1.2 * uCtr;
   for (int i = 0; i < N_HUES; i++) {
     float presence = uDegrees[i];
     if (presence < 0.005) continue;
@@ -748,7 +1338,7 @@ void main() {
     0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
     0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
   );
-  float driftAmt = 0.0015 + uAct * 0.002;
+  float driftAmt = 0.0015 + uAct * 0.005;
   vec2 driftRaw = vec2(
     snoise(uvA * 4.0 + flowScroll),
     snoise(uvA * 4.0 + flowScroll + 100.0)
@@ -757,7 +1347,7 @@ void main() {
   vec4 prev = texture(uPrev, clamp(driftUV, 0.0, 1.0));
 
   // Background glow centered at (pos, tilt), chord-tinted, BRI-driven.
-  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.5 * aspect, 1.0 - uTilt);
+  vec2  glowCtr = vec2(0.5 * aspect + (uPos - 0.5) * 0.75 * aspect, 1.0 - uTilt);
   float bgDist  = dot(uvA - glowCtr, uvA - glowCtr);
   float bgGlow  = exp(-bgDist * 2.5) * (uBri + uBandLo * 0.3) * 0.4;
   vec3  bgBase  = prev.rgb * uFeedback + metalTint * bgGlow;
@@ -814,6 +1404,10 @@ void main() {
   base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
         * (0.025 + uAct * 0.04);
 
+  // Extremes: total dark crushes to true black, whiteout bleaches to white
+  base = mix(base, vec3(0.0), uDark);
+  base = mix(base, vec3(1.0), uWhite);
+
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
 }
@@ -861,6 +1455,8 @@ uniform float uPos;
 uniform float uCtr;
 uniform vec3  uDegreeRGB2[N_HUES];
 uniform float uSlotEdge[N_HUES];
+uniform float uDark;
+uniform float uWhite;
 uniform sampler2D uPrev;
 uniform float uModeM[N_HUES];
 uniform float uModeN[N_HUES];
@@ -915,7 +1511,7 @@ void main() {
     0.14 * sin(uTime * 0.40) + 0.05 * sin(uTime * 0.23 + 1.3),
     0.14 * cos(uTime * 0.35) + 0.05 * sin(uTime * 0.29 + 4.1)
   );
-  float driftAmt = 0.0004 + uAct * 0.0006;
+  float driftAmt = 0.0004 + uAct * 0.0015;
   vec2 driftRaw = vec2(
     snoise(uvA * 4.0 + flowScroll),
     snoise(uvA * 4.0 + flowScroll + 100.0)
@@ -991,6 +1587,10 @@ void main() {
   // Film grain
   base += vec3(snoise(uv * uRes / 2.5 + vec2(uTime * 8.0)))
         * (0.03 + uAct * 0.045);
+
+  // Extremes: total dark crushes to true black, whiteout bleaches to white
+  base = mix(base, vec3(0.0), uDark);
+  base = mix(base, vec3(1.0), uWhite);
 
   outColor = vec4(clamp(base, 0.0, 1.0), 1.0);
 }`;
@@ -1134,6 +1734,7 @@ uniform float uCtr;
 uniform float uBri;
 uniform float uBriScale;
 uniform float uBlobSize;
+uniform float uDark;
 
 out vec3  vColor;
 out float vGlow;
@@ -1169,8 +1770,10 @@ void main() {
     dLocal += uDegrees[i] * Wi;
   }
   vColor = acc / wSum;
-  // CTR: dim off-node grains → sharper nodal figures
-  vGlow = mix(1.0, exp(-abs(dLocal) * 7.0), uCtr) * (0.25 + uBri * uBriScale * 0.6);
+  // CTR: dim off-node grains → sharper nodal figures. The additive grains
+  // bypass the bg pass's extremes mix, so total-dark gates them here too.
+  vGlow = mix(1.0, exp(-abs(dLocal) * 7.0), uCtr) * (0.25 + uBri * uBriScale * 0.6)
+        * (1.0 - uDark);
 }`;
 }
 
@@ -1250,6 +1853,19 @@ export class AudioRendererGL {
   private _shiftSpeedVal = 1.5;
   private _pulseReactivityVal = 1.0;
   private _briScaleVal = 1.5;
+  // Extremes: config mirror of the extremes.* store keys plus the smoothed
+  // dark/white depths. Depths derive from *audio* bri (frame.bri) so the
+  // audio-as-only-conduit rule holds: the visual black/white follows what the
+  // sound does, not the camera directly.
+  private _extremes = {
+    enabled: false,
+    darkStart: 0.1,
+    whiteStart: 0.85,
+    whiteWash: 0.8,
+    speed: 1.2,
+  };
+  private _extDark = 0;
+  private _extWhite = 0;
   private readonly _gl: WebGL2RenderingContext;
   // Compiled programs, keyed by `${style}:${nHues}` (e.g. "blobs:7", "aurora:5").
   private readonly _progCache: Map<
@@ -1394,6 +2010,17 @@ export class AudioRendererGL {
     this._setAll("uBriScale", (this._briScaleVal = v));
   }
 
+  /** Mirror of the extremes.* store keys — depths are computed per-frame in render(). */
+  setExtremes(cfg: {
+    enabled: boolean;
+    darkStart: number;
+    whiteStart: number;
+    whiteWash: number;
+    speed: number;
+  }): void {
+    this._extremes = { ...cfg };
+  }
+
   private _setAll(name: string, v: number): void {
     const gl = this._gl;
     for (const [, entry] of this._progCache) {
@@ -1430,6 +2057,12 @@ export class AudioRendererGL {
     if (style === "aurora")     return makeAuroraFragSrc(n);
     if (style === "chladni")    return makeChladniBgFragSrc(n);
     if (style === "slime")      return makeSlimeFragSrc(n);
+    if (style === "volcano")    return makeVolcanoFragSrc(n);
+    if (style === "facets")     return makeFacetsFragSrc(n);
+    if (style === "vortex")     return makeVortexFragSrc(n);
+    if (style === "plasma")     return makePlasmaFragSrc(n);
+    if (style === "mandala")    return makeMandalaFragSrc(n);
+    if (style === "ripples")    return makeRipplesFragSrc(n);
     return makeFragSrc(n);
   }
 
@@ -1589,6 +2222,27 @@ export class AudioRendererGL {
     gl.uniform1f(u.uPos, frame.pos ?? 0.5);
     gl.uniform1f(u.uCtr, frame.ctr ?? 0);
 
+    // Extremes depths from audio bri: silence → true black, climax → white
+    // wash. EMA with τ = extremes.speed so the dive/bloom is a gesture.
+    // briRaw, not bri: auto-range must never stretch silence out of blackness.
+    {
+      const ex = this._extremes;
+      const exBri = frame.briRaw ?? frame.bri;
+      let darkT = 0;
+      let whiteT = 0;
+      if (ex.enabled) {
+        const ds = Math.max(0.001, ex.darkStart);
+        const ws = Math.min(0.999, ex.whiteStart);
+        darkT = _smooth01((ds - exBri) / ds);
+        whiteT = _smooth01((exBri - ws) / (1 - ws));
+      }
+      const k = 1 - Math.exp(-dt / Math.max(0.05, ex.speed));
+      this._extDark += (darkT - this._extDark) * k;
+      this._extWhite += (whiteT - this._extWhite) * k;
+      gl.uniform1f(u.uDark, this._extDark);
+      gl.uniform1f(u.uWhite, this._extWhite * ex.whiteWash);
+    }
+
     // Stash per-frame values for the chladni multi-pass renderer
     this._lastBri    = frame.bri;
     this._lastAct    = frame.act;
@@ -1703,6 +2357,8 @@ export class AudioRendererGL {
       "uCtr",
       "uDegreeRGB2",
       "uSlotEdge",
+      "uDark",
+      "uWhite",
       "uPrev",
       // Chladni-specific (null on blobs/aurora — silent no-op via getUniformLocation)
       "uModeM",
@@ -2065,6 +2721,7 @@ export class AudioRendererGL {
     gl.uniform1f(pu.uSpread,  this._lastSpread);
     gl.uniform1f(pu.uCtr,     this._lastCtr);
     gl.uniform1f(pu.uBri,     this._lastBri);
+    gl.uniform1f(pu.uDark,    this._extDark);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._simPosA!.tex);

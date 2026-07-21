@@ -167,6 +167,17 @@ function _applyRendererStoreValues(r: AudioRendererGL): void {
   r.setBriScale(store.get("audio.briScale") as number);
   r.setFeedback(store.get("audio.feedback") as number);
   r.setBlobWarp(store.get("audio.blobWarp") as number);
+  r.setExtremes(_extremesFromStore());
+}
+
+function _extremesFromStore() {
+  return {
+    enabled: store.get("extremes.enabled") as boolean,
+    darkStart: store.get("extremes.darkStart") as number,
+    whiteStart: store.get("extremes.whiteStart") as number,
+    whiteWash: store.get("extremes.whiteWash") as number,
+    speed: store.get("extremes.speed") as number,
+  };
 }
 
 async function _begin(): Promise<void> {
@@ -214,12 +225,25 @@ async function _begin(): Promise<void> {
   store.subscribeKey("audio.blobSharp", (v) => audioRenderer?.setBlobSharp(v as number));
   store.subscribeKey("audio.pulseReactivity", (v) => audioRenderer?.setPulseReactivity(v as number));
   store.subscribeKey("audio.briScale", (v) => audioRenderer?.setBriScale(v as number));
+  for (const k of ["extremes.enabled", "extremes.darkStart", "extremes.whiteStart", "extremes.whiteWash", "extremes.speed"] as const) {
+    store.subscribeKey(k, () => audioRenderer?.setExtremes(_extremesFromStore()));
+  }
 
   // ── 8-band pre-analysis EQ (device-local calibration) ────────────────────
   AUDIO_EQ_KEYS.forEach((k, i) => {
     audioAnalyzer!.setEqGain(i, store.get(k) as number);
     store.subscribeKey(k, (v) => audioAnalyzer?.setEqGain(i, v as number));
   });
+
+  // Audio-side auto-range (forgiving constraints), tracking the store live.
+  const _applyAudioAutoRange = () =>
+    audioAnalyzer?.setAutoRange(
+      store.get("audioAnalysis.autoRange") as number,
+      store.get("analysis.autoRangeWindow") as number,
+    );
+  _applyAudioAutoRange();
+  store.subscribeKey("audioAnalysis.autoRange", _applyAudioAutoRange);
+  store.subscribeKey("analysis.autoRangeWindow", _applyAudioAutoRange);
 
   // ── Acquire the selected audio source (broadcast | mic) ──────────────────
   await _activateSource();

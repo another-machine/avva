@@ -18,6 +18,8 @@ import { NodeTierBackend, WorkletTierBackend } from "./voices.js";
 import type { TierBackend } from "./voices.js";
 import { NoiseLayer } from "./layers/noise-layer.js";
 import { ShimmerLayer } from "./layers/shimmer-layer.js";
+import { DrumSynth } from "./drums/synth.js";
+import { DrumMachine } from "./drums/machine.js";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
@@ -100,6 +102,9 @@ interface CassetteChain {
   noise: AudioBufferSourceNode;
   noiseLP: BiquadFilterNode;
   noiseGain: GainNode;
+  /** Extremes gate: rides after the user's noiseGain so total-dark scenes can
+   *  silence the hiss without fighting the cassette.noiseGain param. */
+  noiseGate: GainNode;
   noisePan: StereoPannerNode;
   masterLP: BiquadFilterNode;
   wowLfo: OscillatorNode;
@@ -168,6 +173,10 @@ export class Synth {
   private _fmWorkletLoaded = false;
   private _ksWorkletLoaded = false;
 
+  // Drum machine
+  drumSynth: DrumSynth | null = null;
+  drumMachine: DrumMachine | null = null;
+
   // Phase 4 complementary layers
   private _noiseLayer: NoiseLayer | null = null;
   private _shimmerLayer: ShimmerLayer | null = null;
@@ -195,6 +204,12 @@ export class Synth {
   private _autoTrimDb = 0; // accumulated correction, ±6 dB range
   private _lastLufs = -60;
   private _lastMetricsTime = 0;
+
+  // Extremes: smoothed depth into total-dark (→ true silence) and whiteout
+  // (→ climax lift). Both stay 0 unless extremes.enabled is on.
+  private _extremeDark = 0;
+  private _extremeWhite = 0;
+  private _lastDimTime = 0;
 
   palette: Palette | null;
   running: boolean;
@@ -370,6 +385,10 @@ export class Synth {
     // KS strings — async, falls back gracefully if worklet unavailable
     void this._activateKSLayer(ac, graph);
 
+    // Drum machine — routes into layerSum to inherit cassette chain
+    this.drumSynth   = new DrumSynth(ac, graph.layerSum);
+    this.drumMachine = new DrumMachine(this.drumSynth);
+
     this.running = true;
 
     // Activate worklet limiter asynchronously — graph is already producing
@@ -382,9 +401,54 @@ export class Synth {
     this._graph?.setMasterGain(v);
   }
 
-  /** Per-frame bri-dim: scales master down when scene is very dark. */
-  setBriDim(bri: number, now: number): void {
-    this._graph?.setBriDim(bri, now);
+  /**
+   * Per-frame bri-dim: scales master down when scene is very dark.
+   *
+   * With extremes enabled this also drives the piece's full dynamic range:
+   * below darkStart the dim dives to a true 0 and the cassette hiss is gated
+   * (delay/reverb tails still ring out naturally into silence); above
+   * whiteStart the dim gets a dB lift toward climax — the worklet limiter
+   * protects downstream.
+   *
+   * bri may be auto-range normalized (drives the perceptual dim curve);
+   * briRaw is the absolute value the extremes thresholds key off, so a dim
+   * room stretched to full range still knows what "total dark" means.
+   */
+  setBriDim(bri: number, now: number, briRaw = bri): void {
+    if (!this._graph) return;
+    const cfg = this._cfg;
+
+    let darkT = 0;
+    let whiteT = 0;
+    if (cfg.extremesEnabled ?? false) {
+      const ds = Math.max(0.001, cfg.extremesDarkStart ?? 0.1);
+      const ws = Math.min(0.999, cfg.extremesWhiteStart ?? 0.85);
+      darkT = _smooth01((ds - briRaw) / ds);
+      whiteT = _smooth01((briRaw - ws) / (1 - ws));
+    }
+
+    // EMA toward targets with τ = extremes.speed — the dive/bloom is a gesture
+    // in time, not a per-frame snap.
+    const dt = this._lastDimTime > 0
+      ? Math.min(0.25, Math.max(0, now - this._lastDimTime))
+      : 0;
+    this._lastDimTime = now;
+    const tau = Math.max(0.05, cfg.extremesSpeed ?? 1.2);
+    const k = dt > 0 ? 1 - Math.exp(-dt / tau) : 1;
+    this._extremeDark += (darkT - this._extremeDark) * k;
+    this._extremeWhite += (whiteT - this._extremeWhite) * k;
+
+    const liftDb = cfg.extremesWhiteLiftDb ?? 3;
+    const lift = 1 + this._extremeWhite * (Math.pow(10, liftDb / 20) - 1);
+    this._graph.setBriDim(bri, now, (1 - this._extremeDark) * lift);
+
+    // Hiss lives after the dim in the cassette chain — gate it separately so
+    // total dark reaches actual silence instead of tape noise.
+    this._cassette?.noiseGate.gain.setTargetAtTime(
+      1 - this._extremeDark,
+      now,
+      0.1,
+    );
   }
 
   /**
@@ -444,6 +508,9 @@ export class Synth {
     const MAX_CORRECTION_DB = 6;
     // Only servo when the scene is bright enough to indicate "should be loud"
     if (safeBri < 0.3) return;
+    // Hold during a whiteout climax — the extremes lift is deliberate loudness
+    // the −16 LUFS servo would otherwise spend ~8 s clawing back.
+    if (this._extremeWhite > 0.05) return;
     const error = TARGET_LUFS - this._lastLufs;
     // Servo with τ ≈ 8 s: delta per frame = error * dt / 8
     const delta = error * dt / 8;
@@ -460,6 +527,7 @@ export class Synth {
 
   stop(): void {
     if (!this._graph) return;
+    this.drumMachine?.stop();
     this._graph.actx.suspend();
     this.running = false;
     this.lastNote = null;
@@ -1276,11 +1344,14 @@ export class Synth {
     noiseLP.frequency.value = 7000;
     const noiseGain = actx.createGain();
     noiseGain.gain.value = 0.015;
+    const noiseGate = actx.createGain();
+    noiseGate.gain.value = 1.0;
     const noisePan = actx.createStereoPanner();
     noisePan.pan.value = 0;
     noise.connect(noiseLP);
     noiseLP.connect(noiseGain);
-    noiseGain.connect(noisePan);
+    noiseGain.connect(noiseGate);
+    noiseGate.connect(noisePan);
     noisePan.connect(finalMix);
     noise.start();
 
@@ -1329,6 +1400,7 @@ export class Synth {
       noise,
       noiseLP,
       noiseGain,
+      noiseGate,
       noisePan,
       masterLP,
       wowLfo,
@@ -1418,6 +1490,12 @@ function applyDeadband(raw: number, committed: number): number {
 
 function clamp01(x: number): number {
   return Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0;
+}
+
+/** Clamped smoothstep on 0..1 — soft entry/exit for the extremes depths. */
+function _smooth01(x: number): number {
+  const t = clamp01(x);
+  return t * t * (3 - 2 * t);
 }
 
 function _pcToFreq(pc: number, octave: number): number {

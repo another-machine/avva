@@ -25,6 +25,7 @@
 
 import { Palette, type ChordTemplate } from "../harmony/palette.js";
 import { AUDIO_EQ_FREQS } from "../store/schema.js";
+import { AutoRange } from "./auto-range.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,9 @@ export interface AudioFrame {
   tilt: number;  // spectral centroid 0..1 (low→high); mirrors video tilt (vy)
   pos: number;   // stereo L/R balance 0..1 (left→right); mirrors video pos (mx)
   ctr: number;   // spectral peakiness 0..1; mirrors video contrast
+  /** Un-normalized loudness — auto-range never touches this. The renderer's
+   *  extremes depths (true black / white wash) key off it. */
+  briRaw?: number;
 }
 
 export interface NoteInfo {
@@ -171,6 +175,11 @@ export class AudioAnalyzer {
 
   private _prevChordKey = "";
   private readonly _out: AudioFrame;
+
+  // Auto-range ("forgiving constraints") — set from the store via setAutoRange.
+  private readonly _autoRange = new AutoRange();
+  private _autoRangeAmt = 0;
+  private _autoRangeWin = 75;
 
   constructor({ audioContext, palette, opts = {} }: AudioAnalyzerParams) {
     this._actx = audioContext;
@@ -285,6 +294,12 @@ export class AudioAnalyzer {
   setEqGain(band: number, db: number): void {
     const b = this._eq[band];
     if (b) b.gain.value = db;
+  }
+
+  /** Auto-range amount (0 = raw, 1 = fully normalized) and window in seconds. */
+  setAutoRange(amount: number, windowSec: number): void {
+    this._autoRangeAmt = Math.max(0, Math.min(1, amount));
+    this._autoRangeWin = Math.max(1, windowSec);
   }
 
   /** Connect a stereo source for L/R balance analysis (pos axis). */
@@ -600,6 +615,14 @@ export class AudioAnalyzer {
     this._out.pos = this._posSmooth;
     this._out.ctr = ctr;
 
+    // Auto-range projection ("forgiving constraints"): the snapshot's six
+    // canonical axes are adaptively normalized so the visuals see full-range
+    // swings from whatever this mix actually produces; _out stays raw
+    // smoothing state and briRaw carries the absolute loudness for extremes.
+    const amt = this._autoRangeAmt;
+    const win = this._autoRangeWin;
+    this._autoRange.tick(performance.now());
+
     // Return a snapshot with deep-copied typed arrays so per-frame probes
     // (telemetry, pipeline stages) hold immutable data after the next tick.
     return {
@@ -610,11 +633,12 @@ export class AudioAnalyzer {
       slotEdge: new Float32Array(this._out.slotEdge),
       bands: { ...this._out.bands },
       hue: this._out.hue,
-      spread: this._out.spread,
-      bri: this._out.bri,
+      spread: this._autoRange.apply("spread", this._out.spread, amt, win),
+      bri: this._autoRange.apply("bri", this._out.bri, amt, win),
+      briRaw: this._out.bri,
       hi: this._out.hi,
       lo: this._out.lo,
-      act: this._out.act,
+      act: this._autoRange.apply("act", this._out.act, amt, win),
       sat: this._out.sat,
       chord: { ...this._out.chord },
       notes: new Float32Array(this._out.notes),
@@ -622,9 +646,9 @@ export class AudioAnalyzer {
       bandClarity: this._out.bandClarity,
       stickyApplied: this._out.stickyApplied,
       noteInfo: this._out.noteInfo,
-      tilt: this._out.tilt,
-      pos: this._out.pos,
-      ctr: this._out.ctr,
+      tilt: this._autoRange.apply("tilt", this._out.tilt, amt, win),
+      pos: this._autoRange.apply("pos", this._out.pos, amt, win),
+      ctr: this._autoRange.apply("ctr", this._out.ctr, amt, win),
     };
   }
 }

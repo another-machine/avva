@@ -646,7 +646,7 @@ function buildSynthPanel(side: "sound" | "visual"): HTMLElement {
   appendGroupCards(
     cards,
     side === "sound"
-      ? ["synth", "bass", "mid", "treble", "pluck", "effects"]
+      ? ["synth", "bass", "mid", "treble", "pluck", "effects", "drums", "extremes"]
       : ["visualSynthesis"],
   );
   if (side === "sound") {
@@ -908,12 +908,29 @@ function fmtNum(v: number, step: number): string {
 
 // ── Action handlers ───────────────────────────────────────────────────────────
 
+// Tap tempo state — module-level so it persists across button clicks
+const _tapTimes: number[] = [];
+
 const ACTION_HANDLERS: Partial<Record<SchemaKey, () => void>> = {
   "harmony.fillTriads": () => {
     const root = store.get("harmony.root") as string;
     const scale = store.get("harmony.scale") as ScaleMode;
     const triads = buildTriadsForMode(root, scale);
     store.set("harmony.palette", triads.join(", "));
+  },
+  "drums.tapTempo": () => {
+    const now = performance.now();
+    if (_tapTimes.length > 0 && now - _tapTimes[_tapTimes.length - 1] > 2000) {
+      _tapTimes.length = 0;
+    }
+    _tapTimes.push(now);
+    if (_tapTimes.length > 4) _tapTimes.shift();
+    if (_tapTimes.length >= 2) {
+      let total = 0;
+      for (let i = 1; i < _tapTimes.length; i++) total += _tapTimes[i] - _tapTimes[i - 1];
+      const bpm = Math.round(Math.max(40, Math.min(180, 60000 / (total / (_tapTimes.length - 1)))));
+      store.set("drums.bpm", bpm);
+    }
   },
 };
 
