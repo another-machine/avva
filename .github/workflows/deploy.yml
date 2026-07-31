@@ -48,7 +48,13 @@ jobs:
       # instead of publishing a broken bundle.
       - run: npm run build
 
-      - uses: actions/configure-pages@v3
+      # enablement turns Pages on for the repo if it is off, so the first deploy
+      # of a fresh repo does not fail on a setting nobody has clicked yet.
+      # public-library pins v3, which now warns about Node 20 deprecation on the
+      # runner; matching its shape matters, matching a stale version does not.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: "./dist"
