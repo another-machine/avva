@@ -27,7 +27,7 @@ import {
   type LimiterMetrics,
   type TierBackend,
 } from "@amplib/sound-synthesis";
-import type { Palette, PaletteSlot } from "../harmony/palette.js";
+import type { ChordPalette, ChordSlotBlend } from "../harmony/chord-palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
 
@@ -137,7 +137,7 @@ export interface CassetteParams {
 /** A palette note proxy. */
 interface NoteProxy {
   triad: { freq: number; name: string }[];
-  _palettePrimary: PaletteSlot;
+  _palettePrimary: ChordSlotBlend["slot"];
 }
 
 /** Observable snapshot of what the synth computed this frame — broadcast to controller. */
@@ -218,7 +218,7 @@ export class Synth {
   private _extremeWhite = 0;
   private _lastDimTime = 0;
 
-  palette: Palette | null;
+  palette: ChordPalette | null;
   running: boolean;
   lastNote: { label: string; slotIndex: number; pitchClasses: number[] } | null;
   private _lastControls: SynthControls | null;
@@ -547,7 +547,7 @@ export class Synth {
     this.lastNote = null;
   }
 
-  setPalette(p: Palette | null): void {
+  setPalette(p: ChordPalette | null): void {
     this.palette = p;
   }
 
@@ -615,14 +615,14 @@ export class Synth {
     const primarySlot = blend[0].slot;
     const secEntry = blend.length > 1 ? blend[1] : null;
     const bf2 = secEntry ? secEntry.weight * 2 : 0;
-    const note2: PaletteSlot | null = secEntry ? secEntry.slot : null;
-    const pcs = primarySlot.chord.pitchClasses;
+    const note2: ChordSlotBlend["slot"] | null = secEntry ? secEntry.slot : null;
+    const pcs = primarySlot.value.pitchClasses;
     const note: NoteProxy = {
       _palettePrimary: primarySlot,
       triad: _pcsToVoicing(pcs, baseOctave).map((freq) => ({ freq, name: "" })),
     };
     this.lastNote = {
-      label: primarySlot.chord.label,
+      label: primarySlot.value.label,
       slotIndex: primarySlot.index,
       pitchClasses: pcs,
     };
@@ -801,11 +801,10 @@ export class Synth {
           }
 
           backend.glideTo(vi, targetFreq, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
-          const triadGain =
-            tierBase *
-            voiceWeights[vi] *
-            (1 - bf2) *
-            (note._palettePrimary.gain ?? 1);
+          // The wheel has no per-slot gain, and nothing ever set one — the
+          // old `chord:bias:gain` syntax went unused, so this term was always
+          // multiplying by 1.
+          const triadGain = tierBase * voiceWeights[vi] * (1 - bf2);
           backend.setGain(vi, triadGain, tierTau);
           this._addGridNote(targetFreq, triadGain);
           backend.setIndex(vi, tierIndex[ti], tierSlowTau);
@@ -817,16 +816,16 @@ export class Synth {
         } else {
           // Extension voices: 7th (vi=3), 9th (vi=4)
           const ei = vi - 3;
-          const pcs = note._palettePrimary.chord.pitchClasses;
+          const pcs = note._palettePrimary.value.pitchClasses;
           let handled = false;
 
           if (note2 && bf2 > 0.04) {
-            const secPCs = note2.chord.pitchClasses;
+            const secPCs = note2.value.pitchClasses;
             const si = ei === 0 ? 0 : Math.min(2, secPCs.length - 1);
             if (si < secPCs.length) {
               const sf = _pcToFreq(secPCs[si], baseOctave + octaveShift);
               backend.glideTo(vi, sf, chordChanged ? tierPitchTau : _vGlide(tierTau, vi));
-              const sg = tierBase * voiceWeights[[0, 2][ei]] * bf2 * (note2.gain ?? 1);
+              const sg = tierBase * voiceWeights[[0, 2][ei]] * bf2;
               backend.setGain(vi, sg, tierTau);
               this._addGridNote(sf, sg);
               backend.setIndex(vi, tierIndex[ti] * 0.65, tierSlowTau);
@@ -855,7 +854,7 @@ export class Synth {
     });
 
     this._prevRootFreq = _pcToFreq(
-      note._palettePrimary.chord.pitchClasses[0],
+      note._palettePrimary.value.pitchClasses[0],
       baseOctave,
     );
 
@@ -894,7 +893,7 @@ export class Synth {
     }
 
     const subFreq = _pcToFreq(
-      note._palettePrimary.chord.pitchClasses[0],
+      note._palettePrimary.value.pitchClasses[0],
       baseOctave - 2,
     );
     if (Number.isFinite(subFreq) && subFreq > 0) {
@@ -936,7 +935,7 @@ export class Synth {
 
     // Shimmer: update root pitch + weight
     if (this._shimmerLayer) {
-      const rootPc = primarySlot.chord.pitchClasses[0];
+      const rootPc = primarySlot.value.pitchClasses[0];
       this._shimmerLayer.update({
         rootPitchClass: rootPc,
         octave: baseOctave,
@@ -987,7 +986,7 @@ export class Synth {
     }
 
     this._lastControls = {
-      slotLabel: primarySlot.chord.label,
+      slotLabel: primarySlot.value.label,
       slotIndex: primarySlot.index,
       thirdW,
       fifthW,
@@ -1053,7 +1052,7 @@ export class Synth {
     const pluckAbsoluteOctave = this._cfg.octaveOffsetPluck ?? 5;
 
     if (this.palette) {
-      const pcs = note._palettePrimary.chord.pitchClasses;
+      const pcs = note._palettePrimary.value.pitchClasses;
       const nUnlocked = Math.max(1, Math.round(1 + spread * (pcs.length - 1)));
       const chosenIdx = Math.floor(Math.random() * nUnlocked);
       fc = _pcToFreq(pcs[chosenIdx], pluckAbsoluteOctave + Math.round(1 - flux * 2));

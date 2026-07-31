@@ -23,7 +23,12 @@
  *   slotHues?     palette slot center hues  (only when palette !== null)
  */
 
-import { Palette, type ChordTemplate } from "../harmony/palette.js";
+import {
+  chordTemplates,
+  createChordPalette,
+  type ChordPalette,
+  type ChordTemplate,
+} from "../harmony/chord-palette.js";
 import { AUDIO_EQ_FREQS } from "../store/schema.js";
 import { AutoRange } from "./auto-range.js";
 
@@ -52,7 +57,7 @@ function noteFreq(c: number, o: number): number {
 
 export interface AudioAnalyzerParams {
   audioContext: AudioContext;
-  palette: Palette;
+  palette: ChordPalette;
   opts?: {
     fftSize?: number;
     smoothing?: number;
@@ -133,7 +138,7 @@ export interface NoteInfo {
 // ── AudioAnalyzer ─────────────────────────────────────────────────────────────
 
 export class AudioAnalyzer {
-  palette: Palette;
+  palette: ChordPalette;
   readonly analyser: AnalyserNode;
   /** EQ head — connect input sources here (feeds the 8-band EQ → analyser). */
   readonly input: AudioNode;
@@ -322,7 +327,7 @@ export class AudioAnalyzer {
   }
 
   /** Swap the Palette. */
-  setPalette(p: Palette): void {
+  setPalette(p: ChordPalette): void {
     if (this._paletteUnsubscribe) {
       this._paletteUnsubscribe();
       this._paletteUnsubscribe = null;
@@ -511,7 +516,7 @@ export class AudioAnalyzer {
 
     {
       const slotsOut = this._slotsOut;
-      const templates = this.palette.chordTemplates;
+      const templates = chordTemplates(this.palette);
       best = templates[0];
       for (let i = 0; i < templates.length; i++) {
         const t = templates[i];
@@ -533,7 +538,7 @@ export class AudioAnalyzer {
       : topCandidates.length > 0 && topCandidates[0].score > 0 ? 1 : 0;
 
     // Sticky: prefer the previous chord when it scores ≥ 90% of best
-    const searchBank = this.palette.chordTemplates;
+    const searchBank = chordTemplates(this.palette);
     let pick = best;
     let stickyApplied = false;
     if (this._prevChordKey) {

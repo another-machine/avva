@@ -7,8 +7,8 @@
 
 import { store } from "../src/store/store.js";
 import { legacyConfig as CONFIG } from "../src/store/legacy-config.js";
-import { Palette } from "../src/harmony/palette.js";
-import { toPerceptual } from "../src/harmony/hue-perception.js";
+import { createChordPalette, type ChordPalette } from "../src/harmony/chord-palette.js";
+import { toPerceptual } from "@amplib/hue-wheel";
 import type { AnalysisOut } from "../src/analysis/analyzer.js";
 import type { TelemetryMsg } from "../src/store/telemetry.js";
 
@@ -103,11 +103,11 @@ function _meterRow(lbl: string, wideVal = false): { row: HTMLElement; fill: HTML
   return { row, fill, val };
 }
 
-function _buildPalette(): Palette | null {
+function _buildPalette(): ChordPalette | null {
   const s = store.get("harmony.palette");
   if (!s) return null;
   try {
-    return Palette.fromURLParam(s as string, {
+    return createChordPalette(s as string, {
       rootHue: store.get("harmony.rootHue") as number ?? 0,
       crossZone: store.get("harmony.crossZone"),
     });
@@ -119,7 +119,7 @@ function _buildPalette(): Palette | null {
  * Slots are sorted by perceptual hue so they line up with the underlying
  * spectrum gradient regardless of rootHue rotation.
  */
-function _slotVisualOrder(palette: Palette | null): number[] {
+function _slotVisualOrder(palette: ChordPalette | null): number[] {
   if (!palette) return [];
   const n = palette.slots.length;
   const perceptual = new Float32Array(n);
@@ -324,7 +324,7 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     for (let i = 0; i < n; i++) {
       huehist.appendChild(mk("span", "huehist__bar"));
       const slotIdx = histOrder[i] ?? i;
-      const lbl = histPalette ? (histPalette.slots[slotIdx]?.chord.label ?? "") : String(i);
+      const lbl = histPalette ? (histPalette.slots[slotIdx]?.value.label ?? "") : String(i);
       huehistLabels.appendChild(mk("span", "huehist-labels__lbl", lbl));
     }
   }
@@ -361,7 +361,7 @@ export function mountVideoAnalysisMonitor(host: HTMLElement): { onMsg(msg: Telem
     _setAccent(host, out);
 
     // Show chord label for current hue position in palette
-    hueV.textContent = histPalette ? histPalette.hueToSlot(out.hue).slot.chord.label : "—";
+    hueV.textContent = histPalette ? histPalette.hueToSlot(out.hue).slot.value.label : "—";
     // Place marker in perceptual hue space so it lands on the matching gradient color.
     const _percPos = toPerceptual(out.hue);
     huemark.style.setProperty("--hue-marker-pos", `${(_percPos / 360) * 100}%`);
@@ -525,7 +525,7 @@ export function mountAudioAnalysisMonitorCore(host: HTMLElement): { onMsg(msg: T
       slotHist.appendChild(bar);
       slotHistBars.push(bar);
       const slotIdx = slotHistOrder[i] ?? i;
-      const lbl = currentPalette?.slots[slotIdx]?.chord.label ?? "";
+      const lbl = currentPalette?.slots[slotIdx]?.value.label ?? "";
       slotHistLabels.appendChild(mk("span", "huehist-labels__lbl", lbl));
     }
   }
@@ -737,7 +737,7 @@ export function mountVisualSynthesisMonitor(host: HTMLElement): { onMsg(msg: Tel
     const active = winnerW > 0.01;
     sigDot.classList.toggle("is-on", active);
     sigLabel.textContent = (active && currentPalette && winnerIdx >= 0)
-      ? currentPalette.slots[winnerIdx]?.chord.label ?? "—"
+      ? currentPalette.slots[winnerIdx]?.value.label ?? "—"
       : "—";
 
     // Pulse sparkline

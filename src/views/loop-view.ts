@@ -12,7 +12,7 @@ import {
 } from "../audio/synth.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
-import { Palette } from "../harmony/palette.js";
+import { createChordPalette, type ChordPalette } from "../harmony/chord-palette.js";
 import { TelemetrySender } from "../store/telemetry.js";
 import { PRESETS, CASSETTE_PRESETS, FM_PRESETS, GLIDE_PRESETS } from "../audio/presets.js";
 import { PresetController } from "../audio/preset-controller.js";
@@ -76,7 +76,7 @@ let tiltOn = false;
 let maskOn = false;
 let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
-let palette: Palette | null = null;
+let palette: ChordPalette | null = null;
 let telemetry: TelemetrySender | null = null;
 let _latestLimiterMetrics: { lufsShort: number; gr: number } | null = null;
 let pipeline: Pipeline | null = null;
@@ -186,7 +186,7 @@ async function begin(): Promise<void> {
   });
 
   const defaultPaletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
-  palette = Palette.fromURLParam(defaultPaletteStr, {
+  palette = createChordPalette(defaultPaletteStr, {
     rootHue: store.get("harmony.rootHue") as number ?? 0,
     crossZone: CONFIG.crossZone,
   });
@@ -444,7 +444,7 @@ async function begin(): Promise<void> {
   store.subscribeKey("harmony.palette", () => {
     const paletteStr = store.get("harmony.palette") || "CEG, FAC, GBD";
     try {
-      palette = Palette.fromURLParam(paletteStr as string, {
+      palette = createChordPalette(paletteStr as string, {
         rootHue: store.get("harmony.rootHue") as number ?? 0,
         crossZone: CONFIG.crossZone,
       });

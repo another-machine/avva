@@ -16,7 +16,7 @@ import { AUDIO_EQ_KEYS } from "../store/schema.js";
 import { legacyConfig as CONFIG } from "../store/legacy-config.js";
 import { AudioAnalyzer } from "../analysis/audio-analyzer.js";
 import { AudioRendererGL } from "../render/audio-renderer-gl.js";
-import { Palette } from "../harmony/palette.js";
+import { createChordPalette, type ChordPalette } from "../harmony/chord-palette.js";
 import { TelemetrySender } from "../store/telemetry.js";
 import { startListener, type ListenerBridge } from "../input/webrtc-bridge.js";
 
@@ -35,7 +35,7 @@ let audioCanvas: HTMLCanvasElement;
 let actx: AudioContext | null = null;
 let audioAnalyzer: AudioAnalyzer | null = null;
 let audioRenderer: AudioRendererGL | null = null;
-let palette: Palette;
+let palette: ChordPalette;
 let telemetry: TelemetrySender | null = null;
 let listener: ListenerBridge | null = null;
 let _srcNode: MediaStreamAudioSourceNode | null = null;
@@ -43,16 +43,16 @@ let _micStream: MediaStream | null = null;
 let _streamSink: HTMLAudioElement | null = null;
 let _running = false;
 
-function _buildPalette(): Palette {
+function _buildPalette(): ChordPalette {
   const paletteStr = (store.get("harmony.palette") as string) || "CEG, FAC, GBD";
   const rootHue = (store.get("harmony.rootHue") as number) ?? 0;
   try {
-    return Palette.fromURLParam(paletteStr, {
+    return createChordPalette(paletteStr, {
       rootHue,
       crossZone: CONFIG.crossZone,
     });
   } catch {
-    return Palette.fromURLParam("CEG, FAC, GBD", { rootHue, crossZone: CONFIG.crossZone });
+    return createChordPalette("CEG, FAC, GBD", { rootHue, crossZone: CONFIG.crossZone });
   }
 }
 
