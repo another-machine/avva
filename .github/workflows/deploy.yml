@@ -1,0 +1,56 @@
+# Deploy avva to GitHub Pages at avva.amplib.app.
+#
+# Mirrors the shape of public-library's workflow — same permissions, same
+# concurrency group, same deploy actions — so the two sites behave the same way
+# and there is only one pattern in the org to remember.
+#
+# The custom domain comes from public/CNAME, which Vite copies into dist
+# verbatim. Keeping it in the repo rather than only in repo settings means the
+# domain is declared where it can be reviewed, and survives a settings reset.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one that is already publishing.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `npm ci` rather than `npm install`: the lockfile is the input, and a
+      # deploy should not be free to resolve a different tree than the one that
+      # was tested. vite, typescript and tsx are devDependencies and all needed
+      # to build, so nothing here may set NODE_ENV=production.
+      - run: npm ci
+
+      # Runs `tsc --noEmit && vite build`, so a type error fails the deploy
+      # instead of publishing a broken bundle.
+      - run: npm run build
+
+      - uses: actions/configure-pages@v3
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: "./dist"
+      - id: deployment
+        uses: actions/deploy-pages@v4

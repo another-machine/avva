@@ -109,7 +109,15 @@ published ones is the next step.
 
 Vite. `npm run build` type-checks first, so a type error fails the build rather
 than shipping. Output is `dist/` — two entry points, the app and the controller.
-`netlify.toml` pins the deploy.
+
+Deployed to GitHub Pages at [avva.amplib.app](https://avva.amplib.app) by
+`.github/workflows/deploy.yml`, which mirrors public-library's workflow. The
+custom domain lives in `public/CNAME` so it is declared in the repo rather than
+only in repo settings.
 
 Requires HTTPS in production for the camera, the folder picker and worklets.
 `localhost` is exempt.
+
+The relay does not exist on static hosting — it is a Node WebSocket server, so
+cross-device sync on a deployed build needs one hosted separately and reached
+over `wss://`. The launcher says so, based on the hostname it is served from.
