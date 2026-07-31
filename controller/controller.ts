@@ -301,7 +301,10 @@ function buildSourceSection(): HTMLElement {
 
   const folderBtn = document.createElement("button");
   folderBtn.type = "button";
-  folderBtn.className = "sp-btn";
+  // action-btn for the chrome, folder-btn to match the selects it sits between
+  // — this one shows the folder name, and uppercasing a name is not the same
+  // as uppercasing a label.
+  folderBtn.className = "action-btn folder-btn";
 
   // Fallback for browsers without showDirectoryPicker. Kept out of the layout
   // entirely when the picker exists.
@@ -355,7 +358,8 @@ function buildSourceSection(): HTMLElement {
   });
   store.subscribeKey("source.file", (v) => { fileSelect.value = String(v); });
 
-  srcBody.appendChild(_spRow("Folder", folderBtn));
+  const folderRow = _spRow("Folder", folderBtn);
+  srcBody.appendChild(folderRow);
   srcBody.appendChild(folderInput);
   const fileRow = _spRow("File", fileSelect);
   srcBody.appendChild(fileRow);
@@ -399,6 +403,9 @@ function buildSourceSection(): HTMLElement {
 
   const updateSourceVis = () => {
     const kind = getUiKind();
+    // The folder only means anything in file mode, so it travels with the
+    // File select rather than sitting under a camera source doing nothing.
+    folderRow.style.display = kind === "file"  ? "" : "none";
     fileRow.style.display  = kind === "file"   ? "" : "none";
     urlRow.style.display   = kind === "url"    ? "" : "none";
     rateRow.style.display  = (kind === "file" || kind === "url") ? "" : "none";

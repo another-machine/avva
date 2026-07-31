@@ -1419,3 +1419,26 @@ input[type="range"]::-moz-range-thumb {
   flex: 1;
   min-width: 0;
 }
+
+/* Media folder button. Sits in an sp-row between two selects, so it takes their
+   metrics rather than action-btn's compact ones. text-transform is cleared
+   because this button's label is the chosen folder's name — data, not a
+   caption, and names should read as they are spelled. */
+.folder-btn {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 3px 6px;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
