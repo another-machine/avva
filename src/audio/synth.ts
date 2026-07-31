@@ -10,16 +10,23 @@
  * and per-frame parameter updates.
  */
 
-import { FMVoice } from "./fm-voice.js";
-import { AudioGraph } from "./graph.js";
-import { loadWorklets, loadFMWorklets, loadKSWorklet, createKSNode, createLimiterNode } from "./worklet-host.js";
-import type { LimiterMetrics } from "./worklet-host.js";
-import { NodeTierBackend, WorkletTierBackend } from "./voices.js";
-import type { TierBackend } from "./voices.js";
-import { NoiseLayer } from "./layers/noise-layer.js";
-import { ShimmerLayer } from "./layers/shimmer-layer.js";
-import { DrumSynth } from "./drums/synth.js";
-import { DrumMachine } from "./drums/machine.js";
+import {
+  AudioGraph,
+  DrumMachine,
+  DrumSynth,
+  FMVoice,
+  NodeTierBackend,
+  NoiseLayer,
+  ShimmerLayer,
+  WorkletTierBackend,
+  createKSStringNode,
+  createLimiterNode,
+  loadFMTierWorklet,
+  loadKSStringWorklet,
+  loadLimiterWorklet,
+  type LimiterMetrics,
+  type TierBackend,
+} from "@amplib/sound-synthesis";
 import type { Palette, PaletteSlot } from "../harmony/palette.js";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import type { AnalysisOut } from "../analysis/analyzer.js";
@@ -252,7 +259,7 @@ export class Synth {
   }
 
   // ── Accessors ──────────────────────────────────────────────
-  get _actx(): AudioContext | null { return this._graph?.actx ?? null; }
+  get _actx(): AudioContext | null { return this._graph?.audioContext ?? null; }
   /** The AudioGraph — use for bus-level control and tap wiring. */
   get graph(): AudioGraph | null { return this._graph; }
   /** Pre-cassette tap node — stage-3 audio analyzer connects here. */
@@ -268,14 +275,16 @@ export class Synth {
 
   start(): void {
     if (this._graph) {
-      this._graph.actx.resume();
+      this._graph.audioContext.resume();
       this.running = true;
       return;
     }
 
-    const graph = new AudioGraph();
+    // AudioGraph used to construct the AudioContext itself. The package takes
+    // one, so ownership moves here.
+    const ac = new AudioContext();
+    const graph = new AudioGraph({ audioContext: ac });
     this._graph = graph;
-    const ac = graph.actx;
 
     // Apply user gain from config (schema drives this before start())
     graph.setMasterGain(this._cfg.masterGain ?? 0.28);
@@ -337,7 +346,9 @@ export class Synth {
 
     // Pluck voices → pluckBus
     this._plucks = Array.from({ length: N_PLUCKS }, () => {
-      const fm = new FMVoice(ac, ac.createGain(), {
+      const fm = new FMVoice({
+        audioContext: ac,
+        destination: ac.createGain(),
         ratio: this._cfg.fmPluckRatio ?? 2,
         index: 1.0,
       });
@@ -357,13 +368,13 @@ export class Synth {
       const ratioBase = TIER_RATIO[ti];
       let backend: TierBackend;
       if (useWorklet) {
-        backend = new WorkletTierBackend(ac);
+        backend = new WorkletTierBackend({ audioContext: ac });
       } else {
-        backend = new NodeTierBackend(
-          ac,
-          ratioBase,
-          (osc, name) => this._applyCarrierType(osc, name),
-        );
+        backend = new NodeTierBackend({
+          audioContext: ac,
+          ratio: ratioBase,
+          applyWave: (osc, name) => this._applyCarrierType(osc, name),
+        });
       }
       backend.connect(bus);
       return { backend };
@@ -380,14 +391,14 @@ export class Synth {
     }
 
     // Phase 4 complementary layers
-    this._noiseLayer   = new NoiseLayer(ac, graph.noiseBus);
-    this._shimmerLayer = new ShimmerLayer(ac, graph.shimmerBus);
+    this._noiseLayer   = new NoiseLayer({ audioContext: ac, bus: graph.noiseBus });
+    this._shimmerLayer = new ShimmerLayer({ audioContext: ac, bus: graph.shimmerBus });
     // KS strings — async, falls back gracefully if worklet unavailable
     void this._activateKSLayer(ac, graph);
 
     // Drum machine — routes into layerSum to inherit cassette chain
-    this.drumSynth   = new DrumSynth(ac, graph.layerSum);
-    this.drumMachine = new DrumMachine(this.drumSynth);
+    this.drumSynth   = new DrumSynth({ audioContext: ac, destination: graph.layerSum });
+    this.drumMachine = new DrumMachine({ drumSynth: this.drumSynth });
 
     this.running = true;
 
@@ -440,7 +451,7 @@ export class Synth {
 
     const liftDb = cfg.extremesWhiteLiftDb ?? 3;
     const lift = 1 + this._extremeWhite * (Math.pow(10, liftDb / 20) - 1);
-    this._graph.setBriDim(bri, now, (1 - this._extremeDark) * lift);
+    this._graph.setBrightnessDim(bri, now, (1 - this._extremeDark) * lift);
 
     // Hiss lives after the dim in the cassette chain — gate it separately so
     // total dark reaches actual silence instead of tape noise.
@@ -460,9 +471,9 @@ export class Synth {
   async preloadWorklets(): Promise<void> {
     const tmp = new AudioContext();
     const [limiterOk, fmOk, ksOk] = await Promise.all([
-      loadWorklets(tmp),
-      loadFMWorklets(tmp),
-      loadKSWorklet(tmp),
+      loadLimiterWorklet(tmp),
+      loadFMTierWorklet(tmp),
+      loadKSStringWorklet(tmp),
     ]);
     await tmp.close();
     this._workletsLoaded  = limiterOk;
@@ -475,14 +486,17 @@ export class Synth {
     const graph = this._graph;
     if (!graph || graph.workletActive) return;
     const [limiterOk] = await Promise.all([
-      loadWorklets(graph.actx),
-      this._fmWorkletLoaded ? Promise.resolve(true) : loadFMWorklets(graph.actx),
+      loadLimiterWorklet(graph.audioContext),
+      this._fmWorkletLoaded ? Promise.resolve(true) : loadFMTierWorklet(graph.audioContext),
     ]);
     if (!limiterOk || !this._graph) return;
-    const node = createLimiterNode(graph.actx, (m) => {
-      this._lastLufs = m.lufsShort;
-      this._lastMetricsTime = this._graph?.actx.currentTime ?? 0;
-      this.onLimiterMetrics?.(m);
+    const node = createLimiterNode({
+      audioContext: graph.audioContext,
+      onMetrics: (m) => {
+        this._lastLufs = m.lufsShort;
+        this._lastMetricsTime = this._graph?.audioContext.currentTime ?? 0;
+        this.onLimiterMetrics?.(m);
+      },
     });
     this._graph.swapToWorkletLimiter(node);
   }
@@ -490,10 +504,10 @@ export class Synth {
   /** Create the KS string AudioWorkletNode and wire it to ksBus. */
   private async _activateKSLayer(ac: AudioContext, graph: AudioGraph): Promise<void> {
     if (this._ksNode) return;
-    const ok = this._ksWorkletLoaded || await loadKSWorklet(ac);
+    const ok = this._ksWorkletLoaded || await loadKSStringWorklet(ac);
     if (!ok || !this._graph) return;
     this._ksWorkletLoaded = true;
-    this._ksNode = createKSNode(ac);
+    this._ksNode = createKSStringNode(ac);
     this._ksNode.connect(graph.ksBus);
   }
 
@@ -520,7 +534,7 @@ export class Synth {
     const corrFactor = Math.pow(10, this._autoTrimDb / 20);
     this._graph.masterTrim.gain.setTargetAtTime(
       Math.max(0, userGain * corrFactor),
-      this._graph.actx.currentTime,
+      this._graph.audioContext.currentTime,
       0.5,
     );
   }
@@ -528,7 +542,7 @@ export class Synth {
   stop(): void {
     if (!this._graph) return;
     this.drumMachine?.stop();
-    this._graph.actx.suspend();
+    this._graph.audioContext.suspend();
     this.running = false;
     this.lastNote = null;
   }
@@ -911,13 +925,26 @@ export class Synth {
 
     // Noise resonator: update chord frequencies + weight
     if (this._noiseLayer) {
-      this._noiseLayer.update(pcs, baseOctave + 1, noiseWeight, now, slowTau);
+      this._noiseLayer.update({
+        pitchClasses: pcs,
+        octave: baseOctave + 1,
+        weight: noiseWeight,
+        now,
+        tau: slowTau,
+      });
     }
 
     // Shimmer: update root pitch + weight
     if (this._shimmerLayer) {
       const rootPc = primarySlot.chord.pitchClasses[0];
-      this._shimmerLayer.update(rootPc, baseOctave, safePos, shimmerWeight, now, slowTau);
+      this._shimmerLayer.update({
+        rootPitchClass: rootPc,
+        octave: baseOctave,
+        position: safePos,
+        weight: shimmerWeight,
+        now,
+        tau: slowTau,
+      });
     }
 
     // KS strings: probability-triggered, similar to _maybePluck but axis-gated
@@ -1413,7 +1440,7 @@ export class Synth {
   /** Live-update cassette parameters. Uses setTargetAtTime for smooth transitions. */
   setCassetteParams(p: CassetteParams): void {
     const c = this._cassette;
-    const ac = this._graph?.actx;
+    const ac = this._graph?.audioContext;
     if (!c || !ac) return;
     const now = ac.currentTime;
     const tau = 0.05;
@@ -1472,7 +1499,11 @@ export class Synth {
       const satAmount = p.satAmount ?? this._lastSatAmount;
       const satWet = p.satWet ?? c.satWet.gain.value;
       const midBoostDb = p.midBoostDb !== undefined ? p.midBoostDb : c.midBoost.gain.value;
-      this._graph?.updateAutoMakeup(satAmount, satWet, midBoostDb);
+      this._graph?.updateAutoMakeup({
+        saturationAmount: satAmount,
+        saturationWet: satWet,
+        midBoostDb,
+      });
     }
   }
 }

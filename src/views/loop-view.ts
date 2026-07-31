@@ -4,6 +4,7 @@ import { legacyConfig as CONFIG } from "../store/legacy-config.js";
 import { VideoSource } from "../input/video-source.js";
 import { Analyzer } from "../analysis/analyzer.js";
 import { Calibration } from "../controls/calibration.js";
+import type { PatternName } from "@amplib/sound-synthesis";
 import {
   Synth,
   SYNTH_NOTE_GRID_OCT_L,
@@ -67,7 +68,7 @@ let _renderVisuals = true;
 let videoEl: HTMLVideoElement;
 let audioCanvas: HTMLCanvasElement;
 let videoSource: any, vidAnalyzer: any, calibration: any;
-let synth: any;
+let synth: Synth;
 let heatCtx: CanvasRenderingContext2D | null = null;
 let tiltCanvas: HTMLCanvasElement | null = null;
 let maskCanvas: HTMLCanvasElement | null = null;
@@ -328,17 +329,17 @@ async function begin(): Promise<void> {
   // preset-carried values must be re-applied, not just subscribed.
   const _applyDrumSettings = () => {
     synth.drumMachine?.setBpm(store.get("drums.bpm") as number);
-    synth.drumMachine?.setPattern(store.get("drums.pattern") as string);
+    synth.drumMachine?.setPattern(store.get("drums.pattern") as PatternName);
     synth.drumSynth?.setVolume(store.get("drums.volume") as number);
-    synth.drumSynth?.setFilter(
-      store.get("drums.filterHz") as number,
-      store.get("drums.filterQ") as number,
-    );
-    synth.drumSynth?.setEcho(
-      store.get("drums.echoTime") as number,
-      store.get("drums.echoFb") as number,
-      store.get("drums.echoWet") as number,
-    );
+    synth.drumSynth?.setFilter({
+      frequency: store.get("drums.filterHz") as number,
+      q: store.get("drums.filterQ") as number,
+    });
+    synth.drumSynth?.setEcho({
+      timeMs: store.get("drums.echoTime") as number,
+      feedback: store.get("drums.echoFb") as number,
+      wet: store.get("drums.echoWet") as number,
+    });
   };
 
   store.subscribeKey("synth.enabled", (v) => {
@@ -364,22 +365,22 @@ async function begin(): Promise<void> {
     synth.drumMachine?.setBpm(v as number);
   });
   store.subscribeKey("drums.pattern", (v) => {
-    synth.drumMachine?.setPattern(v as string);
+    synth.drumMachine?.setPattern(v as PatternName);
   });
   store.subscribeKey("drums.volume", (v) => {
     synth.drumSynth?.setVolume(v as number);
   });
   for (const k of ["drums.filterHz", "drums.filterQ", "drums.echoTime", "drums.echoFb", "drums.echoWet"] as const) {
     store.subscribeKey(k, () => {
-      synth.drumSynth?.setFilter(
-        store.get("drums.filterHz") as number,
-        store.get("drums.filterQ") as number,
-      );
-      synth.drumSynth?.setEcho(
-        store.get("drums.echoTime") as number,
-        store.get("drums.echoFb") as number,
-        store.get("drums.echoWet") as number,
-      );
+      synth.drumSynth?.setFilter({
+        frequency: store.get("drums.filterHz") as number,
+        q: store.get("drums.filterQ") as number,
+      });
+      synth.drumSynth?.setEcho({
+        timeMs: store.get("drums.echoTime") as number,
+        feedback: store.get("drums.echoFb") as number,
+        wet: store.get("drums.echoWet") as number,
+      });
     });
   }
 
