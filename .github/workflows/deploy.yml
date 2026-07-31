@@ -48,13 +48,14 @@ jobs:
       # instead of publishing a broken bundle.
       - run: npm run build
 
-      # enablement turns Pages on for the repo if it is off, so the first deploy
-      # of a fresh repo does not fail on a setting nobody has clicked yet.
-      # public-library pins v3, which now warns about Node 20 deprecation on the
-      # runner; matching its shape matters, matching a stale version does not.
+      # No `enablement: true` here: the workflow token is not allowed to create
+      # a Pages site in this org, so it fails with "Resource not accessible by
+      # integration". Pages is enabled on the repo instead, once, out of band.
+      #
+      # public-library pins v3, which now warns that Node 20 is deprecated on
+      # the runner. Matching its workflow shape is the point; matching a stale
+      # version is not.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: "./dist"
