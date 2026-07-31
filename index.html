@@ -16,11 +16,9 @@
     />
 
     <!--
-      amplib-ui first: it is entirely layered, and index.css is entirely
-      unlayered, so index.css wins wherever the two overlap. Only the launcher
-      uses amplib-ui classes; the views are untouched by it.
+      amplib-ui is NOT loaded here. It is imported by main.ts for the launcher
+      only — see the comment there. Loading it site-wide breaks the camera.
     -->
-    <link rel="stylesheet" href="/vendor/amplib-ui.css" />
     <link rel="stylesheet" href="/index.css" />
     <script type="module" src="/src/main.ts"></script>
   </head>

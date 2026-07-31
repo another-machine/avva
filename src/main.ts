@@ -24,7 +24,21 @@ import { startBroadcastSync } from "./store/sync.js";
 // before the store is seeded so a bare visit costs nothing — no camera prompt,
 // no AudioContext, no WebRTC.
 if (!location.search) {
-  document.getElementById("menu")?.classList.remove("hide");
+  // amplib-ui is loaded here and nowhere else, on purpose.
+  //
+  // Its base layer styles bare <video> and <canvas>: an opaque background, a
+  // hairline border, `inline-size: 100%` and `max-block-size: 60svh`. Being
+  // layered, it loses to avva's unlayered index.css — but only for properties
+  // index.css actually declares, and the views declare `width`/`height` rather
+  // than the logical `inline-size`/`block-size`, which are different
+  // properties entirely. So a site-wide load left the camera feed capped in
+  // height and sitting under opaque canvas fills, with #heat's
+  // mix-blend-mode: difference compositing against a solid colour.
+  //
+  // Awaited so the launcher paints once, already styled.
+  import("../vendor/amplib-ui.css").then(() => {
+    document.getElementById("menu")?.classList.remove("hide");
+  });
 } else {
   seedFromQuery();
   startBroadcastSync();
