@@ -6,27 +6,10 @@ import { resolve } from "node:path";
 // have it served from the root URL.
 export default defineConfig({
   root: ".",
-  resolve: {
-    // Runtime half of the vendored @amplib packages; the type half is in
-    // tsconfig.json's `paths`. The two must name the same files — a mismatch
-    // typechecks clean and then fails at build, which is the worst order to
-    // find out in.
-    //
-    // Aliases only for what is not on npm yet. @amplib/music-theory has been
-    // published and is resolved normally now — swapping it took deleting an
-    // alias and a tsconfig path, with no import statement touched, which is
-    // what these specifiers were chosen for.
-    alias: {
-      "@amplib/sound-synthesis": resolve(
-        __dirname,
-        "vendor/amplib-sound-synthesis/index.js",
-      ),
-      "@amplib/hue-wheel": resolve(
-        __dirname,
-        "vendor/amplib-hue-wheel/index.js",
-      ),
-    },
-  },
+  // No @amplib aliases. Every one of them is a real npm dependency now and
+  // resolves normally — the vendored bundles and the tsconfig `paths` that
+  // typed them are gone. Not one import statement changed, which is what those
+  // specifiers were chosen for.
   server: {
     host: true,
     port: 5173,

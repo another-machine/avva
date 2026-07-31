@@ -16,21 +16,7 @@
     "allowJs": true,
     "noEmit": true,
     "jsx": "preserve",
-    "types": ["vite/client"],
-
-    // Only the packages that are not on npm yet. @amplib/music-theory is a
-    // real dependency now; sound-synthesis and hue-wheel are still vendored
-    // because npm cannot depend on a subdirectory of a git repository.
-    //
-    // This is a bridge, not the destination. Imports already use the published
-    // specifiers, so when public-library publishes, the migration is npm
-    // install plus deleting these paths, the vite aliases and vendor/ — not a
-    // single import statement changes.
-    "baseUrl": ".",
-    "paths": {
-      "@amplib/sound-synthesis": ["./vendor/amplib-sound-synthesis/index.d.ts"],
-      "@amplib/hue-wheel": ["./vendor/amplib-hue-wheel/index.d.ts"]
-    }
+    "types": ["vite/client"]
   },
   "include": ["src/**/*", "controller/**/*"]
 }
