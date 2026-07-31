@@ -105,10 +105,7 @@ and are consumed back from there: the FM voice, drums, layers and worklets as
 chord parser as part of `@amplib/music-theory`, and camera, screen and
 microphone capture as `@amplib/devices`.
 
-`music-theory` and `devices` come from npm. `sound-synthesis` and `hue-wheel`
-are not published yet, so they are vendored into `vendor/` by
-`scripts/vendor-amplib.mjs` — imports already use the published specifiers, so
-publishing them turns that into an `npm install` and a deletion.
+All four come from npm.
 
 ## Build
 
