@@ -425,3 +425,74 @@ body.va #stage {
 body.loop #stage::before {
   display: none;
 }
+
+/* ── Launcher ────────────────────────────────────────────────────────────────
+   Shown at the bare root URL only. The look comes from vendor/amplib-ui.css —
+   this is just the full-screen shell it sits in, plus a key list, since
+   amplib-ui has no definition-list component. */
+
+#menu {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  overflow-y: auto;
+  background: var(--ht-paper);
+  color: var(--ht-ink);
+  font-family: var(--ht-font-mono);
+}
+
+#menu.hide {
+  display: none;
+}
+
+/* avva's `*` reset is unlayered, so it beats every layered rule in amplib-ui —
+   including the page gutter. That is amplib-ui working as documented ("anything
+   you write outside a layer wins over all of it"), not a bug, but it means any
+   amplib-ui box model this app relies on has to be restated here. Worth knowing
+   before the controller migrates: the reset will need scoping, or those views
+   will land flush to the viewport too. */
+#menu .ht-arrange-page {
+  padding: var(--ht-space-6);
+  margin-inline: auto;
+}
+
+#menu .ht-shape-panel {
+  padding: var(--ht-pad-panel);
+}
+
+#menu .panel__body,
+#menu .panel__header {
+  padding: var(--ht-space-4) var(--ht-space-5);
+}
+
+.menu__keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  align-items: baseline;
+  margin: 0;
+}
+
+.menu__keys dt {
+  justify-self: start;
+}
+
+.menu__keys dd {
+  margin: 0;
+  color: var(--ht-ink-dim);
+}
+
+/* A link that is a panel. Only the interaction state is new — the box, the
+   spacing and the type all come from the hypertokens on the element. */
+.menu__row {
+  text-decoration: none;
+  color: inherit;
+  transition: background-color var(--ht-duration) var(--ht-ease),
+    border-color var(--ht-duration) var(--ht-ease);
+}
+
+.menu__row:hover,
+.menu__row:focus-visible {
+  background-color: var(--ht-raised);
+  border-color: var(--ht-line-strong);
+}

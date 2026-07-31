@@ -15,6 +15,12 @@
       rel="stylesheet"
     />
 
+    <!--
+      amplib-ui first: it is entirely layered, and index.css is entirely
+      unlayered, so index.css wins wherever the two overlap. Only the launcher
+      uses amplib-ui classes; the views are untouched by it.
+    -->
+    <link rel="stylesheet" href="/vendor/amplib-ui.css" />
     <link rel="stylesheet" href="/index.css" />
     <script type="module" src="/src/main.ts"></script>
   </head>
@@ -25,6 +31,82 @@
       <h1 class="gate__title">AVVA</h1>
       <div class="gate__err" id="err" role="alert"></div>
       <button class="gate__btn" id="go">Retry</button>
+    </div>
+
+    <!--
+      Launcher. Shown only when the URL has no query string, so every preset
+      URL — which always carries params — still boots straight into its view.
+    -->
+    <div id="menu" class="hide" data-theme="auto">
+      <div class="ht-arrange-page">
+        <header class="masthead">
+          <h1 class="ht-type-display">AVVA</h1>
+          <p class="ht-type-small u-faint">
+            One machine turns music into color, the other color into music
+          </p>
+        </header>
+
+        <p class="ht-type-eyebrow">Views</p>
+        <nav class="ht-arrange-stack">
+          <a class="menu__row ht-arrange-stack ht-shape-panel" href="/?view=loop">
+            <span class="ht-arrange-split">
+              <span class="ht-type-ui">Loop</span>
+              <span class="ht-type-small u-faint">/?view=loop</span>
+            </span>
+            <span class="ht-type-small u-dim">Closed loop &mdash; camera to synth to analyzer to visuals. Broadcasts its synth output to listener tabs.</span>
+          </a>
+          <a class="menu__row ht-arrange-stack ht-shape-panel" href="/?view=va">
+            <span class="ht-arrange-split">
+              <span class="ht-type-ui">Video &rarr; Audio</span>
+              <span class="ht-type-small u-faint">/?view=va</span>
+            </span>
+            <span class="ht-type-small u-dim">Camera drives the synth and broadcasts, with no local renderer. The listener window draws the visuals.</span>
+          </a>
+          <a class="menu__row ht-arrange-stack ht-shape-panel" href="/?view=av">
+            <span class="ht-arrange-split">
+              <span class="ht-type-ui">Audio &rarr; Video</span>
+              <span class="ht-type-small u-faint">/?view=av</span>
+            </span>
+            <span class="ht-type-small u-dim">Listener. Receives a stream from any broadcasting tab and runs the audio analyzer and GL renderer.</span>
+          </a>
+          <a class="menu__row ht-arrange-stack ht-shape-panel" href="/controller/">
+            <span class="ht-arrange-split">
+              <span class="ht-type-ui">Controller</span>
+              <span class="ht-type-small u-faint">/controller/</span>
+            </span>
+            <span class="ht-type-small u-dim">Every tunable parameter, synced live to the other tabs in this browser. Choose the media folder here.</span>
+          </a>
+        </nav>
+
+        <p class="ht-type-eyebrow">Keys</p>
+        <!--
+          The synth starts silent on purpose — an AudioContext needs a user
+          gesture, and `S` is that gesture. Nothing on screen said so, which
+          made a working loop look broken.
+        -->
+        <dl class="menu__keys ht-type-small">
+          <dt><kbd>S</kbd></dt>
+          <dd>Synth on / off &mdash; no sound until you press this</dd>
+          <dt><kbd>C</kbd></dt>
+          <dd>Cycle source</dd>
+          <dt><kbd>M</kbd></dt>
+          <dd>Heat overlay</dd>
+          <dt><kbd>R</kbd></dt>
+          <dd>Mirror</dd>
+          <dt><kbd>H</kbd></dt>
+          <dd>HUD</dd>
+          <dt><kbd>F</kbd></dt>
+          <dd>Fullscreen</dd>
+        </dl>
+
+        <p class="ht-type-small u-faint">
+          Video files come from a folder you choose in the controller &mdash;
+          none are bundled. <code class="ht-type-code">?source=name.mp4</code>
+          resolves against it, so preset links carry between machines.<br />
+          Cross-device sync needs the relay:
+          <code class="ht-type-code">npm run relay</code>
+        </p>
+      </div>
     </div>
   </body>
 </html>

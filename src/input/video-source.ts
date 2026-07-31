@@ -7,6 +7,12 @@
  */
 
 import type { LegacyConfig } from "../store/legacy-config.js";
+import {
+  hasFolder,
+  isFolderRelative,
+  restoreFolder,
+  urlForFile,
+} from "./media-folder.js";
 
 export class VideoSource {
   private _el: HTMLVideoElement;
@@ -155,8 +161,25 @@ export class VideoSource {
   // ── Private — file ───────────────────────────────────────────
 
   private async _startFile(src: string): Promise<void> {
+    // A bare filename is looked up in the folder the user chose; anything with
+    // a slash or a scheme is a real path and is served as-is, so preset links
+    // written before the folder picker still work.
+    let url = src;
+    if (isFolderRelative(src)) {
+      if (!hasFolder()) {
+        const restored = await restoreFolder();
+        if (!restored) {
+          throw new Error(
+            `No media folder selected. Choose one in the controller, ` +
+              `then "${src}" will resolve.`,
+          );
+        }
+      }
+      url = await urlForFile(src);
+    }
+
     this._el.srcObject = null;
-    this._el.src = src;
+    this._el.src = url;
     this._el.loop = true;
     this._el.muted = true;
     this._el.playsInline = true;

@@ -33,12 +33,14 @@ import {
   mountSynthNotesMonitor,
 } from "./monitors.js";
 import { buildTriadsForMode, type ScaleMode } from "../src/harmony/music.js";
-
-// ── Asset file list (populated from Vite glob at build time) ──────────────────
-
-const ASSET_FILES = Object.keys(
-  import.meta.glob("/assets/*", { eager: false }),
-).map((p) => p.replace(/^\/assets\//, ""));
+import {
+  adoptFileList,
+  folderName,
+  listVideos,
+  pickFolder,
+  restoreFolder,
+  supportsDirectoryPicker,
+} from "../src/input/media-folder.js";
 
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"] as const;
 
@@ -290,25 +292,77 @@ function buildSourceSection(): HTMLElement {
   store.subscribeKey("source.kind", (v) => { kindSel.value = String(v); });
   srcBody.appendChild(_spRow("Source", kindSel));
 
+  // ── Media folder ───────────────────────────────────────────
+  // Files come from a folder the user picks, not from the repo. Options are
+  // bare filenames so a preset URL resolves on any machine whose folder holds
+  // a file by that name.
   const fileSelect = document.createElement("select");
   fileSelect.className = "sp-select";
-  const emptyOpt = document.createElement("option");
-  emptyOpt.value = ""; emptyOpt.textContent = "— select file —";
-  fileSelect.appendChild(emptyOpt);
-  for (const f of ASSET_FILES) {
-    const opt = document.createElement("option");
-    opt.value = `/assets/${f}`; opt.textContent = f;
-    fileSelect.appendChild(opt);
+
+  const folderBtn = document.createElement("button");
+  folderBtn.type = "button";
+  folderBtn.className = "sp-btn";
+
+  // Fallback for browsers without showDirectoryPicker. Kept out of the layout
+  // entirely when the picker exists.
+  const folderInput = document.createElement("input");
+  folderInput.type = "file";
+  folderInput.hidden = true;
+  folderInput.setAttribute("webkitdirectory", "");
+  folderInput.setAttribute("directory", "");
+  folderInput.accept = "video/*";
+
+  async function refreshFiles(): Promise<void> {
+    fileSelect.textContent = "";
+    const names = await listVideos();
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = names.length ? "— select file —" : "— no folder —";
+    fileSelect.appendChild(empty);
+    for (const name of names) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      fileSelect.appendChild(opt);
+    }
+    const current = String(store.get("source.file") ?? "");
+    if (current) fileSelect.value = current;
+    const label = folderName();
+    folderBtn.textContent = label
+      ? `${label} — ${names.length} video${names.length === 1 ? "" : "s"}`
+      : "Choose folder…";
   }
-  const curFile = store.get("source.file");
-  if (curFile) fileSelect.value = String(curFile);
+
+  folderBtn.addEventListener("click", async () => {
+    // Both paths need the click: showDirectoryPicker requires a user gesture,
+    // and so does opening a file input.
+    if (supportsDirectoryPicker) {
+      if (await pickFolder()) await refreshFiles();
+    } else {
+      folderInput.click();
+    }
+  });
+
+  folderInput.addEventListener("change", async () => {
+    if (folderInput.files && adoptFileList(folderInput.files) > 0) {
+      await refreshFiles();
+    }
+  });
+
   fileSelect.addEventListener("change", () => {
     store.set("source.kind", "file" as SourceKind);
     store.set("source.file", fileSelect.value);
   });
   store.subscribeKey("source.file", (v) => { fileSelect.value = String(v); });
+
+  srcBody.appendChild(_spRow("Folder", folderBtn));
+  srcBody.appendChild(folderInput);
   const fileRow = _spRow("File", fileSelect);
   srcBody.appendChild(fileRow);
+
+  // Reconnect to a previously chosen folder. Silent when the browser has
+  // dropped back to needing a prompt — the button is the way back in.
+  void restoreFolder().then(refreshFiles);
 
   const urlInput = document.createElement("input");
   urlInput.type = "url";
