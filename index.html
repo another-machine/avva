@@ -101,8 +101,12 @@
           Video files come from a folder you choose in the controller &mdash;
           none are bundled. <code class="ht-type-code">?source=name.mp4</code>
           resolves against it, so preset links carry between machines.<br />
-          Cross-device sync needs the relay:
-          <code class="ht-type-code">npm run relay</code>
+          <!--
+            Filled in by main.ts. The relay is a Node process, so what to say
+            about it depends on whether this build is being served by the dev
+            server or by static hosting — and the same bundle does both.
+          -->
+          <span data-relay-note></span>
         </p>
       </div>
     </div>

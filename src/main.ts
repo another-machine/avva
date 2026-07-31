@@ -37,6 +37,7 @@ if (!location.search) {
   //
   // Awaited so the launcher paints once, already styled.
   import("../vendor/amplib-ui.css").then(() => {
+    writeRelayNote();
     document.getElementById("menu")?.classList.remove("hide");
   });
 } else {
@@ -55,4 +56,49 @@ if (!location.search) {
   } else {
     import("./views/loop-view.js").then((m) => m.mountLoopView());
   }
+}
+
+/**
+ * True where the dev server plausibly is: loopback, a LAN address, or an mDNS
+ * name. A phone on the same network hits one of these, and that is exactly the
+ * case where running the relay is worth suggesting.
+ */
+export function isLocalHost(host: string): boolean {
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]" ||
+    host.endsWith(".local") ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
+
+/**
+ * Tell the truth about the relay for wherever this build happens to be served.
+ *
+ * The relay is a Node WebSocket server. From the dev machine it is one npm
+ * script away; served as static files it cannot exist at all, and the page
+ * being HTTPS blocks an insecure ws:// socket on top of that. One bundle serves
+ * both, so the note is written at runtime — the static text it replaces told
+ * deployed visitors to run a command that could not help them.
+ *
+ * A pure function of the hostname, so both branches are testable without
+ * needing to actually be on either host.
+ */
+export function relayNoteFor(host: string): string {
+  const code = (text: string) => `<code class="ht-type-code">${text}</code>`;
+  return isLocalHost(host)
+    ? `Cross-device sync needs the relay: ${code("npm run relay")}, then open ` +
+      `the controller with ${code("?relay=ws://&lt;lan-ip&gt;:3001")}.`
+    : `Tabs in this browser sync on their own. Cross-device sync needs a relay, ` +
+      `which is a Node server and cannot run on static hosting &mdash; point at ` +
+      `one with ${code("?relay=wss://&lt;host&gt;")}. It must be ` +
+      `${code("wss://")}, since this page is HTTPS.`;
+}
+
+function writeRelayNote(): void {
+  const el = document.querySelector<HTMLElement>("[data-relay-note]");
+  if (el) el.innerHTML = relayNoteFor(location.hostname);
 }
