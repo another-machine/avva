@@ -91,7 +91,7 @@ src/analysis    video and audio analyzers — the 0..1 scene axes everything rea
 src/harmony     palette, chords, perceptual hue mapping
 src/audio       FM synth, drums, layers, AudioWorklets, bus graph
 src/render      GL renderer
-src/input       camera, video files, media folder, WebRTC bridge
+src/input       video source switching, media folder, WebRTC bridge
 src/store       schema, URL seeding, cross-tab sync, telemetry
 src/views       the three views
 controller/     the parameter UI
@@ -99,11 +99,16 @@ server/relay.ts the optional cross-device relay
 ```
 
 Parts of this have been generalised into
-[another-machine/public-library](https://github.com/another-machine/public-library):
-the FM voice, drums, layers and worklets as `@amplib/sound-synthesis`, the
-perceptual hue wheel as `@amplib/hue-wheel`, and the chord parser as part of
-`@amplib/music-theory`. AVVA still carries its own copies; consuming the
-published ones is the next step.
+[another-machine/public-library](https://github.com/another-machine/public-library)
+and are consumed back from there: the FM voice, drums, layers and worklets as
+`@amplib/sound-synthesis`, the perceptual hue wheel as `@amplib/hue-wheel`, the
+chord parser as part of `@amplib/music-theory`, and camera, screen and
+microphone capture as `@amplib/devices`.
+
+`music-theory` and `devices` come from npm. `sound-synthesis` and `hue-wheel`
+are not published yet, so they are vendored into `vendor/` by
+`scripts/vendor-amplib.mjs` — imports already use the published specifiers, so
+publishing them turns that into an `npm install` and a deletion.
 
 ## Build
 

@@ -1,11 +1,17 @@
 /**
  * src/input/video-source.ts
  *
- * VideoSource abstracts the video input — camera, single file, or an
+ * VideoSource abstracts the video input — camera, screen, single file, or an
  * array of files. All modes drive the same <video> element so downstream
  * processing (Analyzer) stays source-agnostic.
+ *
+ * Camera and screen capture are @amplib/devices now. What stays here is what
+ * is actually AVVA's: files resolved through the chosen media folder, the
+ * store-backed config that decides which mode is active, and driving one
+ * shared <video> element so the analyzer never learns where frames came from.
  */
 
+import { CameraStream, ScreenStream } from "@amplib/devices";
 import type { LegacyConfig } from "../store/legacy-config.js";
 import {
   hasFolder,
@@ -19,16 +25,13 @@ export class VideoSource {
   private _config: LegacyConfig;
   private _label: string;
 
-  // Camera state
-  private _stream: MediaStream | null;
-  private _devices: MediaDeviceInfo[];
-  private _devIdx: number;
+  private _camera: CameraStream;
+  private _screen: ScreenStream;
 
   // File array state
   private _sources: string[];
   private _fileIdx: number;
 
-  // Screen share callback
   private _onStreamEnded: (() => void) | null = null;
 
   constructor(el: HTMLVideoElement, config: LegacyConfig) {
@@ -36,9 +39,9 @@ export class VideoSource {
     this._config = config;
     this._label = "";
 
-    this._stream = null;
-    this._devices = [];
-    this._devIdx = 0;
+    this._camera = new CameraStream({ facingMode: config.preferCamera });
+    this._screen = new ScreenStream({ displaySurface: "browser" });
+    this._screen.onEnded = () => this._onStreamEnded?.();
 
     const src = config.source;
     this._sources = Array.isArray(src) ? (src as string[]) : [src as string];
@@ -63,7 +66,7 @@ export class VideoSource {
     return Array.isArray(this._config.source);
   }
   get canCycle(): boolean {
-    return this.isCamera ? this._devices.length > 1 : this._sources.length > 1;
+    return this.isCamera ? this._camera.canCycle : this._sources.length > 1;
   }
 
   set onStreamEnded(cb: (() => void) | null) {
@@ -72,10 +75,12 @@ export class VideoSource {
 
   async start(): Promise<void> {
     if (this.isCamera) {
-      await this._startCamera(null);
-      await this._enumerateDevices();
+      // CameraStream enumerates as part of start — device labels are empty
+      // until permission is granted, so there is nothing useful to ask for
+      // beforehand.
+      await this._attach(await this._camera.start(), this._camera.label);
     } else if (this.isScreen) {
-      await this._startScreen();
+      await this._attach(await this._screen.start(), this._screen.label, true);
     } else {
       this._fileIdx = 0;
       await this._startFile(this._sources[this._fileIdx]);
@@ -84,9 +89,8 @@ export class VideoSource {
 
   async cycleSource(): Promise<void> {
     if (this.isCamera) {
-      if (this._devices.length < 2) return;
-      this._devIdx = (this._devIdx + 1) % this._devices.length;
-      await this._startCamera(this._devices[this._devIdx].deviceId);
+      if (!this._camera.canCycle) return;
+      await this._attach(await this._camera.cycle(), this._camera.label);
     } else {
       if (this._sources.length < 2) return;
       this._fileIdx = (this._fileIdx + 1) % this._sources.length;
@@ -95,67 +99,32 @@ export class VideoSource {
   }
 
   stop(): void {
-    if (this._stream) {
-      this._stream.getTracks().forEach((t) => t.stop());
-      this._stream = null;
-    }
+    this._camera.stop();
+    this._screen.stop();
     this._el.srcObject = null;
     this._el.src = "";
   }
 
-  // ── Private — camera ────────────────────────────────────────
+  // ── Private — attaching a device stream ─────────────────────
 
-  private async _startCamera(deviceId: string | null): Promise<void> {
-    if (this._stream) this._stream.getTracks().forEach((t) => t.stop());
-
-    const constraints: MediaStreamConstraints = deviceId
-      ? { video: { deviceId: { exact: deviceId } }, audio: false }
-      : {
-          video: {
-            facingMode: this._config.preferCamera,
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        };
-
-    this._stream = await navigator.mediaDevices.getUserMedia(constraints);
-    this._el.srcObject = this._stream;
+  /**
+   * Point the shared <video> element at a stream from @amplib/devices.
+   *
+   * The element is the reason this wrapper still exists: the analyzer reads
+   * frames from one <video> regardless of whether they came from a camera, a
+   * capture, or a file, and only this class knows which.
+   */
+  private async _attach(
+    stream: MediaStream | null,
+    label: string,
+    muted = false,
+  ): Promise<void> {
+    if (!stream) return;
+    this._el.srcObject = stream;
+    this._el.src = "";
+    if (muted) this._el.muted = true;
     await this._el.play();
-
-    const track = this._stream.getVideoTracks()[0];
-    this._label = (track?.label || "camera").slice(0, 28).toUpperCase();
-  }
-
-  private async _enumerateDevices(): Promise<void> {
-    try {
-      const all = await navigator.mediaDevices.enumerateDevices();
-      this._devices = all.filter((d) => d.kind === "videoinput");
-    } catch {
-      this._devices = [];
-    }
-  }
-
-  // ── Private — screen share ───────────────────────────────────
-
-  private async _startScreen(): Promise<void> {
-    if (this._stream) this._stream.getTracks().forEach((t) => t.stop());
-
-    this._stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { displaySurface: "browser" } as MediaTrackConstraints,
-      audio: false,
-    });
-    this._el.srcObject = this._stream;
-    this._el.muted = true;
-    await this._el.play();
-
-    const track = this._stream.getVideoTracks()[0];
-    this._label = (track?.label || "screen").slice(0, 28).toUpperCase();
-
-    track?.addEventListener("ended", () => {
-      this._stream = null;
-      this._onStreamEnded?.();
-    }, { once: true });
+    this._label = label.toUpperCase();
   }
 
   // ── Private — file ───────────────────────────────────────────

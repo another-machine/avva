@@ -11,6 +11,7 @@
  * automatically when changed from the broadcaster tab.
  */
 
+import { MicrophoneStream } from "@amplib/devices";
 import { store } from "../store/store.js";
 import { AUDIO_EQ_KEYS } from "../store/schema.js";
 import { legacyConfig as CONFIG } from "../store/legacy-config.js";
@@ -39,7 +40,7 @@ let palette: ChordPalette;
 let telemetry: TelemetrySender | null = null;
 let listener: ListenerBridge | null = null;
 let _srcNode: MediaStreamAudioSourceNode | null = null;
-let _micStream: MediaStream | null = null;
+let _mic: MicrophoneStream | null = null;
 let _streamSink: HTMLAudioElement | null = null;
 let _running = false;
 
@@ -95,9 +96,9 @@ function _teardownSource(): void {
     _streamSink.srcObject = null;
     _streamSink = null;
   }
-  if (_micStream) {
-    for (const t of _micStream.getTracks()) t.stop();
-    _micStream = null;
+  if (_mic) {
+    _mic.stop();
+    _mic = null;
   }
 }
 
@@ -114,20 +115,17 @@ async function _activateSource(): Promise<void> {
   if (kind === "mic") {
     if (err) err.textContent = "Requesting microphone…";
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        // Disable processing so the analyzer sees the raw signal.
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      // MicrophoneStream disables echo cancellation, noise suppression and AGC
+      // by default, which is what the analyzer needs — those are tuned for
+      // speech and destroy the signal being measured.
+      const mic = new MicrophoneStream();
+      const stream = await mic.start();
       // A live switch could have changed the source again mid-await.
       if ((store.get("listen.source") as string) !== "mic") {
-        for (const t of stream.getTracks()) t.stop();
+        mic.stop();
         return;
       }
-      _micStream = stream;
+      _mic = mic;
       _wireStream(stream);
       if (err) err.textContent = "";
       gate?.classList.add("hide");
@@ -264,7 +262,7 @@ function tick(t: number): void {
     telemetry?.send({
       t,
       fps: 60, // approximate; we're not measuring in this view
-      sourceLabel: _micStream ? "mic" : listener?.connected ? "webrtc" : "—",
+      sourceLabel: _mic ? "mic" : listener?.connected ? "webrtc" : "—",
       resLabel: "—",
       audio: audioFrame,
       visualUniforms: vis,
