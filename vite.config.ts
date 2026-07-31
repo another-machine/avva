@@ -12,8 +12,10 @@ export default defineConfig({
     // typechecks clean and then fails at build, which is the worst order to
     // find out in.
     //
-    // Both disappear once public-library publishes to npm. The specifiers below
-    // are already the published names, so that swap is deletion, not a rewrite.
+    // Aliases only for what is not on npm yet. @amplib/music-theory has been
+    // published and is resolved normally now — swapping it took deleting an
+    // alias and a tsconfig path, with no import statement touched, which is
+    // what these specifiers were chosen for.
     alias: {
       "@amplib/sound-synthesis": resolve(
         __dirname,
@@ -22,10 +24,6 @@ export default defineConfig({
       "@amplib/hue-wheel": resolve(
         __dirname,
         "vendor/amplib-hue-wheel/index.js",
-      ),
-      "@amplib/music-theory": resolve(
-        __dirname,
-        "vendor/amplib-music-theory/index.js",
       ),
     },
   },

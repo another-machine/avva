@@ -30,10 +30,11 @@ const SOURCE = resolve(
   process.argv[2] ?? join(ROOT, "..", "another-machine", "public-library"),
 );
 
+// Only what is not on npm. As each of these is published, delete its line here,
+// `npm install` it, and drop its alias and tsconfig path — nothing else changes.
 const PACKAGES = [
   ["amplib-sound-synthesis", "@amplib/sound-synthesis"],
   ["amplib-hue-wheel", "@amplib/hue-wheel"],
-  ["amplib-music-theory", "@amplib/music-theory"],
 ];
 
 function run(cmd, cwd) {
@@ -78,4 +79,4 @@ for (const [dir, name] of PACKAGES) {
   console.log(`${name.padEnd(28)} ← ${commit}`);
 }
 
-console.log(`\nVendored 3 packages from ${SOURCE} at ${commit}.`);
+console.log(`\nVendored ${PACKAGES.length} packages from ${SOURCE} at ${commit}.`);

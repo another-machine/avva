@@ -18,9 +18,9 @@
     "jsx": "preserve",
     "types": ["vite/client"],
 
-    // The @amplib packages are vendored rather than installed, for now: they
-    // live in a monorepo that is not yet published to npm, and npm cannot
-    // depend on a subdirectory of a git repository.
+    // Only the packages that are not on npm yet. @amplib/music-theory is a
+    // real dependency now; sound-synthesis and hue-wheel are still vendored
+    // because npm cannot depend on a subdirectory of a git repository.
     //
     // This is a bridge, not the destination. Imports already use the published
     // specifiers, so when public-library publishes, the migration is npm
@@ -29,8 +29,7 @@
     "baseUrl": ".",
     "paths": {
       "@amplib/sound-synthesis": ["./vendor/amplib-sound-synthesis/index.d.ts"],
-      "@amplib/hue-wheel": ["./vendor/amplib-hue-wheel/index.d.ts"],
-      "@amplib/music-theory": ["./vendor/amplib-music-theory/index.d.ts"]
+      "@amplib/hue-wheel": ["./vendor/amplib-hue-wheel/index.d.ts"]
     }
   },
   "include": ["src/**/*", "controller/**/*"]

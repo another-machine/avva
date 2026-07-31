@@ -12,6 +12,7 @@
     "relay": "tsx server/relay.ts"
   },
   "dependencies": {
+    "@amplib/music-theory": "^0.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
