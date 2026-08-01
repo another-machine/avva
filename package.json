@@ -18,6 +18,7 @@
     "@amplib/devices": "^0.2.0",
     "@amplib/music-theory": "^0.1.0",
     "@amplib/sound-synthesis": "^0.2.0",
+    "@amplib/ui": "^0.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

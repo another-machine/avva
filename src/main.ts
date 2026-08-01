@@ -36,7 +36,10 @@ if (!location.search) {
   // mix-blend-mode: difference compositing against a solid colour.
   //
   // Awaited so the launcher paints once, already styled.
-  import("../vendor/amplib-ui.css").then(() => {
+  // The subpath, not the bare "@amplib/ui": TypeScript resolves a CSS import
+  // through Vite's ambient `*.css` module declaration, which only matches a
+  // specifier ending in .css. The root export is fine from a stylesheet.
+  import("@amplib/ui/ui.css").then(() => {
     writeRelayNote();
     document.getElementById("menu")?.classList.remove("hide");
   });

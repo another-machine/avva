@@ -427,9 +427,9 @@ body.loop #stage::before {
 }
 
 /* ── Launcher ────────────────────────────────────────────────────────────────
-   Shown at the bare root URL only. The look comes from vendor/amplib-ui.css —
-   this is just the full-screen shell it sits in, plus a key list, since
-   amplib-ui has no definition-list component. */
+   Shown at the bare root URL only. The look comes from @amplib/ui, imported
+   lazily in main.ts — this is just the full-screen shell it sits in, plus a key
+   list, since @amplib/ui has no definition-list component. */
 
 #menu {
   position: fixed;
