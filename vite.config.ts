@@ -6,12 +6,12 @@ import { resolve } from "node:path";
 // have it served from the root URL.
 export default defineConfig({
   root: ".",
-  // No @amplib aliases. Every one of them resolves as an ordinary dependency —
-  // the vendored bundles and the tsconfig `paths` that typed them are gone.
-  // @amplib/color is the one exception to "published": it is a `file:` link to
-  // ../public-library while it is held back from npm, which npm symlinks into
-  // node_modules so it resolves like the rest. Not one import statement
-  // changed, which is what those specifiers were chosen for.
+  // No @amplib aliases. Every one of them resolves as an ordinary dependency
+  // from npm — the vendored bundles and the tsconfig `paths` that typed them are
+  // gone, and so is the `file:` link @amplib/color used while it was held back.
+  // That link resolved only on a machine with public-library checked out beside
+  // this repo: npm symlinked it into node_modules and everything built locally,
+  // while CI checked out avva alone and failed on three missing imports.
   server: {
     host: true,
     port: 5173,

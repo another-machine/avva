@@ -14,7 +14,7 @@
     "relay": "tsx server/relay.ts"
   },
   "dependencies": {
-    "@amplib/color": "file:../public-library/packages/amplib-color",
+    "@amplib/color": "^0.1.0",
     "@amplib/devices": "^0.2.0",
     "@amplib/music-theory": "^0.1.0",
     "@amplib/sound-synthesis": "^0.2.0",
