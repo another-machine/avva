@@ -101,11 +101,17 @@ server/relay.ts the optional cross-device relay
 Parts of this have been generalised into
 [another-machine/public-library](https://github.com/another-machine/public-library)
 and are consumed back from there: the FM voice, drums, layers and worklets as
-`@amplib/sound-synthesis`, the perceptual hue wheel as `@amplib/hue-wheel`, the
-chord parser as part of `@amplib/music-theory`, and camera, screen and
-microphone capture as `@amplib/devices`.
+`@amplib/sound-synthesis`, the display-to-perceptual hue mapping as
+`@amplib/color`, the chord parser as part of `@amplib/music-theory`, and camera,
+screen and microphone capture as `@amplib/devices`.
 
-All four come from npm.
+Three of those come from npm. `@amplib/color` is a `file:` link to the sibling
+checkout while it is still unpublished, so a clone of this repo alone will not
+resolve it — `../public-library` has to be there too.
+
+The hue wheel built on top of that mapping went out briefly as
+`@amplib/hue-wheel` and came back: it lives in `src/harmony/palette.ts` until
+something other than AVVA wants it and can argue for its own defaults.
 
 ## Build
 

@@ -1807,7 +1807,7 @@ void main() {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { AudioFrame } from "../analysis/audio-analyzer.js";
-import { toPerceptual } from "@amplib/hue-wheel";
+import { toPerceptual } from "@amplib/color";
 
 /** Observable snapshot of what the GL renderer sent to the shader this frame. */
 export interface VisualUniforms {

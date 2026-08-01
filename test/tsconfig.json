@@ -1,0 +1,14 @@
+{
+  // Tests run under tsx, not the browser, so they need node globals that the
+  // root config deliberately withholds. Same split as server/tsconfig.json.
+  //
+  // moduleResolution stays "bundler" rather than the relay's "node16": these
+  // files import ../src, which is browser-side code written against bundler
+  // resolution, and node16 would demand extensions on every one of those paths.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["./**/*"]
+}

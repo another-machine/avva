@@ -8,7 +8,7 @@
 import { store } from "../src/store/store.js";
 import { legacyConfig as CONFIG } from "../src/store/legacy-config.js";
 import { createChordPalette, type ChordPalette } from "../src/harmony/chord-palette.js";
-import { toPerceptual } from "@amplib/hue-wheel";
+import { toPerceptual } from "@amplib/color";
 import type { AnalysisOut } from "../src/analysis/analyzer.js";
 import type { TelemetryMsg } from "../src/store/telemetry.js";
 

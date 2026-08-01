@@ -1,11 +1,14 @@
 /**
  * src/harmony/chord-palette.ts
  *
- * The seam between @amplib/hue-wheel and what AVVA does with it.
+ * The seam between the hue wheel in ./palette and what AVVA does with it.
  *
  * The wheel is generic — it divides hue into slots and never inspects them.
  * Deciding that a slot is a chord, and how to match live audio against one, is
- * this application's job, so it lives here rather than in the library.
+ * this application's job, so it lives here rather than in the wheel. Both sides
+ * of that seam are now in this directory, which makes the separation a
+ * convention rather than something the module system enforces — keep it anyway,
+ * since it is what would let the wheel be extracted again.
  *
  * Note the slot syntax. The wheel has no bias field: a slot is wider because it
  * appears more than once, so "CEG, CEG, FAC" gives CEG half the wheel. AVVA's
@@ -13,7 +16,7 @@
  * default were plain comma-separated lists, which parse identically either way.
  */
 
-import { Palette, type HueBlendResult } from "@amplib/hue-wheel";
+import { Palette, type HueBlendResult } from "./palette";
 import { parseChord, type ParsedChord } from "@amplib/music-theory";
 
 /** A hue wheel whose slots are parsed chords. */

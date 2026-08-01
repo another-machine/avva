@@ -7,13 +7,15 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
+    "test": "tsx test/palette.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:relay": "tsc --noEmit -p server/tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p test/tsconfig.json",
     "relay": "tsx server/relay.ts"
   },
   "dependencies": {
+    "@amplib/color": "file:../public-library/packages/amplib-color",
     "@amplib/devices": "^0.2.0",
-    "@amplib/hue-wheel": "^0.1.0",
     "@amplib/music-theory": "^0.1.0",
     "@amplib/sound-synthesis": "^0.2.0",
     "ws": "^8.18.0"

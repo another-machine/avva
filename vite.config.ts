@@ -6,10 +6,12 @@ import { resolve } from "node:path";
 // have it served from the root URL.
 export default defineConfig({
   root: ".",
-  // No @amplib aliases. Every one of them is a real npm dependency now and
-  // resolves normally — the vendored bundles and the tsconfig `paths` that
-  // typed them are gone. Not one import statement changed, which is what those
-  // specifiers were chosen for.
+  // No @amplib aliases. Every one of them resolves as an ordinary dependency —
+  // the vendored bundles and the tsconfig `paths` that typed them are gone.
+  // @amplib/color is the one exception to "published": it is a `file:` link to
+  // ../public-library while it is held back from npm, which npm symlinks into
+  // node_modules so it resolves like the rest. Not one import statement
+  // changed, which is what those specifiers were chosen for.
   server: {
     host: true,
     port: 5173,
